@@ -39,4 +39,5 @@ Project root: `C:\Users\WhiteWidow\Documents\GitHub\ProceduralArchitectureEngine
 >>> DONE @WP-8 — Comfy decorative ingest (kind gate, normalise→measure→socket→human confirm→DB); materials policy; 23 unit tests; Docs/COMFY_PIPELINE.md.
 >>> DONE @WP-7 — Blender add-on UI (§10): Validate click-to-frame, Spec/Assets/Generate/Export panels, pure helpers + 12 unit tests; install `pae/addon/README.md`.
 >>> DONE @WP-6 — Export gate (refuses critical), pae.manifest/1 (contract dims), FBX/blend stubs + linked-dupe plan, bind_to_terrain heightmap modes; 10 export unit tests.
+2026-07-24 — Master: wired WP-7 export operators to WP-6 APIs (blend/fbx/manifest). M1 proof: validate ok=True, 29 placements, pae.manifest/1 written. Suite: 140 passed, 2 xfailed. ALL WP-1..WP-9 DONE.
 ```

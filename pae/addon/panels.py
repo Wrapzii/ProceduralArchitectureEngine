@@ -129,6 +129,8 @@ if HAS_BPY:
             col.operator("pae.export_blend", icon="EXPORT")
             col.prop(props, "export_fbx_path")
             col.operator("pae.export_fbx", icon="EXPORT")
+            col.prop(props, "export_manifest_path")
+            col.operator("pae.export_manifest", icon="FILE_TEXT")
 
     classes = (
         PAE_PT_spec,

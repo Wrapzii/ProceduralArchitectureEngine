@@ -62,6 +62,11 @@ if HAS_BPY:
             subtype="FILE_PATH",
             default="//pae_export.fbx",
         )
+        export_manifest_path: StringProperty(  # type: ignore
+            name="Manifest Path",
+            subtype="FILE_PATH",
+            default="//pae_manifest.json",
+        )
         asset_tag_filter: StringProperty(name="Tag Filter", default="wall")  # type: ignore
 
     classes = (PAESceneProperties,)
