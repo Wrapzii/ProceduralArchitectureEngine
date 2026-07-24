@@ -1,0 +1,8 @@
+{
+  "id": "townhouse",
+  "roof_pitch": 1.0,
+  "window": {"tag": "window_simple", "per_bay": 1, "skip_ground": false},
+  "wall_bands": {"plinth_cm": 30, "cornice_cm": 20},
+  "tower": {"cap": "flat", "crown": false, "finial": false},
+  "materials": {"wall": "brick_red", "roof": "tile_terracotta", "trim": "stone_light"}
+}
