@@ -15,7 +15,7 @@ Project root: `C:\Users\WhiteWidow\Documents\GitHub\ProceduralArchitectureEngine
 | WP-5 | Composer 2.5 | IN_PROGRESS | `pae/assemble.py`, `pae/decorate.py` |
 | WP-6 | Grok 4.5 | BLOCKED_ON_WP5 | `pae/export/**` |
 | WP-7 | Composer 2.5 | BLOCKED_ON_WP4_5 | `pae/addon/**` |
-| WP-8 | Grok 4.5 | IN_PROGRESS | `pae/comfy/**` |
+| WP-8 | Grok 4.5 | DONE | `pae/comfy/**` |
 | WP-9 | Grok 4.5 | DONE | `pae/tests/property/**`, `pae/tests/golden/**`, `pae/tests/conftest.py`, `tools/ci_*`, `tools/magic_number_grep.py`, `.github/workflows/**` |
 
 ## Wave plan
@@ -35,4 +35,5 @@ Project root: `C:\Users\WhiteWidow\Documents\GitHub\ProceduralArchitectureEngine
 >>> DONE @WP-4 — BuildingSpec loader (rejects world/cm), greedy Massing solver, FloorPlan + stair graph, M1 factory; 13 unit tests pass.
 >>> DONE @WP-3 — Parametric primitive library (15 kit pieces), dual descriptor/bpy path, Docs/PRIMITIVE_MEASUREMENTS.md; 14 primitive unit tests pass without Blender.
 >>> DONE @WP-9 — Determinism hash, golden harness (2% pixel thresh, stub PNG), property scaffolding (xfail until assemble), magic_number_grep + hardened ci.yml; python tools/ci_local.py green (90 passed, 2 xfailed).
+>>> DONE @WP-8 — Comfy decorative ingest (kind gate, normalise→measure→socket→human confirm→DB); materials policy; 23 unit tests; Docs/COMFY_PIPELINE.md.
 ```
