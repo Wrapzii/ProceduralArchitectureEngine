@@ -10,7 +10,7 @@ Project root: `C:\Users\WhiteWidow\Documents\GitHub\ProceduralArchitectureEngine
 |---|---|---|---|
 | WP-1 | Composer 2.5 | DONE | `pae/contract.py`, `pae/validate.py`, `pae/tests/unit/test_validate*`, `pae/tests/fixtures/broken_*` |
 | WP-2 | Composer 2.5 | DONE | `pae/assets/**` |
-| WP-3 | Grok 4.5 | QUEUED (contract API frozen) | `pae/primitives/**` |
+| WP-3 | Grok 4.5 | DONE | `pae/primitives/**` |
 | WP-4 | Grok 4.5 | DONE | `pae/spec.py`, `pae/solver.py`, `pae/plan.py`, `pae/styles/**` |
 | WP-5 | Composer 2.5 | BLOCKED_ON_WP2_3_4 | `pae/assemble.py`, `pae/decorate.py` |
 | WP-6 | Grok 4.5 | BLOCKED_ON_WP5 | `pae/export/**` |
@@ -33,4 +33,5 @@ Project root: `C:\Users\WhiteWidow\Documents\GitHub\ProceduralArchitectureEngine
 >>> DONE @WP-2 — Asset DB (SQLite), sockets, import/fit, min-corner origin, rotates_about_center; 32 tests pass.
 >>> DONE @WP-1 — Full §7 validator (9 checks), contract AABB helpers, assembly_types.py, broken_all_defects fixture; 21 WP-1 tests pass (61/62 repo; magic-number grep still flags WP-2/3/9 literals).
 >>> DONE @WP-4 — BuildingSpec loader (rejects world/cm), greedy Massing solver, FloorPlan + stair graph, M1 factory; 13 unit tests pass.
+>>> DONE @WP-3 — Parametric primitive library (15 kit pieces), dual descriptor/bpy path, Docs/PRIMITIVE_MEASUREMENTS.md; 14 primitive unit tests pass without Blender.
 ```
