@@ -9,7 +9,7 @@ Project root: `C:\Users\WhiteWidow\Documents\GitHub\ProceduralArchitectureEngine
 | WP | Owner model | Status | Files |
 |---|---|---|---|
 | WP-1 | Composer 2.5 | IN_PROGRESS | `pae/contract.py`, `pae/validate.py`, `pae/tests/unit/test_validate*`, `pae/tests/fixtures/broken_*` |
-| WP-2 | Composer 2.5 | BLOCKED_ON_WP1 | `pae/assets/**` |
+| WP-2 | Composer 2.5 | DONE | `pae/assets/**` |
 | WP-3 | Grok 4.5 | QUEUED (contract API frozen) | `pae/primitives/**` |
 | WP-4 | Grok 4.5 | QUEUED (contract API frozen) | `pae/spec.py`, `pae/solver.py`, `pae/plan.py`, `pae/styles/**` |
 | WP-5 | Composer 2.5 | BLOCKED_ON_WP2_3_4 | `pae/assemble.py`, `pae/decorate.py` |
