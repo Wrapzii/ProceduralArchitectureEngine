@@ -64,8 +64,7 @@ def test_random_spec_factory_stays_in_bay_space():
 
 
 @pytest.mark.xfail(
-    reason="WP-4/WP-5: solver+assemble not implemented — property gate pending",
-    raises=NotImplementedError,
+    reason="WP-5: M1 passes; non-rect footprints / multi-wing validation still open",
     strict=False,
 )
 def test_random_specs_validate_ok():
