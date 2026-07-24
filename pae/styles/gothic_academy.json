@@ -1,0 +1,8 @@
+{
+  "id": "gothic_academy",
+  "roof_pitch": 1.05,
+  "window": {"tag": "window_gothic", "per_bay": 1, "skip_ground": false},
+  "wall_bands": {"plinth_cm": 45, "cornice_cm": 30},
+  "tower": {"cap": "cone_steep", "crown": true, "finial": true},
+  "materials": {"wall": "stone_ashlar", "roof": "slate_blue", "trim": "stone_light"}
+}
