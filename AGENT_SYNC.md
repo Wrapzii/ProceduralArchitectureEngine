@@ -16,7 +16,7 @@ Project root: `C:\Users\WhiteWidow\Documents\GitHub\ProceduralArchitectureEngine
 | WP-6 | Grok 4.5 | BLOCKED_ON_WP5 | `pae/export/**` |
 | WP-7 | Composer 2.5 | BLOCKED_ON_WP4_5 | `pae/addon/**` |
 | WP-8 | Grok 4.5 | BLOCKED_ON_WP2 | `pae/comfy/**` |
-| WP-9 | Grok 4.5 | IN_PROGRESS | `pae/tests/**` (shared harness), `.github/workflows/**`, `tools/ci_*` |
+| WP-9 | Grok 4.5 | DONE | `pae/tests/property/**`, `pae/tests/golden/**`, `pae/tests/conftest.py`, `tools/ci_*`, `tools/magic_number_grep.py`, `.github/workflows/**` |
 
 ## Wave plan
 
@@ -34,4 +34,5 @@ Project root: `C:\Users\WhiteWidow\Documents\GitHub\ProceduralArchitectureEngine
 >>> DONE @WP-1 — Full §7 validator (9 checks), contract AABB helpers, assembly_types.py, broken_all_defects fixture; 21 WP-1 tests pass (61/62 repo; magic-number grep still flags WP-2/3/9 literals).
 >>> DONE @WP-4 — BuildingSpec loader (rejects world/cm), greedy Massing solver, FloorPlan + stair graph, M1 factory; 13 unit tests pass.
 >>> DONE @WP-3 — Parametric primitive library (15 kit pieces), dual descriptor/bpy path, Docs/PRIMITIVE_MEASUREMENTS.md; 14 primitive unit tests pass without Blender.
+>>> DONE @WP-9 — Determinism hash, golden harness (2% pixel thresh, stub PNG), property scaffolding (xfail until assemble), magic_number_grep + hardened ci.yml; python tools/ci_local.py green (90 passed, 2 xfailed).
 ```

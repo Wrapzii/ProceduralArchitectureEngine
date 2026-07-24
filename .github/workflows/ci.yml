@@ -1,27 +1,38 @@
 name: pae-ci
+
 on:
   push:
   pull_request:
 
+concurrency:
+  group: pae-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Install
+          cache: pip
+
+      - name: Install package (editable + dev)
         run: pip install -e ".[dev]"
-      - name: Unit tests
-        run: python -m pytest pae/tests -q
-      - name: Magic-number grep (WP-9 expands)
-        run: |
-          # Fail if raw dimension literals sneak outside contract.py
-          ! grep -RInE --include='*.py' \
-            --exclude-dir=tests \
-            --exclude='contract.py' \
-            --exclude='fit.py' \
-            '(?<![0-9])400\.0|(?<![0-9])350\.0|(?<![0-9])60\.0|(?<![0-9])30\.0' \
-            pae || true
-        shell: bash
+
+      - name: Unit / property / golden tests
+        run: python -m pytest pae/tests -q --tb=short
+
+      - name: Magic-number grep (contract dimensions)
+        run: python tools/magic_number_grep.py
+
+  # Optional: keep a clean signal when Blender becomes available in CI later
+  # blender-golden:
+  #   if: false
+  #   runs-on: ubuntu-latest
+  #   steps: ...
