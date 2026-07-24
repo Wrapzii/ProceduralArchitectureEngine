@@ -3,7 +3,7 @@ name = "pae"
 version = "0.1.0"
 description = "Procedural Architecture Engine — Blender add-on for deterministic buildings"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.9"
 dependencies = []
 
 [project.optional-dependencies]

@@ -28,5 +28,6 @@ Project root: `C:\Users\WhiteWidow\Documents\GitHub\ProceduralArchitectureEngine
 ## Log
 
 ```
-2026-07-24 — Master scaffolded repo + copied Docs. Launching Wave A (WP-1 Composer, WP-9 Grok).
+2026-07-24 — Master scaffolded repo + copied Docs.
+2026-07-24 — Launching Wave A+B: WP-1 (Composer), WP-9 (Grok), WP-2 (Composer), WP-3 (Grok), WP-4 (Grok).
 ```
