@@ -14,7 +14,7 @@ Project root: `C:\Users\WhiteWidow\Documents\GitHub\ProceduralArchitectureEngine
 | WP-4 | Grok 4.5 | DONE | `pae/spec.py`, `pae/solver.py`, `pae/plan.py`, `pae/styles/**` |
 | WP-5 | Composer 2.5 | DONE | `pae/assemble.py`, `pae/decorate.py`, `pae/pipeline.py`, `pae/tests/unit/test_assemble.py` |
 | WP-6 | Grok 4.5 | READY | `pae/export/**` |
-| WP-7 | Composer 2.5 | BLOCKED_ON_WP4_5 | `pae/addon/**` |
+| WP-7 | Composer 2.5 | DONE | `pae/addon/**` |
 | WP-8 | Grok 4.5 | DONE | `pae/comfy/**` |
 | WP-9 | Grok 4.5 | DONE | `pae/tests/property/**`, `pae/tests/golden/**`, `pae/tests/conftest.py`, `tools/ci_*`, `tools/magic_number_grep.py`, `.github/workflows/**` |
 
@@ -37,4 +37,5 @@ Project root: `C:\Users\WhiteWidow\Documents\GitHub\ProceduralArchitectureEngine
 >>> DONE @WP-9 — Determinism hash, golden harness (2% pixel thresh, stub PNG), property scaffolding (xfail until assemble), magic_number_grep + hardened ci.yml; python tools/ci_local.py green (90 passed, 2 xfailed).
 >>> DONE @WP-5 — assemble.py (§2.2–2.5 boundary walls, floors, ground, flat roof), decorate pass-through, M1 validate ok=True; 5 assemble unit tests; 118 passed / 2 xfailed repo-wide.
 >>> DONE @WP-8 — Comfy decorative ingest (kind gate, normalise→measure→socket→human confirm→DB); materials policy; 23 unit tests; Docs/COMFY_PIPELINE.md.
+>>> DONE @WP-7 — Blender add-on UI (§10): Validate click-to-frame, Spec/Assets/Generate/Export panels, pure helpers + 12 unit tests; install `pae/addon/README.md`.
 ```
