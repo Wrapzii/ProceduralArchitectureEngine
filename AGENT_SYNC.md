@@ -12,10 +12,10 @@ Project root: `C:\Users\WhiteWidow\Documents\GitHub\ProceduralArchitectureEngine
 | WP-2 | Composer 2.5 | DONE | `pae/assets/**` |
 | WP-3 | Grok 4.5 | DONE | `pae/primitives/**` |
 | WP-4 | Grok 4.5 | DONE | `pae/spec.py`, `pae/solver.py`, `pae/plan.py`, `pae/styles/**` |
-| WP-5 | Composer 2.5 | BLOCKED_ON_WP2_3_4 | `pae/assemble.py`, `pae/decorate.py` |
+| WP-5 | Composer 2.5 | IN_PROGRESS | `pae/assemble.py`, `pae/decorate.py` |
 | WP-6 | Grok 4.5 | BLOCKED_ON_WP5 | `pae/export/**` |
 | WP-7 | Composer 2.5 | BLOCKED_ON_WP4_5 | `pae/addon/**` |
-| WP-8 | Grok 4.5 | BLOCKED_ON_WP2 | `pae/comfy/**` |
+| WP-8 | Grok 4.5 | IN_PROGRESS | `pae/comfy/**` |
 | WP-9 | Grok 4.5 | DONE | `pae/tests/property/**`, `pae/tests/golden/**`, `pae/tests/conftest.py`, `tools/ci_*`, `tools/magic_number_grep.py`, `.github/workflows/**` |
 
 ## Wave plan
