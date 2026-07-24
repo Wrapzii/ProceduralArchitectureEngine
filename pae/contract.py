@@ -90,3 +90,101 @@ def floor_placement_z_cm(level: int) -> float:
 def ground_plinth_z_cm() -> float:
     """Ground / plinth slab origin so its top is at z = -FLOOR_T (§2.5)."""
     return -FLOOR_T_CM
+
+
+def rotate_local_xy(
+    lx: float,
+    ly: float,
+    yaw: Yaw,
+    footprint_sx_cm: float,
+    footprint_sy_cm: float,
+) -> Tuple[float, float]:
+    """Map a local XY point through yaw + min-corner offset (§2.2)."""
+    sx, sy = footprint_sx_cm, footprint_sy_cm
+    if yaw == 0:
+        return (lx, ly)
+    if yaw == 90:
+        return (-ly + sy, lx)
+    if yaw == 180:
+        return (-lx + sx, -ly + sy)
+    if yaw == 270:
+        return (ly, -lx + sx)
+    raise ValueError(f"yaw must be 0/90/180/270, got {yaw}")
+
+
+def placement_origin_cm(
+    cell_x: int,
+    cell_y: int,
+    level: int,
+    offset_cm: Tuple[float, float, float],
+) -> Tuple[float, float, float]:
+    """World origin (min corner) for a placement before yaw footprint swap."""
+    ox, oy, oz = offset_cm
+    return cell_to_world_cm(cell_x, cell_y, level, ox, oy, oz)
+
+
+def placement_world_aabb(
+    cell_x: int,
+    cell_y: int,
+    level: int,
+    yaw: Yaw,
+    size_cm: Tuple[float, float, float],
+    offset_cm: Tuple[float, float, float] = (0.0, 0.0, 0.0),
+    *,
+    rotates_about_center: bool = False,
+) -> Tuple[Tuple[float, float, float], Tuple[float, float, float]]:
+    """Axis-aligned world bounds for a placed solid (min_corner convention)."""
+    sx, sy, sz = size_cm
+    wx, wy, wz = placement_origin_cm(cell_x, cell_y, level, offset_cm)
+
+    if rotates_about_center:
+        hx, hy = sx * 0.5, sy * 0.5
+        return (
+            (wx - hx, wy - hy, wz),
+            (wx + hx, wy + hy, wz + sz),
+        )
+
+    xs: list[float] = []
+    ys: list[float] = []
+    zs: list[float] = []
+    for lx in (0.0, sx):
+        for ly in (0.0, sy):
+            for lz in (0.0, sz):
+                rx, ry = rotate_local_xy(lx, ly, yaw, sx, sy)
+                xs.append(wx + rx)
+                ys.append(wy + ry)
+                zs.append(wz + lz)
+
+    return (
+        (min(xs), min(ys), min(zs)),
+        (max(xs), max(ys), max(zs)),
+    )
+
+
+def aabb_overlap(
+    a_min: Tuple[float, float, float],
+    a_max: Tuple[float, float, float],
+    b_min: Tuple[float, float, float],
+    b_max: Tuple[float, float, float],
+    tol: float = TOL_CM,
+) -> bool:
+    """True when AABBs overlap by more than *tol* on every axis (§7.4)."""
+    for amin, amax, bmin, bmax in zip(a_min, a_max, b_min, b_max):
+        depth = min(amax, bmax) - max(amin, bmin)
+        if depth <= tol:
+            return False
+    return True
+
+
+def aabb_intersects(
+    a_min: Tuple[float, float, float],
+    a_max: Tuple[float, float, float],
+    b_min: Tuple[float, float, float],
+    b_max: Tuple[float, float, float],
+    tol: float = TOL_CM,
+) -> bool:
+    """True when AABBs touch or overlap (within *tol*)."""
+    for amin, amax, bmin, bmax in zip(a_min, a_max, b_min, b_max):
+        if min(amax, bmax) - max(amin, bmin) < -tol:
+            return False
+    return True

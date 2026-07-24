@@ -1,0 +1,63 @@
+"""Contract geometry helpers used by validate."""
+
+from pae.contract import (
+    FLOOR_T_CM,
+    MODULE_CM,
+    STOREY_CM,
+    WALL_T_CM,
+    aabb_overlap,
+    cell_to_world_cm,
+    floor_placement_z_cm,
+    ground_plinth_z_cm,
+    placement_world_aabb,
+    rotate_local_xy,
+    rotation_offset_cm,
+    wall_run_cell,
+)
+
+
+def test_cell_to_world():
+    assert cell_to_world_cm(2, 3, 1) == (
+        2 * MODULE_CM,
+        3 * MODULE_CM,
+        STOREY_CM,
+    )
+
+
+def test_wall_run_cell_east_north_boundary():
+    assert wall_run_cell("east", 0, 0, 3, 2) == (4, 0, 180)
+    assert wall_run_cell("north", 0, 0, 3, 2) == (0, 3, 90)
+
+
+def test_floor_and_ground_z():
+    assert floor_placement_z_cm(1) == STOREY_CM - FLOOR_T_CM
+    assert ground_plinth_z_cm() == -FLOOR_T_CM
+
+
+def test_rotate_local_xy_table():
+    sx, sy = WALL_T_CM, MODULE_CM
+    assert rotate_local_xy(0, 0, 0, sx, sy) == (0.0, 0.0)
+    assert rotate_local_xy(0, 0, 90, sx, sy) == (sy, 0.0)
+    assert rotate_local_xy(sx, sy, 180, sx, sy) == (0.0, 0.0)
+
+
+def test_aabb_overlap_requires_all_axes():
+    span = MODULE_CM
+    a = ((0, 0, 0), (span, span, span))
+    b_touch = ((span, 0, 0), (2 * span, span, span))
+    b_overlap = ((span / 2, span / 2, span / 2), (1.5 * span, 1.5 * span, 1.5 * span))
+    assert not aabb_overlap(*a, *b_touch)
+    assert aabb_overlap(*a, *b_overlap)
+
+
+def test_placement_world_aabb_yaw0():
+    bb_min, bb_max = placement_world_aabb(
+        1,
+        2,
+        0,
+        0,
+        (WALL_T_CM, MODULE_CM, STOREY_CM),
+        rotation_offset_cm(0, WALL_T_CM, MODULE_CM) + (0.0,),
+    )
+    assert bb_min[0] == MODULE_CM
+    assert bb_max[1] - bb_min[1] == MODULE_CM

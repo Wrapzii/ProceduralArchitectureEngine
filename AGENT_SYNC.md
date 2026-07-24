@@ -8,7 +8,7 @@ Project root: `C:\Users\WhiteWidow\Documents\GitHub\ProceduralArchitectureEngine
 
 | WP | Owner model | Status | Files |
 |---|---|---|---|
-| WP-1 | Composer 2.5 | IN_PROGRESS | `pae/contract.py`, `pae/validate.py`, `pae/tests/unit/test_validate*`, `pae/tests/fixtures/broken_*` |
+| WP-1 | Composer 2.5 | DONE | `pae/contract.py`, `pae/validate.py`, `pae/tests/unit/test_validate*`, `pae/tests/fixtures/broken_*` |
 | WP-2 | Composer 2.5 | DONE | `pae/assets/**` |
 | WP-3 | Grok 4.5 | QUEUED (contract API frozen) | `pae/primitives/**` |
 | WP-4 | Grok 4.5 | QUEUED (contract API frozen) | `pae/spec.py`, `pae/solver.py`, `pae/plan.py`, `pae/styles/**` |
@@ -30,4 +30,5 @@ Project root: `C:\Users\WhiteWidow\Documents\GitHub\ProceduralArchitectureEngine
 ```
 2026-07-24 — Master scaffolded repo + copied Docs.
 2026-07-24 — Launching Wave A+B: WP-1 (Composer), WP-9 (Grok), WP-2 (Composer), WP-3 (Grok), WP-4 (Grok).
+>>> DONE @WP-2 — Asset DB (SQLite), sockets, import/fit, min-corner origin, rotates_about_center; 32 tests pass.
 ```
