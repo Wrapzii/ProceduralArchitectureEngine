@@ -47,7 +47,7 @@ Tolerance: **6.0 cm**. All dimensions from `pae/contract.py`.
 | `pier_square` | column | 1x1 | 400.0x400.0x350.0 | (0.0,0.0,0.0) | min_corner | False | yes |
 | `column_round` | column | 1x1 | 400.0x400.0x350.0 | (0.0,0.0,0.0) | min_corner | True | yes |
 | `pilaster` | column | 1x1 | 30.0x88.0x350.0 | (0.0,0.0,0.0) | min_corner | False | yes |
-| `buttress` | column | 1x1 | 340.0x120.0x350.0 | (0.0,0.0,0.0) | min_corner | False | yes |
+| `buttress` | column | 1x1 | 112.0x120.0x350.0 | (0.0,0.0,0.0) | min_corner | False | yes |
 | `arch_freestanding` | column | 1x1 | 60.0x400.0x350.0 | (0.0,0.0,0.0) | min_corner | False | yes |
 | `spiral_newel` | column | 1x1 | 88.0x88.0x350.0 | (-44.0,-44.0,0.0) | center | True | yes |
 | `fence_picket` | barrier | 1x1 | 18.0x400.0x147.0 | (0.0,0.0,0.0) | min_corner | False | yes |

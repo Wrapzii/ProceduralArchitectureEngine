@@ -26,9 +26,12 @@ def test_straight_stair_step_count_and_descriptor_aabb():
     assert (2.0 * MODULE_CM) / steps == pytest.approx(40.0)
 
     verts, faces = straight_stair_verts_faces(*desc.size_cm)
-    # Each step = riser box + tread box (8 verts / 6 faces each).
-    assert len(verts) == steps * 16
-    assert len(faces) == steps * 12
+    # Each step = riser box + tread box + a string box down EACH side (4 boxes,
+    # 8 verts / 6 faces each). The strings carry the flight; without them the run
+    # was treads hanging in mid-air with no visible support.
+    boxes_per_step = 4
+    assert len(verts) == steps * boxes_per_step * 8
+    assert len(faces) == steps * boxes_per_step * 6
 
     bb_min, bb_max = mesh_aabb_from_verts(verts)
     # Nose overhang extends slightly past x=0; stay within one tread of origin.

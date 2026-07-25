@@ -300,17 +300,47 @@ def band(
                 )
 
         if opts.braces:
-            for m in members:
-                if getattr(catalog.get(m.asset_id), "aperture", None) is not None:
-                    continue  # a brace crosses the whole panel; it cannot share a bay
-                extra.append(
-                    _place_on_face(
+            # A brace lives INSIDE a panel — between two courses — not across the whole
+            # storey. Emitted at z=0 with the piece's full storey height it ran straight
+            # through every horizontal course, which is the "sideways banding with the
+            # flat banding" the render kept showing: bars crossing the bands at right
+            # angles instead of bracing the panel between them.
+            edges = sorted(
+                {0.0, STOREY_CM}
+                | {
+                    STOREY_CM * c.height_frac + catalog[c.piece].size_cm[2]
+                    for c in opts.courses
+                }
+                | {STOREY_CM * c.height_frac for c in opts.courses}
+            )
+            panels = [
+                (lo, hi)
+                for lo, hi in zip(edges, edges[1:])
+                if hi - lo > STOREY_CM * 0.25
+            ]
+            if panels:
+                # The tallest clear panel is the one a brace belongs in.
+                lo, hi = max(panels, key=lambda ab: ab[1] - ab[0])
+                brace_size = catalog[opts.brace_piece].size_cm
+                for m in members:
+                    if getattr(catalog.get(m.asset_id), "aperture", None) is not None:
+                        continue  # a brace crosses the panel; it cannot share a bay
+                    b = _place_on_face(
                         opts.brace_piece, m, face,
-                        z_cm=0.0,
+                        z_cm=lo,
                         suffix="brace",
                         extra_tags=frozenset({"diagonal"}),
                     )
-                )
+                    extra.append(
+                        SolidPlacement(
+                            piece_id=b.piece_id, asset_id=b.asset_id, kind=b.kind,
+                            cell=b.cell, level=b.level, yaw=b.yaw,
+                            offset_cm=b.offset_cm,
+                            size_cm=(brace_size[0], brace_size[1], hi - lo),
+                            rotates_about_center=b.rotates_about_center,
+                            tags=b.tags,
+                        )
+                    )
 
         if opts.coping:
             over = WALL_T_CM * 0.15

@@ -601,17 +601,16 @@ def _tower_spiral_stairs(
             # off the central post, and without it the quarters read as floating steps
             # winding round thin air. One post per storey, at the drum centre.
             if "spiral_newel" in catalog:
-                newel = catalog["spiral_newel"].size_cm
+                # SAME offset as the treads. spiral_newel has origin="center" and
+                # rotates_about_center, so cap_xy already puts it on the drum axis —
+                # adding a half-module corner shift on top pushed the post off to one
+                # side and the helix appeared to wind around nothing.
                 out.append(
                     _placement(
                         "spiral_newel",
                         cap.cell,
                         level,
-                        offset_cm=(
-                            cap_xy[0] + (MODULE_CM - newel[0]) * 0.5,
-                            cap_xy[1] + (MODULE_CM - newel[1]) * 0.5,
-                            0.0,
-                        ),
+                        offset_cm=(cap_xy[0], cap_xy[1], 0.0),
                         suffix=f"newel{level}",
                     )
                 )
