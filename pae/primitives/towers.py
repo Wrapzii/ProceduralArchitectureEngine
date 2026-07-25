@@ -122,23 +122,37 @@ def build_tower_mesh(desc: PrimitiveDescriptor, *, name: Optional[str] = None):
     inner = MODULE_CM - WALL_T_CM
     if desc.id == "tower_arc_quarter":
         verts, faces = bpy_util.annulus_quarter_verts(
-            outer, inner, 0.0, STOREY_CM
+            outer,
+            inner,
+            0.0,
+            STOREY_CM,
+            segments_full=bpy_util.TOWER_ARC_SEGMENTS_FULL,
+            cap_horizontal=False,
         )
         obj = bpy_util.mesh_from_verts_faces(obj_name, verts, faces)
-        bpy_util.smooth_shade_curved_faces(obj)
+        bpy_util.smooth_shade_curved_faces(obj, angle_deg=40.0)
         return obj
     if desc.id == "tower_crown":
         h = desc.size_cm[2]
         verts, faces = bpy_util.annulus_battlement_ring_verts(
-            outer, inner, 0.0, h
+            outer,
+            inner,
+            0.0,
+            h,
+            segments_full=bpy_util.TOWER_ARC_SEGMENTS_FULL,
         )
         obj = bpy_util.mesh_from_verts_faces(obj_name, verts, faces)
-        bpy_util.smooth_shade_curved_faces(obj)
+        bpy_util.smooth_shade_curved_faces(obj, angle_deg=40.0)
         return obj
     if desc.id == "tower_cap":
         h = desc.size_cm[2]
-        verts, faces = bpy_util.cone_verts(outer, 0.0, h)
+        verts, faces = bpy_util.cone_verts(
+            outer,
+            0.0,
+            h,
+            segments_full=bpy_util.TOWER_ARC_SEGMENTS_FULL,
+        )
         obj = bpy_util.mesh_from_verts_faces(obj_name, verts, faces)
-        bpy_util.smooth_shade_curved_faces(obj)
+        bpy_util.smooth_shade_curved_faces(obj, angle_deg=40.0)
         return obj
     raise ValueError(f"unknown tower primitive: {desc.id!r}")

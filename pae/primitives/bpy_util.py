@@ -506,7 +506,7 @@ def cone_verts(
     """Steep cone (or pyramid if segments_full is small) centred on the origin.
 
     Open base (no bottom cap) so the cap sits cleanly on the crown with a small
-  intentional Z gap from assembly.
+    intentional Z gap from assembly.
     """
     import math
 
