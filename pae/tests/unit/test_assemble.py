@@ -69,10 +69,17 @@ def test_wall_boundary_cells_east_north_out_by_one():
     assert east_cells == {(4, 0), (4, 1), (4, 2)}
     assert north_cells == {(0, 3), (1, 3), (2, 3), (3, 3)}
     assert west_cells == {(0, 0), (0, 1), (0, 2)}
-    assert south_cells == {(1, 0), (2, 0), (3, 0)}
+    assert south_cells == {(0, 0), (1, 0), (2, 0), (3, 0)}
     # Regression: must NOT sit on the old too-far-in ring.
     assert (3, 0) not in east_cells
     assert (0, 2) not in north_cells
+
+
+def test_south_face_has_no_corner_bay_gap():
+    """SW corner must have a south wall — omitting it leaves a one-bay hole."""
+    assembly, _ = _m1_assembly()
+    south = {p.cell for p in assembly.placements if p.kind == "wall" and p.yaw == 270}
+    assert (0, 0) in south
 
 
 def test_floor_covers_full_footprint():
@@ -171,18 +178,20 @@ def test_m1_north_and_east_tuck_under_footprint_roof():
     assert n_min[1] < roof_max[1]
 
 
-def test_boundary_wall_corner_ownership_no_duplicate_cells():
-    """Each wall grid cell appears at most once — SW corner owned by west."""
+def test_boundary_wall_corner_overlap_closes_perimeter():
+    """SW corner is on both west and south runs (overlap) so no bay gap."""
     cells = _boundary_wall_cells(0, 0, 3, 2)
     assert (0, 0) in cells["west"]
-    assert (0, 0) not in cells["south"]
-    assert cells["south"] == [(1, 0), (2, 0), (3, 0)]
+    assert (0, 0) in cells["south"]
+    assert cells["south"] == [(0, 0), (1, 0), (2, 0), (3, 0)]
     # East/north boundary lines are orthogonal — no shared grid cells.
     assert set(cells["east"]).isdisjoint(cells["north"])
 
     assembly, _ = _m1_assembly()
-    wall_cells = [p.cell for p in assembly.placements if p.kind == "wall"]
-    assert len(wall_cells) == len(set(wall_cells))
+    # Same footprint cell may host two pieces (west+south at SW) with different yaw.
+    pairs = {(p.cell, p.yaw) for p in assembly.placements if p.kind == "wall"}
+    assert ((0, 0), 0) in pairs
+    assert ((0, 0), 270) in pairs
 
 
 def test_roof_flat_descriptor_and_m1_span():

@@ -151,22 +151,17 @@ def _boundary_wall_cells(
     x1: int,
     y1: int,
 ) -> Dict[str, List[Tuple[int, int]]]:
-    """§2.3 boundary-line wall cells with single corner ownership.
+    """§2.3 boundary-line wall cells.
 
-    East/north runs sit on ``x1+1`` / ``y1+1`` (not ``x1`` / ``y1``).
-
-    Corner ownership — vertical runs (west/east) own perimeter corner cells;
-    horizontal runs (south/north) omit the shared endpoint so each grid cell
-    gets at most one wall piece:
-
-    - **SW** ``(x0, y0)``: west keeps it; south starts at ``x0+1``.
-    - East/north boundary lines are orthogonal (``x1+1`` column vs ``y1+1`` row),
-      so they do not share grid cells; only west+south meet at one cell today.
+    East/north on ``x1+1`` / ``y1+1``. Corner cells are placed on **both**
+    meeting runs (overlap by ``WALL_T``) so the perimeter never leaves a
+    one-bay hole — omitting SW from south previously opened the south face
+    between the west corner piece and ``(x0+1, y0)``.
     """
     return {
         "west": [(x0, y) for y in range(y0, y1 + 1)],
         "east": [(x1 + 1, y) for y in range(y0, y1 + 1)],
-        "south": [(x, y0) for x in range(x0 + 1, x1 + 1)],
+        "south": [(x, y0) for x in range(x0, x1 + 1)],
         "north": [(x, y1 + 1) for x in range(x0, x1 + 1)],
     }
 
