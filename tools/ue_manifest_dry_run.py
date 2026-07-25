@@ -7,8 +7,11 @@ placement ``loc_cm`` / ``yaw``, asset references, and validation gate.
 Usage::
 
     python tools/ue_manifest_dry_run.py [path_to_manifest.json]
+    python tools/ue_manifest_dry_run.py --milestone m3
 
-Default manifest: ``Saved/exports/m1_manifest.json`` (auto-exported via M1 helper when missing).
+Default manifest: ``Saved/exports/m1_manifest.json`` (auto-exported when missing).
+``--milestone`` resolves to ``Saved/exports/{milestone}_manifest.json`` and
+auto-exports via :mod:`tools.export_manifest` when that file is absent.
 Report: ``Saved/exports/m6_dry_run_report.json`` (exit 0 when ``ok``, else 1).
 """
 
@@ -26,6 +29,8 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from pae.export.manifest import SCHEMA  # noqa: E402
+
+from tools.export_manifest import MILESTONE_SPECS  # noqa: E402
 
 DEFAULT_MANIFEST_PATH = ROOT / "Saved" / "exports" / "m1_manifest.json"
 DEFAULT_REPORT_PATH = ROOT / "Saved" / "exports" / "m6_dry_run_report.json"
@@ -183,16 +188,27 @@ def load_manifest(path: Path) -> JsonDict:
 
 
 def ensure_manifest_exists(path: Path) -> None:
-    """Export M1 manifest when the default path is missing."""
+    """Auto-export a known milestone manifest when *path* is missing."""
     if path.is_file():
         return
-    if path.resolve() != DEFAULT_MANIFEST_PATH.resolve():
-        raise FileNotFoundError(f"manifest not found: {path}")
-    from tools.export_m1_manifest import main as export_m1_main
+    from tools.export_manifest import (
+        milestone_from_manifest_path,
+        run_export,
+    )
 
-    rc = export_m1_main()
+    milestone = milestone_from_manifest_path(path)
+    if milestone is None and path.resolve() == DEFAULT_MANIFEST_PATH.resolve():
+        milestone = "m1"
+    if milestone is None:
+        raise FileNotFoundError(f"manifest not found: {path}")
+
+    rc, _data, report = run_export(milestone, out_path=path)
     if rc != 0 or not path.is_file():
-        raise RuntimeError(f"failed to export default manifest to {path}")
+        detail = "; ".join(f.message for f in report.critical[:3])
+        raise RuntimeError(
+            f"failed to export {milestone} manifest to {path}"
+            + (f" ({detail})" if detail else "")
+        )
 
 
 def write_report(report: Mapping[str, Any], path: Path) -> None:
@@ -218,6 +234,28 @@ def run_dry_run(
     return report
 
 
+def resolve_manifest_path(
+    manifest_arg: Optional[str],
+    milestone: Optional[str],
+) -> Path:
+    """Resolve CLI manifest path from positional arg and/or ``--milestone``."""
+    from tools.export_manifest import VALID_MILESTONES, manifest_out_path
+
+    if milestone is not None:
+        if milestone not in VALID_MILESTONES:
+            choices = ", ".join(sorted(VALID_MILESTONES))
+            raise ValueError(f"unknown milestone {milestone!r}; expected one of: {choices}")
+        if manifest_arg is not None:
+            raise ValueError("pass either a manifest path or --milestone, not both")
+        return manifest_out_path(milestone)
+
+    raw = manifest_arg if manifest_arg is not None else str(DEFAULT_MANIFEST_PATH)
+    manifest_path = Path(raw)
+    if not manifest_path.is_absolute():
+        manifest_path = (ROOT / manifest_path).resolve()
+    return manifest_path
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = argparse.ArgumentParser(
         description="UE manifest dry-run consumer — spawn-readiness without Unreal Editor.",
@@ -225,8 +263,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument(
         "manifest",
         nargs="?",
-        default=str(DEFAULT_MANIFEST_PATH),
+        default=None,
         help=f"path to manifest JSON (default: {DEFAULT_MANIFEST_PATH.relative_to(ROOT)})",
+    )
+    parser.add_argument(
+        "--milestone",
+        "-m",
+        default=None,
+        choices=sorted(MILESTONE_SPECS),
+        help="milestone label → Saved/exports/{milestone}_manifest.json",
     )
     parser.add_argument(
         "--report",
@@ -236,13 +281,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument(
         "--no-auto-export",
         action="store_true",
-        help="do not auto-export M1 when the default manifest is missing",
+        help="do not auto-export when the manifest path is missing",
     )
     args = parser.parse_args(list(argv) if argv is not None else None)
 
-    manifest_path = Path(args.manifest)
-    if not manifest_path.is_absolute():
-        manifest_path = (ROOT / manifest_path).resolve()
+    try:
+        manifest_path = resolve_manifest_path(args.manifest, args.milestone)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
 
     report_path = Path(args.report)
     if not report_path.is_absolute():
