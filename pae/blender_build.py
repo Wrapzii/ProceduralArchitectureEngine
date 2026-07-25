@@ -52,9 +52,11 @@ SCREENSHOT_REL = Path("Saved") / "Screenshots" / "m1_live.png"
 M3_SCREENSHOT_REL = Path("Saved") / "Screenshots" / "m3_pitched.png"
 GALLERY_SCREENSHOT_REL = Path("Saved") / "Screenshots" / "gallery_m1_m4.png"
 M2_STAIR_PROOF_SCREENSHOT_REL = Path("Saved") / "Screenshots" / "m2_stair_proof.png"
+M1_OPENINGS_PROOF_SCREENSHOT_REL = Path("Saved") / "Screenshots" / "m1_openings_proof.png"
 PAE_ROOT_COLLECTION = "PAE_Live"
 GALLERY_ROOT_COLLECTION = "PAE_Gallery"
 M2_STAIR_PROOF_COLLECTION = "PAE_M2_StairProof"
+M1_OPENINGS_PROOF_COLLECTION = "PAE_M1_OpeningsProof"
 GALLERY_GAP_M = 2.0
 # Deterministic gallery camera: SE (+X, −Y) elevated — never random orbit per run.
 GALLERY_CAM_DIRECTION = (1.0, -1.0, 0.65)
@@ -64,6 +66,9 @@ GALLERY_CAM_ORTHO = True
 # M2 stair proof: tighter SE-elevated view framed on stair + floor_hole AABB only.
 STAIR_PROOF_CAM_DIRECTION = (1.0, -0.72, 0.48)
 STAIR_PROOF_CAM_MARGIN = 1.18
+# M1 openings proof: SE (+X, −Y) elevated on south door + west windows — exterior shell only.
+OPENINGS_PROOF_CAM_DIRECTION = (1.0, -0.92, 0.58)
+OPENINGS_PROOF_CAM_MARGIN = 1.22
 
 # Workbench-friendly Base Color (RGBA 0–1) per placement kind.
 # Muted hues — distinct at gallery distance, not emissive neon.
@@ -181,6 +186,12 @@ def _m2_stair_proof_screenshot_path() -> Path:
     return out
 
 
+def _m1_openings_proof_screenshot_path() -> Path:
+    out = _repo_root() / M1_OPENINGS_PROOF_SCREENSHOT_REL
+    out.parent.mkdir(parents=True, exist_ok=True)
+    return out
+
+
 def is_stair_proof_placement(p) -> bool:
     """Placements that define the stair + floor-hole proof frame."""
     return p.asset_id in ("stair_straight", "floor_hole") or p.kind == "stair"
@@ -262,6 +273,114 @@ def stair_proof_camera_pose_from_bounds_m(
         bb_max,
         margin=STAIR_PROOF_CAM_MARGIN,
         direction=STAIR_PROOF_CAM_DIRECTION,
+        ortho=GALLERY_CAM_ORTHO,
+    )
+
+
+def is_openings_proof_placement(p) -> bool:
+    """South + west exterior shell placements that frame door/windows (import-safe)."""
+    if p.kind == "ground":
+        return True
+    if p.kind != "wall":
+        return False
+    if p.yaw == 270:
+        return True
+    if p.yaw == 0 and p.cell[0] == 0:
+        return True
+    return False
+
+
+def is_openings_proof_aperture_placement(p) -> bool:
+    """Door + window wall pieces on the M1 proof shell."""
+    return p.asset_id in ("wall_door", "wall_window")
+
+
+def is_openings_proof_visible_asset(
+    asset_id: Optional[str],
+    piece_id: Optional[str] = None,
+) -> bool:
+    """True when a mesh should remain visible in the M1 openings proof shot."""
+    asset = str(asset_id or "")
+    piece = str(piece_id or "")
+    if asset == "ground_plinth" or piece.startswith("ground_"):
+        return True
+    if asset in ("roof_flat", "floor"):
+        return False
+    if piece.startswith("wall_east_") or piece.startswith("wall_north_"):
+        return False
+    if piece.startswith("wall_south_") or piece.startswith("wall_west_"):
+        return True
+    if asset in ("wall_door", "wall_window", "wall_plain"):
+        combined = f"{asset} {piece}".lower()
+        if "east" in combined or "north" in combined:
+            return False
+        if "south" in combined or "west" in combined:
+            return True
+    return False
+
+
+def openings_proof_bounds_cm(assembly) -> Tuple[Tuple[float, float, float], Tuple[float, float, float]]:
+    """World AABB (cm) of south + west exterior shell — import-safe."""
+    from pae.contract import placement_world_aabb
+
+    mins = [1e18, 1e18, 1e18]
+    maxs = [-1e18, -1e18, -1e18]
+    count = 0
+    for p in assembly.placements:
+        if not is_openings_proof_placement(p):
+            continue
+        count += 1
+        bb_min, bb_max = placement_world_aabb(
+            p.cell[0],
+            p.cell[1],
+            p.level,
+            p.yaw,
+            p.size_cm,
+            p.offset_cm,
+            rotates_about_center=p.rotates_about_center,
+        )
+        mins[0] = min(mins[0], bb_min[0])
+        mins[1] = min(mins[1], bb_min[1])
+        mins[2] = min(mins[2], bb_min[2])
+        maxs[0] = max(maxs[0], bb_max[0])
+        maxs[1] = max(maxs[1], bb_max[1])
+        maxs[2] = max(maxs[2], bb_max[2])
+    if count == 0:
+        raise RuntimeError("openings proof: no south/west shell placements")
+    return (tuple(mins), tuple(maxs))
+
+
+def openings_proof_bounds_m(
+    assembly,
+    offset_m: Tuple[float, float, float] = (0.0, 0.0, 0.0),
+) -> Tuple[Tuple[float, float, float], Tuple[float, float, float]]:
+    """Openings-proof world AABB (m) after optional offset."""
+    bb_min, bb_max = openings_proof_bounds_cm(assembly)
+    ox, oy, oz = offset_m
+    return (
+        (
+            bb_min[0] * CM_TO_M + ox,
+            bb_min[1] * CM_TO_M + oy,
+            bb_min[2] * CM_TO_M + oz,
+        ),
+        (
+            bb_max[0] * CM_TO_M + ox,
+            bb_max[1] * CM_TO_M + oy,
+            bb_max[2] * CM_TO_M + oz,
+        ),
+    )
+
+
+def openings_proof_camera_pose_from_bounds_m(
+    bb_min: Tuple[float, float, float],
+    bb_max: Tuple[float, float, float],
+) -> Dict[str, Any]:
+    """Deterministic SE-elevated camera pose for the M1 door + window proof shot."""
+    return camera_pose_from_bounds_m(
+        bb_min,
+        bb_max,
+        margin=OPENINGS_PROOF_CAM_MARGIN,
+        direction=OPENINGS_PROOF_CAM_DIRECTION,
         ortho=GALLERY_CAM_ORTHO,
     )
 
@@ -951,6 +1070,153 @@ def build_m2_stair_proof(*, write_png: bool = True) -> Dict[str, Any]:
     }
 
 
+def _apply_openings_proof_visibility(objects: Sequence[Any]) -> Dict[str, List[str]]:
+    """Hide north/east walls, roof, and floor — keep south/west shell + ground."""
+    hidden: List[str] = []
+    visible: List[str] = []
+    for obj in objects:
+        if obj.type != "MESH":
+            continue
+        asset = obj.get("pae_asset_id")
+        piece = obj.get("pae_piece_id")
+        label = f"{asset or '?'}:{piece or obj.name}"
+        if is_openings_proof_visible_asset(asset, piece):
+            obj.hide_render = False
+            obj.hide_set(False)
+            visible.append(label)
+            continue
+        obj.hide_render = True
+        obj.hide_set(True)
+        hidden.append(label)
+    return {"hidden": hidden, "visible": visible}
+
+
+def _clear_openings_proof_collection():
+    from pae.primitives import bpy_util
+
+    bpy_util.require_bpy()
+    import bpy
+
+    _clear_proto_meshes()
+    coll = bpy.data.collections.get(M1_OPENINGS_PROOF_COLLECTION)
+    if coll is not None:
+        _unlink_collection_tree(coll)
+    for mesh in list(bpy.data.meshes):
+        if mesh.users == 0:
+            bpy.data.meshes.remove(mesh)
+    return _ensure_collection(M1_OPENINGS_PROOF_COLLECTION)
+
+
+def frame_camera_on_openings_proof(
+    assembly,
+    *,
+    collection: str = M1_OPENINGS_PROOF_COLLECTION,
+    offset_m: Tuple[float, float, float] = (0.0, 0.0, 0.0),
+) -> Dict[str, Any]:
+    """Frame SE-elevated camera on south door + west windows; hide interior confusion."""
+    from pae.primitives import bpy_util
+
+    bpy_util.require_bpy()
+    import bpy
+
+    bpy.context.view_layer.update()
+    target_coll = bpy.data.collections.get(collection)
+    if target_coll is None:
+        raise RuntimeError(f"collection not found: {collection!r}")
+    meshes = _meshes_in_collection_tree(target_coll)
+    visibility = _apply_openings_proof_visibility(meshes)
+    excluded_colls = _hide_non_stair_proof_collections(keep=collection)
+    bb_min, bb_max = openings_proof_bounds_m(assembly, offset_m)
+    pose = openings_proof_camera_pose_from_bounds_m(bb_min, bb_max)
+    _apply_camera_pose(pose)
+    _ensure_gallery_lighting()
+    bpy.context.view_layer.update()
+    return {
+        **pose,
+        "openings_proof_hidden": visibility["hidden"],
+        "openings_proof_visible": visibility["visible"],
+        "excluded_collections": excluded_colls,
+    }
+
+
+def write_m1_openings_proof_screenshot(
+    path: Optional[Path] = None,
+    *,
+    assembly=None,
+    collection: str = M1_OPENINGS_PROOF_COLLECTION,
+    offset_m: Tuple[float, float, float] = (0.0, 0.0, 0.0),
+) -> Optional[Path]:
+    """Write ``Saved/Screenshots/m1_openings_proof.png`` when bpy is available."""
+    from pae.primitives import bpy_util
+
+    if not bpy_util.HAS_BPY:
+        return None
+    if assembly is None:
+        from pae.spec import m1_box_house_spec
+
+        assembly, _report = assemble_and_validate("m1", m1_box_house_spec)
+    frame_camera_on_openings_proof(assembly, collection=collection, offset_m=offset_m)
+    return write_screenshot(path or _m1_openings_proof_screenshot_path())
+
+
+def build_m1_openings_proof(*, write_png: bool = True) -> Dict[str, Any]:
+    """Build isolated M1 and capture exterior door + window proof screenshot."""
+    reloaded = reload_pae()
+    from pae.primitives import bpy_util
+    from pae.spec import m1_box_house_spec
+
+    assembly, report = assemble_and_validate("m1", m1_box_house_spec)
+    shell_min, shell_max = openings_proof_bounds_cm(assembly)
+    shell_placements = sum(1 for p in assembly.placements if is_openings_proof_placement(p))
+    aperture_placements = sum(
+        1 for p in assembly.placements if is_openings_proof_aperture_placement(p)
+    )
+
+    if not bpy_util.HAS_BPY:
+        pose = openings_proof_camera_pose_from_bounds_m(*openings_proof_bounds_m(assembly))
+        return {
+            "ok": True,
+            "blender": False,
+            "mode": "openings_proof",
+            "reloaded": len(reloaded),
+            "placements": len(assembly.placements),
+            "openings_proof_placements": shell_placements,
+            "openings_proof_apertures": aperture_placements,
+            "openings_bounds_cm": {"min": shell_min, "max": shell_max},
+            "camera_pose": pose,
+            "screenshot": None,
+            "note": "bpy missing - assemble/validate + camera pose only",
+        }
+
+    proof_coll = _clear_openings_proof_collection()
+    n = instance_assembly(assembly, label="m1", target_coll=proof_coll)
+    frame = frame_camera_on_openings_proof(assembly, collection=M1_OPENINGS_PROOF_COLLECTION)
+    camera_pose = {k: v for k, v in frame.items() if k not in (
+        "openings_proof_hidden",
+        "openings_proof_visible",
+        "excluded_collections",
+    )}
+    shot = write_screenshot(_m1_openings_proof_screenshot_path()) if write_png else None
+    return {
+        "ok": report.ok,
+        "blender": True,
+        "mode": "openings_proof",
+        "reloaded": len(reloaded),
+        "collection": M1_OPENINGS_PROOF_COLLECTION,
+        "instances": n,
+        "placements": len(assembly.placements),
+        "openings_proof_placements": shell_placements,
+        "openings_proof_apertures": aperture_placements,
+        "openings_bounds_cm": {"min": shell_min, "max": shell_max},
+        "camera_pose": camera_pose,
+        "openings_proof_hidden": frame["openings_proof_hidden"],
+        "openings_proof_visible": frame["openings_proof_visible"],
+        "excluded_collections": frame["excluded_collections"],
+        "screenshot": str(shot) if shot else None,
+        "boolean_solvers": sorted(bpy_util.BOOLEAN_SOLVERS),
+    }
+
+
 def frame_camera_on_meshes(*, collection: Optional[str] = None) -> None:
     """Frame visible PAE instances — scoped to *collection* when provided."""
     from pae.primitives import bpy_util
@@ -1227,6 +1493,8 @@ def main() -> Dict[str, Any]:
         result = build_gallery(write_png=True)
     elif mode == "stair_proof":
         result = build_m2_stair_proof(write_png=True)
+    elif mode == "openings_proof":
+        result = build_m1_openings_proof(write_png=True)
     else:
         result = build_live(write_png=True)
     print("PAE_BLENDER_BUILD", result)

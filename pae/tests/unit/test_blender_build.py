@@ -221,6 +221,35 @@ def test_gallery_headless_offsets_are_monotonic_along_x():
     assert labels == ["m1", "m2", "m3", "m4_l", "m4_u", "m4_c"]
 
 
+def test_stair_proof_visibility_allowlist():
+    from pae.blender_build import is_stair_proof_visible_asset
+    from pae.pipeline import run_through_assemble
+    from pae.spec import m2_two_storey_stair_spec
+
+    assert is_stair_proof_visible_asset("stair_straight")
+    assert is_stair_proof_visible_asset("floor_hole")
+    assert is_stair_proof_visible_asset("wall", piece_id="stair_landing")
+    assert not is_stair_proof_visible_asset("wall_segment")
+    assert not is_stair_proof_visible_asset("floor")
+    assert not is_stair_proof_visible_asset("ground_slab")
+    assert not is_stair_proof_visible_asset("roof_flat")
+
+    _, _, assembly, _ = run_through_assemble(m2_two_storey_stair_spec())
+    visible = [
+        p
+        for p in assembly.placements
+        if is_stair_proof_visible_asset(p.asset_id, p.piece_id)
+    ]
+    hidden = [
+        p
+        for p in assembly.placements
+        if not is_stair_proof_visible_asset(p.asset_id, p.piece_id)
+    ]
+    assert len(visible) == 3
+    assert len(hidden) == len(assembly.placements) - 3
+    assert {p.kind for p in hidden} >= {"wall", "floor", "roof"}
+
+
 def test_stair_proof_bounds_cm_includes_stair_and_holes():
     from pae.blender_build import is_stair_proof_placement, stair_proof_bounds_cm
     from pae.pipeline import run_through_assemble
