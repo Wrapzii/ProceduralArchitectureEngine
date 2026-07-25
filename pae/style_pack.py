@@ -163,7 +163,10 @@ class StylePack:
 
     def resolve(self, overrides: Optional[Mapping[str, Any]] = None) -> "StylePack":
         """Re-resolve this pack id then apply optional per-call overrides."""
-        resolved = resolve_style_pack(self.id)
+        try:
+            resolved = resolve_style_pack(self.id)
+        except ValueError:
+            resolved = None
         if resolved is None:
             resolved = ENGINE_DEFAULTS
         if not overrides:
@@ -564,26 +567,32 @@ def resolve_style_pack(
     *,
     _chain: Tuple[str, ...] = (),
 ) -> Optional[StylePack]:
-    """Load and fully resolve a style pack (engine → extends chain → pack)."""
+    """Load and fully resolve a style pack (engine → extends chain → pack).
+
+    Inheritance cycles raise ``ValueError`` (caught by ``load_style_pack`` as
+    ``style_extends``). Schema errors on a parent return ``None``.
+    """
     if style_id in _chain:
-        return None
+        cycle = " → ".join((*_chain, style_id))
+        raise ValueError(f"style inheritance cycle: {cycle}")
     data, report = _load_raw_json(style_id)
     if data is None or not report.ok:
         return None
     pack, err = _parse_style_dict(data, style_id=style_id)
     if err or pack is None:
         return None
-    try:
-        resolved = _resolve_with_extends(data, pack, chain=_chain)
-    except ValueError:
-        return None
+    resolved = _resolve_with_extends(data, pack, chain=_chain)
     if overrides:
         resolved = _apply_overrides(resolved, overrides)
     return resolved
 
 
 def load_style_pack(style_id: str) -> Tuple[Optional[StylePack], Report]:
-    """Load a style preset from ``pae/styles/<id>.json`` with schema validation."""
+    """Load a style preset from ``pae/styles/<id>.json`` with schema validation.
+
+    Unknown top-level / nested keys → ``style_schema`` (fail-closed).
+    Broken ``extends`` chains / cycles → ``style_extends`` (fail-closed).
+    """
     data, report = _load_raw_json(style_id)
     if data is None:
         return None, report
@@ -595,6 +604,7 @@ def load_style_pack(style_id: str) -> Tuple[Optional[StylePack], Report]:
                     check="style_schema",
                     message=err,
                     world_xyz=None,
+                    critical=True,
                 )
             ]
         )
@@ -608,6 +618,7 @@ def load_style_pack(style_id: str) -> Tuple[Optional[StylePack], Report]:
                     check="style_extends",
                     message=str(exc),
                     world_xyz=None,
+                    critical=True,
                 )
             ]
         )

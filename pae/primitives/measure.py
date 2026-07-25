@@ -154,9 +154,10 @@ def footprint_contract_errors(
             errors.append(
                 f"{desc.id}.size.z: surface {sz:.1f} cm is thicker than a floor slab"
             )
-    elif kind in ("column", "roofline"):
+    elif kind in ("column", "roofline", "light_anchor"):
         # Sub-bay pieces must FIT their declared footprint but need not fill it: a chimney
         # is not a module wide, and padding it to one would put a 4 m box around it.
+        # Light anchors are tiny centred markers — same sub-bay rules.
         # Height stays contract-locked so storey stacking still works.
         errors.extend(
             _axis_err(

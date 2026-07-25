@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, Union
 
 from pae.assembly_types import Assembly, SolidPlacement
+from pae.anchors import anchor_kind_from_tags, anchor_loc_cm
 from pae.contract import (
     FLOOR_T_CM,
     MODULE_CM,
@@ -48,6 +49,15 @@ def lod_placeholder() -> Dict[str, str]:
 
 def collision_stub(asset_id: str) -> Dict[str, Any]:
     """Collision placeholder for one asset — UE consumer fills mesh / preset."""
+    if asset_id.startswith("light_anchor"):
+        # Position-only markers — UE spawns lights; no mesh collision.
+        return {
+            "asset_id": asset_id,
+            "profile": "none",
+            "ue_collision_preset": "NoCollision",
+            "simple_bounds": "none",
+            "note": "light_anchor marker — spawn UE light at loc_cm; no collision",
+        }
     return {
         "asset_id": asset_id,
         "profile": "mesh_complex",
@@ -124,6 +134,28 @@ def placement_loc_cm(p: SolidPlacement) -> Tuple[float, float, float]:
     return placement_origin_cm(p.cell[0], p.cell[1], p.level, p.offset_cm)
 
 
+def _light_anchors_block(assembly: Assembly) -> List[Dict[str, Any]]:
+    rows: List[Dict[str, Any]] = []
+    for p in assembly.placements:
+        if p.kind != "light_anchor":
+            continue
+        kind_hint = anchor_kind_from_tags(p.tags) or "unknown"
+        lx, ly, lz = anchor_loc_cm(p)
+        rows.append(
+            {
+                "piece_id": p.piece_id,
+                "asset_id": p.asset_id,
+                "loc_cm": [lx, ly, lz],
+                "yaw": p.yaw,
+                "anchor_kind": kind_hint,
+                "level": p.level,
+                "intensity_hint": "medium",
+            }
+        )
+    rows.sort(key=lambda row: row["piece_id"])
+    return rows
+
+
 def build_manifest(
     assembly: Assembly,
     report: Report,
@@ -168,6 +200,7 @@ def build_manifest(
         "contract": contract,
         "assets": asset_rows,
         "placements": placements,
+        "light_anchors": _light_anchors_block(assembly),
         "collision": collision_rows,
         "validation": _validation_block(report),
     }

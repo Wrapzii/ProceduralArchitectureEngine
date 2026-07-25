@@ -1320,8 +1320,9 @@ def _check_stair_exit_clearance(assembly: Assembly) -> List[Failure]:
 # Kinds that are legitimately their own island: ground surfaces tile the site, and a
 # boundary fence is SUPPOSED to stand apart from the building. Everything else that is
 # part of the structure must be reachable from the structure.
-ISLAND_EXEMPT_KINDS = frozenset({"surface"})
-ISLAND_EXEMPT_TAGS = frozenset({"site", "boundary"})
+# light_anchor: position-only UE spawn markers — not structural envelope pieces.
+ISLAND_EXEMPT_KINDS = frozenset({"surface", "light_anchor"})
+ISLAND_EXEMPT_TAGS = frozenset({"site", "boundary", "light_anchor", "marker"})
 
 
 def _island_exempt(p: SolidPlacement) -> bool:
