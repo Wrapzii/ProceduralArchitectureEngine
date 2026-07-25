@@ -428,3 +428,49 @@ def test_m3_tower_drum_outside_hall_footprint():
     # West tower: entire drum west of hall west face (x = hall_min.x).
     assert cx + r <= hall_min[0] + TOL_CM
     assert cy == pytest.approx(200.0, abs=TOL_CM)
+
+
+def _hall_tower_xy_union_cm(assembly, massing) -> tuple[tuple[float, float], tuple[float, float]]:
+    """Axis-aligned XY union of hall footprint and tower drum (M3 gallery floater probe)."""
+    hall_min, hall_max = _hall_footprint_bbox_cm(massing)
+    cx, cy = _tower_drum_center_cm(assembly)
+    r = MODULE_CM
+    union_min = (min(hall_min[0], cx - r), min(hall_min[1], cy - r))
+    union_max = (max(hall_max[0], cx + r), max(hall_max[1], cy + r))
+    return union_min, union_max
+
+
+def _placement_xy_center_cm(p) -> tuple[float, float]:
+    mn, mx = placement_world_aabb(
+        p.cell[0],
+        p.cell[1],
+        p.level,
+        p.yaw,
+        p.size_cm,
+        p.offset_cm,
+        rotates_about_center=getattr(p, "rotates_about_center", False),
+    )
+    return ((mn[0] + mx[0]) * 0.5, (mn[1] + mx[1]) * 0.5)
+
+
+def test_m3_no_disconnected_ground_plinth_far_from_hall_tower_union():
+    """M3 — no orphan ground/floor slabs at tower grid cell after drum XY offset."""
+    assembly, _, massing = _assembly_from_spec(m3_keep_tower_spec())
+    union_min, union_max = _hall_tower_xy_union_cm(assembly, massing)
+    margin = TOL_CM
+
+    grounds = [p for p in assembly.placements if p.kind == "ground"]
+    assert len(grounds) == 16, "tower cell must not receive a ground plinth"
+
+    for p in grounds:
+        cx, cy = _placement_xy_center_cm(p)
+        assert union_min[0] - margin <= cx <= union_max[0] + margin
+        assert union_min[1] - margin <= cy <= union_max[1] + margin
+
+    tower_cell = next(v for v in massing.volumes if v.role == "tower")
+    tc = (tower_cell.x0, tower_cell.y0)
+    assert not any(p.cell == tc for p in grounds)
+    assert not any(
+        p.kind == "floor" and p.level == 0 and p.cell == tc
+        for p in assembly.placements
+    )

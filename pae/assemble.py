@@ -30,7 +30,12 @@ from pae.plan import CellRole, FloorPlan, StoreyGrid
 from pae.primitives.catalog import catalog_by_id, get as get_primitive
 from pae.primitives.roofs import (
     local_slope_rise_cm,
+    roof_eave_offset_cm,
+    roof_eave_overhang_per_side,
     roof_flat_span_size_cm,
+    roof_gable_end_offset_cm,
+    roof_gable_end_size_cm,
+    roof_pitched_span_size_cm,
     roof_rise_cm,
 )
 from pae.primitives.types import PrimitiveDescriptor
@@ -917,6 +922,7 @@ def _place_pitched_roof(
     gable_piece = catalog.get("roof_gable_infill")
     slope_piece = catalog.get("roof_pitched_slope")
     roof_z = STOREY_CM
+    eave_ox, eave_oy, _ = roof_eave_offset_cm()
     cells = [
         (x, y)
         for x in range(x0, x1 + 1)
@@ -938,6 +944,7 @@ def _place_pitched_roof(
         gable_height = full_rise + FLOOR_T_CM
         span_y = modules_y * MODULE_CM
         span_x = modules_x * MODULE_CM
+        deck_x, deck_y = roof_pitched_span_size_cm(span_x, span_y)
         for x in (rx0, rx1):
             pid = _next_piece_id(counters, "roof_gable", (x, ry0), level)
             placements.append(
@@ -948,8 +955,18 @@ def _place_pitched_roof(
                     cell=(x, ry0),
                     level=level,
                     yaw=0,
-                    offset_cm=(0.0, 0.0, roof_z),
-                    size_cm=(MODULE_CM, span_y, gable_height),
+                    offset_cm=(
+                        *roof_gable_end_offset_cm(
+                            ridge_along_x=True, is_low_end=(x == rx0)
+                        )[:2],
+                        roof_z,
+                    ),
+                    size_cm=roof_gable_end_size_cm(
+                        ridge_along_x=True,
+                        span_x_cm=span_x,
+                        span_y_cm=span_y,
+                        gable_height=gable_height,
+                    ),
                     rotates_about_center=gable_piece.rotates_about_center,
                     tags=gable_piece.tags,
                 )
@@ -964,8 +981,8 @@ def _place_pitched_roof(
                 cell=(rx0, ry0),
                 level=level,
                 yaw=0,
-                offset_cm=(0.0, 0.0, roof_z),
-                size_cm=(span_x, span_y, gable_height),
+                offset_cm=(eave_ox, eave_oy, roof_z),
+                size_cm=(deck_x, deck_y, gable_height),
                 rotates_about_center=slope_piece.rotates_about_center,
                 tags=slope_piece.tags,
             )
@@ -976,6 +993,7 @@ def _place_pitched_roof(
         gable_height = full_rise + FLOOR_T_CM
         span_x = modules_x * MODULE_CM
         span_y = modules_y * MODULE_CM
+        deck_x, deck_y = roof_pitched_span_size_cm(span_x, span_y)
         for y in (ry0, ry1):
             pid = _next_piece_id(counters, "roof_gable", (rx0, y), level)
             placements.append(
@@ -986,8 +1004,18 @@ def _place_pitched_roof(
                     cell=(rx0, y),
                     level=level,
                     yaw=0,
-                    offset_cm=(0.0, 0.0, roof_z),
-                    size_cm=(span_x, MODULE_CM, gable_height),
+                    offset_cm=(
+                        *roof_gable_end_offset_cm(
+                            ridge_along_x=False, is_low_end=(y == ry0)
+                        )[:2],
+                        roof_z,
+                    ),
+                    size_cm=roof_gable_end_size_cm(
+                        ridge_along_x=False,
+                        span_x_cm=span_x,
+                        span_y_cm=span_y,
+                        gable_height=gable_height,
+                    ),
                     rotates_about_center=gable_piece.rotates_about_center,
                     tags=gable_piece.tags,
                 )
@@ -1001,8 +1029,8 @@ def _place_pitched_roof(
                 cell=(rx0, ry0),
                 level=level,
                 yaw=0,
-                offset_cm=(0.0, 0.0, roof_z),
-                size_cm=(span_x, span_y, gable_height),
+                offset_cm=(eave_ox, eave_oy, roof_z),
+                size_cm=(deck_x, deck_y, gable_height),
                 rotates_about_center=slope_piece.rotates_about_center,
                 tags=slope_piece.tags,
             )
@@ -1105,6 +1133,7 @@ def assemble(
 
     storeys = len(floor_plan.storeys)
     stair_occupied = _stair_occupied_cells(floor_plan)
+    tower_cells = _tower_cells(floor_plan)
 
     for grid in floor_plan.storeys:
         level = grid.level
@@ -1157,6 +1186,8 @@ def assemble(
         if level == 0:
             for (cx, cy), role in grid.cells.items():
                 if (level, cx, cy) in stair_occupied:
+                    continue
+                if (cx, cy) in tower_cells:
                     continue
                 if role in _FLOOR_ROLES:
                     pid = _next_piece_id(counters, "floor", (cx, cy), level)
@@ -1219,6 +1250,12 @@ def assemble(
                 for rx0, ry0, rx1, ry1 in roof_spans:
                     modules_x = rx1 - rx0 + 1
                     modules_y = ry1 - ry0 + 1
+                    west, east, south, north = roof_eave_overhang_per_side(
+                        rx0, ry0, rx1, ry1, roof_spans
+                    )
+                    eave_ox, eave_oy, _ = roof_eave_offset_cm(
+                        overhang_west=west, overhang_south=south
+                    )
                     pid = _next_piece_id(counters, "roof", (rx0, ry0), level)
                     placements.append(
                         SolidPlacement(
@@ -1228,8 +1265,15 @@ def assemble(
                             cell=(rx0, ry0),
                             level=level,
                             yaw=0,
-                            offset_cm=(0.0, 0.0, roof_z),
-                            size_cm=roof_flat_span_size_cm(modules_x, modules_y),
+                            offset_cm=(eave_ox, eave_oy, roof_z),
+                            size_cm=roof_flat_span_size_cm(
+                                modules_x,
+                                modules_y,
+                                overhang_west=west,
+                                overhang_east=east,
+                                overhang_south=south,
+                                overhang_north=north,
+                            ),
                             tags=roof_piece.tags,
                         )
                     )
@@ -1271,6 +1315,8 @@ def assemble(
                 continue
             for (cx, cy), role in grid.cells.items():
                 if role not in _FLOOR_ROLES:
+                    continue
+                if (cx, cy) in tower_cells:
                     continue
                 pid = _next_piece_id(counters, "ground", (cx, cy), 0)
                 placements.append(
