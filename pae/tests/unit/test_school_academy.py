@@ -119,6 +119,21 @@ def test_school_assemble_validate_critical_empty_before_trim():
     _, _, assembly, _ = run_through_assemble(spec)
     _, report = validate(assembly)
     assert report.critical == [], [(f.check, f.message) for f in report.critical]
+    assert any(r.get("double_height") for r in assembly.room_specs)
+    from pae.plan import CellRole
+    from pae.validate import _cell_role_is
+
+    double_voids = sum(
+        1
+        for layer in assembly.floor_plan.values()
+        for row in layer.cells
+        for role in row
+        if _cell_role_is(role, CellRole.DOUBLE_VOID)
+    )
+    assert double_voids > 0, "great_hall double_height must carve DOUBLE_VOID cells"
+    assert not any(
+        f.check == "room_spec" and f.critical for f in report.failures + report.critical
+    )
 
 
 def test_school_switchback_floor_holes_on_upper_storeys():

@@ -331,44 +331,129 @@ def _volume_cells_for_room(massing: Massing, kind: str) -> Set[Tuple[int, int]]:
     return set()
 
 
+_DOUBLE_HEIGHT_CARVEABLE = frozenset(
+    {
+        CellRole.INTERIOR,
+        CellRole.CORRIDOR,
+        CellRole.CLASSROOM,
+    }
+)
+
+
+def _wall_line_adjacency(grid: StoreyGrid, x: int, y: int) -> int:
+    """Count orthogonal WALL_LINE neighbours (gallery-ring heuristic)."""
+    return sum(
+        1
+        for dx, dy in ((-1, 0), (1, 0), (0, -1), (0, 1))
+        if grid.get(x + dx, y + dy) == CellRole.WALL_LINE
+    )
+
+
+def _carve_double_void_cells(
+    grid: StoreyGrid,
+    cells: Set[Tuple[int, int]],
+    *,
+    keep_gallery_ring: bool,
+) -> int:
+    """Mark carveable cells DOUBLE_VOID. Returns how many cells changed."""
+    carved = 0
+    for x, y in cells:
+        role = grid.get(x, y)
+        if role not in _DOUBLE_HEIGHT_CARVEABLE:
+            continue
+        if keep_gallery_ring and _wall_line_adjacency(grid, x, y) > 0:
+            continue
+        grid.set(x, y, CellRole.DOUBLE_VOID)
+        carved += 1
+    return carved
+
+
+def _carve_double_void_fallback(
+    grid: StoreyGrid,
+    cells: Set[Tuple[int, int]],
+) -> int:
+    """When the gallery ring ate every cell, force an open void (fail-closed).
+
+    Prefers cells farthest from WALL_LINE so a walkable ring can remain when
+    the volume is large enough; always carves at least one carveable cell.
+    """
+    candidates: List[Tuple[int, int, int]] = []
+    for x, y in cells:
+        role = grid.get(x, y)
+        if role not in _DOUBLE_HEIGHT_CARVEABLE:
+            continue
+        candidates.append((_wall_line_adjacency(grid, x, y), x, y))
+    if not candidates:
+        return 0
+    candidates.sort()  # least wall-adjacent first
+    # Carve the least-adjacent half (at least one) so tiny halls still open.
+    n = max(1, len(candidates) // 2)
+    carved = 0
+    for _, x, y in candidates[:n]:
+        grid.set(x, y, CellRole.DOUBLE_VOID)
+        carved += 1
+    return carved
+
+
 def _apply_double_height_rooms(
     storeys: List[StoreyGrid],
     massing: Massing,
-) -> None:
+) -> List[Failure]:
     """Suppress intermediate floors over double-height room cells (§2.4).
 
     Perimeter WALL_LINE cells are preserved so walls still enclose the volume.
     Interior cells on intermediate storeys become DOUBLE_VOID (no floor slab).
     A one-cell gallery ring along the room perimeter stays walkable so wings
     can still reach stairs across a double-height hall.
+
+    Fail-closed: a declared ``double_height`` room that cannot open any
+    DOUBLE_VOID cell (missing volume, or every interior cell blocked) yields a
+    plan failure rather than a silent solid intermediate floor.
     """
+    failures: List[Failure] = []
     if not massing.rooms or massing.storeys < 2:
-        return
+        return failures
     for room in massing.rooms:
         if not room.double_height:
             continue
         cells = _volume_cells_for_room(massing, room.kind)
         if not cells:
+            failures.append(
+                Failure(
+                    check="double_height_carve",
+                    message=(
+                        f"room {room.name!r} is double_height but no volume "
+                        f"cells for kind {room.kind!r}"
+                    ),
+                    world_xyz=None,
+                )
+            )
             continue
-        for level in range(1, min(_DOUBLE_HEIGHT_SPAN, massing.storeys)):
+        carved = 0
+        levels = list(range(1, min(_DOUBLE_HEIGHT_SPAN, massing.storeys)))
+        for level in levels:
             if level >= len(storeys):
                 break
-            grid = storeys[level]
-            for x, y in cells:
-                role = grid.get(x, y)
-                if role not in (
-                    CellRole.INTERIOR,
-                    CellRole.CORRIDOR,
-                    CellRole.CLASSROOM,
-                ):
-                    continue
-                # Gallery ring: keep perimeter interior cells walkable.
-                if any(
-                    grid.get(x + dx, y + dy) == CellRole.WALL_LINE
-                    for dx, dy in ((-1, 0), (1, 0), (0, -1), (0, 1))
-                ):
-                    continue
-                grid.set(x, y, CellRole.DOUBLE_VOID)
+            carved += _carve_double_void_cells(
+                storeys[level], cells, keep_gallery_ring=True
+            )
+        if carved == 0:
+            for level in levels:
+                if level >= len(storeys):
+                    break
+                carved += _carve_double_void_fallback(storeys[level], cells)
+        if carved == 0:
+            failures.append(
+                Failure(
+                    check="double_height_carve",
+                    message=(
+                        f"room {room.name!r} is double_height but plan carved "
+                        "0 DOUBLE_VOID cells"
+                    ),
+                    world_xyz=None,
+                )
+            )
+    return failures
 
 
 def _carve_double_loaded_wings(
@@ -698,7 +783,7 @@ def plan(massing: Massing) -> Tuple[Optional[FloorPlan], Report]:
         storeys, massing
     )
 
-    _apply_double_height_rooms(storeys, massing)
+    failures.extend(_apply_double_height_rooms(storeys, massing))
 
     failures.extend(_apply_stairs(storeys, massing, interior_by_level))
 

@@ -873,6 +873,21 @@ def _check_double_height_no_floor(assembly: Assembly) -> List[Failure]:
     return failures
 
 
+def _cell_role_is(role: object, expected: CellRole) -> bool:
+    """Compare CellRole by value so reload_pae() stale imports do not false-fail.
+
+    ``reload_pae`` drops ``pae.*`` from ``sys.modules``; suites that keep a
+    pre-reload ``from pae.plan import CellRole`` then assemble with a fresh
+    enum identity. ``role == expected`` is False across those enums even when
+    both are DOUBLE_VOID (value 9). Value compare keeps room_spec fail-closed
+    on real missing voids without flake criticals.
+    """
+    if role == expected:
+        return True
+    value = getattr(role, "value", None)
+    return value is not None and value == expected.value
+
+
 def _check_room_specs(assembly: Assembly) -> List[Failure]:
     """Optional program checks when room_specs were declared on the spec."""
     failures: List[Failure] = []
@@ -881,16 +896,17 @@ def _check_room_specs(assembly: Assembly) -> List[Failure]:
 
     classroom_cells = 0
     hall_cells = 0
+    double_void_cells = 0
     for level, layer in sorted(assembly.floor_plan.items()):
-        ox, oy = layer.origin_cell
         for ly in range(layer.height):
             for lx in range(layer.width):
                 role = layer.cells[ly][lx]
-                if role == CellRole.CLASSROOM:
+                if _cell_role_is(role, CellRole.CLASSROOM):
                     classroom_cells += 1
-                elif role == CellRole.INTERIOR and level == 0:
-                    cx, cy = ox + lx, oy + ly
+                elif _cell_role_is(role, CellRole.INTERIOR) and level == 0:
                     hall_cells += 1
+                if _cell_role_is(role, CellRole.DOUBLE_VOID):
+                    double_void_cells += 1
 
     for room in assembly.room_specs:
         kind = str(room.get("kind", "")).lower()
@@ -919,13 +935,7 @@ def _check_room_specs(assembly: Assembly) -> List[Failure]:
                 )
             )
         if room.get("double_height"):
-            has_void = any(
-                layer.cells[ly][lx] == CellRole.DOUBLE_VOID
-                for layer in assembly.floor_plan.values()
-                for ly in range(layer.height)
-                for lx in range(layer.width)
-            )
-            if not has_void:
+            if double_void_cells == 0:
                 failures.append(
                     Failure(
                         check="room_spec",

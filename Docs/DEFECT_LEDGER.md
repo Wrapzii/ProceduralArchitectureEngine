@@ -61,6 +61,7 @@ Severity: **S1** shipped and visible · **S2** caught in review/CI · **S3** nea
 | D-4 | S2 | Gallery roof floating a storey above the balustrade | Posts stopped at the deck when `under_roof` was on | Posts continue to the roof |
 | D-5 | S2 | Stair top plugged / unclear | `stair_exit_clearance` matches holes by `h.cell` — violates Rule 5.1 | **FIXED (M7)** — hole/stair/plug matching uses `covered_cells` |
 | D-16 | S2 | Gallery canopy only partially met range roof | Per-cell gallery `roof_flat` without eaves vs spanning range roofs | **FIXED (M7)** — one spanning canopy per range with court-face eaves |
+| D-17 | S2 | School `great_hall` critical `room_spec`: "double_height but plan has no DOUBLE_VOID cells" after `test_build_m1_openings_proof_headless` (passes in isolation) | `reload_pae()` drops `pae.*`; later assemble emits a fresh `CellRole` enum while stale `validate._check_room_specs` still compared with `==` against the pre-reload enum — identity mismatch false-failed even with 21 real DOUBLE_VOID cells | **FIXED (@VAL_ROOMS)** — `_cell_role_is` compares by `.value`; plan carve fail-closed (`double_height_carve`) + gallery-ring fallback so declared double-height always opens a void or fails plan |
 
 ## D2. Apertures and variation (user-reported from renders)
 
