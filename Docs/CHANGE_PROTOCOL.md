@@ -25,6 +25,23 @@ weeks later. All three have already happened here.
 
 ---
 
+### Exercise it through the add-on
+
+A change is not verified until it has been run the way a user runs it: through an
+add-on operator, with the Validate panel showing the result. Calling `pae.*` functions
+directly from a console is fine while developing and **not** sufficient as evidence.
+
+This is not ceremony. Two compound builders shipped for weeks ending in
+`return sited, layout, Report.from_failures([])` — a hardcoded empty report — so they
+announced "0 critical" regardless of what they built. Every agent working from those
+reports believed the geometry was clean. Nobody caught it because nobody ran the path
+the user runs. `validate()` on the same assemblies found 6 criticals and 517 warnings,
+including walls with no floor beneath them and a structure owning three separate stair
+cores — checks that already existed and whose output was being discarded.
+
+If a change cannot be exercised through an operator, that is a finding about the
+add-on. Add the operator; do not route around it.
+
 ## 1. The commit message
 
 Commit messages are the primary record. They are read far more often than any doc.

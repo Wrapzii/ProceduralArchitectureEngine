@@ -41,7 +41,7 @@ list and ask which of these it can now violate. That is your check list.
 | 3 | **Placement** | Is it in the cell/orientation it was meant to be? | `run_fit`, `buttress_outward` |
 | 4 | **Connection** | Does it touch what it must touch? | `end_connectivity`, `collinear_gap`, `canopy_attachment`, `tower_hall_kiss`, `roof_valley_join`, `spire_freestanding`, `curtain_battlement_continuity`, `compound_range_doors` |
 | 5 | **Support** | Is something underneath it? | `vertical_support` (parapet wall-head), `roof_bears_on_wall` |
-| 6 | **Coherence** | Is it part of one building, or its own island? | `freestanding`, `spire_freestanding`, `compound_not_partitioned_as_buildings`, `building_in_building`, `footprint_overlap` |
+| 6 | **Coherence** | Is it part of one building, or its own island? | `freestanding`, `spire_freestanding`, `structure_contiguous`, `structure_party_wall_open`, `structure_masses_reachable`, `structure_single_stair_core`, `compound_not_partitioned_as_buildings`, `building_in_building`, `footprint_overlap` |
 | 7 | **Exclusion** | Does it avoid what it must avoid? | `interpenetration`, `roof_penetration` |
 | 8 | **Containment** | Is the envelope sealed, floored, covered? | `enclosure`, `floor_coverage`, `roof_covers_enclosed`, `spiral_drum_enclosure` |
 | 9 | **Use** | Can a person reach it, enter it, walk it, leave it? | `stair_reachability`, `stair_exit_clearance`, `stair_run_floor_clear`, `stair_landing_clear`, `stair_flight_stack`, `stair_typology_match`, `classroom_corridor`, `aperture_sanity`, `gate_passage_clear`, `approach_stair_height_mate`, `approach_stair_aligned_to_gate` |
@@ -193,7 +193,10 @@ Placing a piece on a cell edge means composing *two* offsets: yaw rotation compe
 not the first, so every south/north fence — yawed 90° — landed a full module out, visible as
 gates breaking at corners. There is one table. Use it.
 
-**5.3 Never trust a declared size. Measure the mesh.**
+**5.3 Never trust a declared size. Measure the mesh.** Monumental gate / cloister arches
+(`gate_arch`, `gate_arch_grand`, `arcade_round`) use `head_bands ≥ 24` and band step
+≤ 8 cm (`pae/primitives/measure.py` — `monumental_arch_mesh_smooth`). Descriptor opening
+fractions are unchanged; only the curved-head mesh resolution improves.
 
 **5.4 Never derive a face from cell neighbours when the piece's own position knows better.**
 `_buttresses` chose a face by "this neighbour is not interior", which says nothing about
@@ -223,7 +226,11 @@ must not block the top or bottom landing of a linear stair. Use `covered_cells` 
 stair plus the landing-pad cell beyond each end (Rule 5.1). Perimeter envelope walls past
 the footprint are not landing blockers; interior exit edges with floor on the pad are.
 Check: `stair_landing_clear` (**critical**, fail-closed — no warning demotion, no suppress
-tags). Autofix in assemble/compound: strip blocking skins (open bay). Ledger D-18 / D-27.
+tags). Autofix in assemble/compound: strip blocking skins **only when every**
+`covered_cells` bay lies inside the landing strip zone (pad + stair ends + ≤1 cell along
+the run axis). Check: `stair_landing_strip_scope` (**critical**) — a blocker that spans
+outside the zone must not be auto-stripped (prevents punching through the building).
+Ledger D-18 / D-27 / D-30.
 
 **5.9 Connected compound ranges are one circulation graph.** Touching ranges on one
 compound/site must not be sealed by back-to-back exterior skins with no doorway. Detect
@@ -237,7 +244,8 @@ with `compound_not_partitioned_as_buildings` + `compound_range_doors` + `footpri
 | `merge` | Single inhabited mass — retag to shared `building:{campus_id}`, strip party walls |
 
 Fortress bailey defaults: south curtain chain (`west_curtain` \| `gatehouse` \| `east_curtain`)
-= **merge**; cloister ↔ curtain/keep = **connect**. Autofix
+= **merge**; cloister ↔ curtain/keep = **connect**; all ranges declare
+`structure:fortress_bailey` (one structure — Roadmap 10.1). Autofix
 (`pae/compound_unify.unify_compound_assembly(assembly, connections=…)`): apply policies,
 punch `compound_link` doors where needed. Building-in-building footprints →
 `building_in_building` (critical) + tag merge. Every inhabited `building:*` needs ≥1 doorway
@@ -512,17 +520,22 @@ Checks owed by Roadmap Phase 10. Defects in `DEFECT_LEDGER.md` §D3. Each needs 
 | `structure_single_stair_core` | a structure does not carry one stair core per mass | D3-1 — three staircases in one building |
 | `flight_footprint_distinct` | no two flights of one core share a footprint on consecutive levels | D3-3 — flights stacked directly on top of each other |
 | `roof_edging_exclusive` | no roof edge carries two edging styles | D3-4 — parapet and crenellation overlapping |
+| `wall_face_exclusive` | no coplanar duplicate wall skin on one court bay when `wall_arcade` is present | D3-9 — cloister plain wall + arcade stacked on same face |
 | `storey_datum_consistent` | headroom and stair rise measured against the **volume's own** datum, not `level * STOREY_CM` | Roadmap 10.6 — silently wrong once datums vary |
+
+**Implemented (critical):** `stair_flight_stack` — `test_stair_flight_offset.py`. `roof_edging_exclusive` — `test_roof_edging_exclusive.py`. Structure identity (`structure_contiguous`, `structure_party_wall_open`, `structure_masses_reachable`, `structure_single_stair_core`) — `pae/structure_identity.py`, wired in `validate.py` via `_check_structure_identity`; green path `test_structure_identity.py::test_fortress_compound_green_path_structure_identity`. `freestanding` partition key prefers `structure:` when declared (T-102, same commit). `storey_datum_consistent` — `pae/storey_datum_validate.py` + `test_storey_datum_consistent.py`.
+
+**Started (no behaviour change):** `contract.storey_datum_z_cm` + `placement_volume_offset_z_cm` — all production datum-Z routes through accessor; uniform grid unchanged until assemble stamps volume tags. Tests: `test_validate_contract.py::test_storey_datum_accessor_matches_legacy`.
+
+**Missing (producer / spec):** assemble volume-aware floor placement (T-111), stair rise across two datums (T-112), mezzanine deck (T-113); feature smoke (Roadmap 10.7).
 
 ### The partition-key trap — read before touching `freestanding`
 
-`_check_structural_islands` partitions on the `building:` tag. That was deliberate: without
-it, a street of six houses reported five freestanding groups and the check became noise.
-
-When structures land (T-101), **the partition key must change to the structure in the same
-commit**. Otherwise every previously-clean multi-mass build starts failing, and the natural
-reaction — weakening or exempting the check — destroys the one thing that catches detached
-geometry. Changing the key is a one-line change; recovering from a weakened check is not.
+`_check_structural_islands` partitions on `structure:` when declared, else `building:`.
+That was deliberate: without per-building partitioning a street of six houses reported five
+freestanding groups and the check became noise. Fortress bailey declares one
+`structure:fortress_bailey` for all ranges — freestanding then checks connectivity within
+that structure, not per-range.
 
 ### The reachability gap this exposes
 

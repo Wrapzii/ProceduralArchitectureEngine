@@ -31,10 +31,10 @@ fix each time was a check, not a patch.
 | ~~0.5~~ | ~~`aperture_reachability`, `storey_egress` GROUND/VOLUME are WARNINGS~~ | **DONE** — checks are **critical**. Fixtures/generators fixed: assemble south-face upper glazing (no doorway-to-nothing stack; VOLUME on empty `windows_per_bay`), variation keeps gallery doors via balcony landing set, compound only punches balcony doors onto deck-adjacent bays, property factory glazes multi-storey. Tests: ``test_aperture_reachability_critical.py``. | |
 | ~~0.6~~ | ~~Circular towers have no windows and a poor roof junction~~ | **DONE** — helical / perimeter drum windows (`tower_arc_quarter_window` + wall overlays); `tower_junction` ring under crown/cap. Tests: `test_tower_windows.py`. | Phase 4.7 |
 | ~~0.4~~ | ~~Gallery roof partial edge attachment~~ | **DONE (M7)** — one spanning gallery roof per range with court-face eaves (`EAVE_OVERHANG_CM`). | |
-| 0.7 | Stacked flights share a footprint and face the same way | `_monumental_flight_pads` gated to `switchback`/`wide`; `straight` gets `pads=None` (`assemble.py:1125`). Measured 1/1 same-yaw stacked pairs on `fortress_gatehouse_spec` | Ledger D3-3 → Phase 10.4 |
-| 0.8 | Roof edge carries parapet **and** crenellation, overlapping | Two producers, no mutual exclusion (`trim.py:712`, `tower_rampart.py:295`, `compound.py:834`) | Ledger D3-4 → Phase 10.5 |
-| 0.9 | Exterior approach flights too tall to enter the gate | `approach_stairs.py` is **already correct**; `repair_approach_stairs` is called only from `compound.py:1415`, so other build paths never get it | Ledger D3-5 — fix the call site |
-| 0.10 | Tower drum: wall through it, windows into it, no entry, helix short | One cell claimed by two enclosures | `Docs/DESIGN_TOWER_DRUM.md`, lane `@DRUM_ENCLOSURE`. Ledger D3-6 |
+| 0.7 | Stacked flights share a footprint and face the same way | **DONE (@D3_WIRING_FIX)** — `_MONUMENTAL_PAD_KINDS` + solver expansion + assemble fail-closed `return` on undersized well; `fortress_gatehouse_spec` 8-cell straight well. Tests: `test_d3_wiring.py` (8), `test_stair_flight_offset.py` | Ledger D3-3 → Phase 10.4 |
+| ~~0.8~~ | ~~Roof edge carries parapet **and** crenellation, overlapping~~ | **DONE (@DOC_D3_PHASE10_AUDIT)** — `roof_edging_exclusive` critical + producer deferral (`pae/roof_edging.py`). Tests: `test_roof_edging_exclusive.py::test_double_edging_on_same_edge_fires_roof_edging_exclusive`, `::test_single_edging_style_passes`, `::test_castle_curtain_compound_has_no_double_edging` | Ledger D3-4 → Phase 10.5 |
+| ~~0.9~~ | ~~Exterior approach flights too tall to enter the gate~~ | **DONE (@DOC_D3_PHASE10_AUDIT)** — `trim()` calls `repair_approach_stairs` when `exterior_steps=True`. Tests: `test_approach_stair_mate.py::test_trim_exterior_steps_strips_poison_grid`, `::test_trim_exterior_steps_mated_height`, `::test_repair_strips_grid_and_replans` | Ledger D3-5 |
+| 0.10 | Tower drum: wall through it, windows into it, no entry, helix short | One cell claimed by two enclosures | `Docs/DESIGN_TOWER_DRUM.md`, lane `@DRUM_ENCLOSURE`. Foundations: `pae/drum.py` + `test_drum.py` green (street_scene widened 5×4/5×5 so `build()` assembles). **Open:** T-D1..T-D6 in design doc. Ledger D3-6 |
 | ~~0.11~~ | ~~Buttresses face the wrong way, oversized~~ | **DONE** — `5de4b0d`. `buttress()` mates with its BACK (+X is the wall side); `outward_offset_cm` is for pieces whose +X points away. Use `trim._pier_pose` | Ledger D3-7 |
 
 > **Not a defect, recorded because it was asked:** stairs are **auto-allocated**. `solver.py:827`
@@ -381,6 +381,10 @@ that one gap. 10.4 and 10.5 are independent and can proceed in parallel.
 
 ### 10.1 Structure identity — declared, never inferred
 
+**Status: started, not done.** `BuildingInstance.structure` and `CompoundConnections.structure_id`
+stamp `structure:<name>` (fortress/castle presets). `freestanding` partitions on `structure:`
+when present (Handbook §11d trap). Checks are wired but **silent on untagged builds**.
+
 A `structure` group on a building instance. Instances sharing it are **one building**, and
 that changes what is legal: one stair core instead of one per mass, a continuous roof plane,
 floors that run through.
@@ -392,11 +396,11 @@ building and then deletes two of its three staircases. If authoring convenience 
 the right shape is a prompt or a lint ("these three masses touch — same structure?"), never a
 silent merge.
 
-| # | Objective | Check owed |
-|---|---|---|
-| T-101 | `structure` group on `BuildingInstance`; pieces tagged `structure:<name>` | a structure group is contiguous — no member isolated from the rest **[V]** |
-| T-102 | `freestanding` partitions on **structure**, not on `building:` | *(see caution below)* |
-| T-103 | One stair core per structure, not per mass; solver allocates against the merged footprint | every storey of the structure reachable **[V]** |
+| # | Objective | Check owed | Status |
+|---|---|---|---|
+| T-101 | `structure` group on `BuildingInstance`; pieces tagged `structure:<name>` | a structure group is contiguous — no member isolated from the rest **[V]** | **Started** — field + fortress/castle stamping. Poison: `test_structure_checks.py::test_detached_masses_fire_structure_contiguous` |
+| T-102 | `freestanding` partitions on **structure**, not on `building:` | *(see caution below)* | **Started** — `partition_key` prefers structure. Poison: `test_structure_identity.py::test_street_of_houses_still_partitions_by_building` |
+| T-103 | One stair core per structure, not per mass; solver allocates against the merged footprint | every storey of the structure reachable **[V]** | **Check only** — `structure_single_stair_core`: `test_structure_checks.py::test_triple_stair_wells_fire_structure_single_stair_core`. Solver merge not done (D3-1 open) |
 
 > **Caution on T-102.** `freestanding` currently partitions on the `building:` tag, and that
 > was deliberate — without it a street of six houses reported five freestanding groups. Once
@@ -406,6 +410,8 @@ silent merge.
 
 ### 10.2 Party walls — where two masses of one structure meet
 
+**Status: open.** Checks can fire on poison fixtures; party-wall replacement not shipped (D3-2).
+
 Once membership is declared, a shared boundary is an **interior** wall and must carry a way
 through: an opening, an arch, or a door. Today it is two exterior walls back to back.
 
@@ -414,11 +420,11 @@ through: an opening, an arch, or a door. Today it is two exterior walls back to 
 stop hosting an exterior wall and start hosting a connection piece. Do not build a separate
 system for round towers.
 
-| # | Objective | Check owed |
-|---|---|---|
-| T-104 | Detect shared boundaries between masses of one structure | |
-| T-105 | Replace the doubled exterior wall with one party wall carrying an opening | no back-to-back exterior walls inside a structure **[V]** |
-| T-106 | Same rule where a drum meets a range | every mass of a structure reachable from every other **[V]** |
+| # | Objective | Check owed | Status |
+|---|---|---|---|
+| T-104 | Detect shared boundaries between masses of one structure | | **Check only** — `structure_party_wall_open` |
+| T-105 | Replace the doubled exterior wall with one party wall carrying an opening | no back-to-back exterior walls inside a structure **[V]** | **Open** — poison: `test_structure_checks.py::test_party_walls_fire_structure_party_wall_open`, `test_structure_identity.py::test_three_sealed_with_structure_fires_party_wall_check` |
+| T-106 | Same rule where a drum meets a range | every mass of a structure reachable from every other **[V]** | **Check only** — `structure_masses_reachable`: `test_structure_checks.py::test_sealed_party_walls_fire_structure_masses_reachable` |
 
 ### 10.3 Sequencing — do 10.1 before 10.2
 
@@ -427,28 +433,34 @@ membership is declared. In the other order the opening logic gets written twice.
 
 ### 10.4 Stacked flights — extend the pads mechanism to straight runs
 
-`_monumental_flight_pads` already does the right thing (two 2×2 pads shifted by the stair
-width, alternating anchor **and** yaw) and is gated to `switchback`/`wide`. Straight runs get
-`pads=None` and stack in the same cells.
+**Status: partial (D3-3).** `_MONUMENTAL_PAD_KINDS` now includes `straight`; solver expands
+well for multi-storey straight runs; `stair_flight_stack` covers `stair_straight`. **Open:**
+`fortress_gatehouse_spec` 6×3 shallow hall cannot host expanded well.
+
+`_monumental_flight_pads` does the right thing (two 2×2 pads shifted by the stair width,
+alternating anchor **and** yaw). A 180° yaw flip alone is not the fix — it corrects direction
+while leaving the flights on top of each other.
 
 **This is solver work, not assembler work** — a straight run needs a well allocated 2 bays
-wide before the assembler has anywhere to put the second pad. A 180° yaw flip alone is not the
-fix: it was tried, and it corrects direction while leaving the flights on top of each other.
+wide before the assembler has anywhere to put the second pad.
 
-| # | Objective | Check owed |
-|---|---|---|
-| T-107 | Solver allocates a 2-bay-wide well for multi-storey straight runs | |
-| T-108 | Extend pad alternation to `kind="straight"` | no two flights of one core share a footprint on consecutive levels **[V]** |
+| # | Objective | Check owed | Status |
+|---|---|---|---|
+| T-107 | Solver allocates a 2-bay-wide well for multi-storey straight runs | | **Done** for 8×5+ halls — `test_stair_flight_offset.py::test_fortress_gatehouse_straight_flights_are_laterally_offset`. **Open** for 6×3 gatehouse |
+| T-108 | Extend pad alternation to `kind="straight"` | no two flights of one core share a footprint on consecutive levels **[V]** | **Partial** — `stair_flight_stack` + `::test_school_switchback_flights_are_laterally_offset`, `::test_industrial_wide_flights_are_laterally_offset`, `::test_undersized_2x2_well_on_three_storeys_fails_closed_at_assemble`. Gap: `::test_random_monumental_multi_storey_never_stacks` |
 
 ### 10.5 Roof edging — one style per edge, declared
+
+**Status: done (D3-4 wiring + check).** `roof_edging_exclusive` critical; trim/compound defer to
+`claimed_roof_edges`. Declared `edging` on roofline spec remains future (T-109).
 
 Solid parapet and crenellation are placed by producers that do not consult each other, so an
 edge can carry both, overlapping.
 
-| # | Objective | Check owed |
-|---|---|---|
-| T-109 | One `edging` choice on the roofline spec: `parapet` \| `crenellated` \| `none` | no roof edge carries two edging styles **[V]** |
-| T-110 | Single producer honouring it; `tower_rampart` and `compound` defer to it | |
+| # | Objective | Check owed | Status |
+|---|---|---|---|
+| T-109 | One `edging` choice on the roofline spec: `parapet` \| `crenellated` \| `none` | no roof edge carries two edging styles **[V]** | **Check done** — `roof_edging_exclusive`: `test_roof_edging_exclusive.py::test_double_edging_on_same_edge_fires_roof_edging_exclusive`, `::test_single_edging_style_passes`, `::test_castle_curtain_compound_has_no_double_edging`. Spec-level choice still open |
+| T-110 | Single producer honouring it; `tower_rampart` and `compound` defer to it | | **Done** — `pae/roof_edging.py` producer deferral |
 
 ### 10.6 Variable storey datum — the half that is missing
 
@@ -457,8 +469,10 @@ edge can carry both, overlapping.
 expressible today; `double_height=True` is just shorthand for `height_storeys=2`.
 
 **Does not work:** the storey *datum* is rigid. `contract.floor_placement_z_cm(level)` is
-`level * STOREY_CM - FLOOR_T_CM`, and `level * STOREY_CM` is hardcoded in ~26 places across
-`assemble.py` and `validate.py`. So a floor cannot *start* at 1.5 storeys.
+`storey_datum_z_cm(level) - FLOOR_T_CM` (accessor routes uniform `level * STOREY_CM` today).
+
+> **Done (@STOREY_DATUM_ACCESSOR):** every production `level * STOREY_CM` datum site now calls
+> `contract.storey_datum_z_cm` — no behaviour change; volume-aware datums remain T-111.
 
 Consequence: a grand hall with a raised ceiling is fine. A **mezzanine**, or a wing whose
 floors sit half a storey off its neighbour, is not — and that second case is exactly what
@@ -485,3 +499,57 @@ other. No check asks *"is this feature reachable from the build the user actuall
 Cheapest useful answer: for each showcase/street/fortress build, assert that the features its
 spec asks for actually appear in the output. That is a smoke test, not a validator, and it
 would have caught all three before a render did.
+
+---
+
+## Phase 11 — Spec as data: the authoring surface an LLM can drive
+
+Raised by the user 2026-07-25 after installing the add-on: *"we only have a couple of
+things in there… I'm not sure how we would design our own objects or buildings or city
+plans… is there a way for the LLM to nicely connect to it?"*
+
+Correct on both counts. The add-on's entire authoring surface is `building_name`,
+`style`, `storeys`, `bays_x`, `bays_y`, `footprint_kind`, `seed` — a rectangle and a
+seed. Everything richer (towers, courtyards, room programs, circulation, compounds,
+sites) exists in Python and is unreachable from the UI. The preset buttons are hardcoded
+scene builders, so what looks like authoring is a menu of fixed scenes.
+
+### The division of labour this phase assumes
+
+The engine's value is not the UI. It is that it **refuses to build things that are
+wrong**. So:
+
+- the **LLM authors intent** — four ranges round a court, a gate tower, arcades inboard
+- **PAE places and validates** — catching the doorway to nothing, the stair into a wall,
+  the floating tower, the three stair cores in one structure
+
+The missing piece is that the spec is not data. `BuildingSpec` is a dataclass with no
+serialisation and no operator that accepts one.
+
+| # | Objective | Check owed |
+|---|---|---|
+| T-114 | `spec_to_dict` / `spec_from_dict` covering **every** field, with `schema_version` | round-trip equality: `from_dict(to_dict(s)) == s` for every fixture spec **[V]** |
+| T-115 | `pae.generate_from_spec_json` operator — filepath or text block in, pipeline run, report written to `validation_report_json` | rejects unknown keys loudly rather than silently ignoring them **[V]** |
+| T-116 | A **site/compound** spec: several buildings, their offsets, and their `structure` grouping (Phase 10.1) expressed as data | a compound spec round-trips and rebuilds identically **[V]** |
+| T-117 | Stable report JSON: `check`, `message`, `world_xyz`, `piece_id`, `critical` | schema is versioned; adding a field never breaks a consumer **[V]** |
+| T-118 | Spec **lint** distinct from validate — "this spec is incoherent" before anything is placed (2 storeys, no stair cell reachable; a tower attached to nothing) | every lint has a failing fixture **[V]** |
+
+### Why T-118 matters more than it looks
+
+Validation currently runs on *placed geometry*. An LLM iterating against it pays a full
+solve/assemble cycle to learn its spec was nonsense. A cheap lint on the spec itself
+closes that loop far faster and gives a much better error: *"storeys=3 but the footprint
+has no cell that can host a stair"* beats a stack of downstream placement failures.
+
+### Sequencing
+
+T-114 first — everything else depends on the spec being data. T-117 next, because a
+stable report is what makes the loop closeable. T-116 depends on Phase 10.1 (`structure`
+grouping) landing first, or it will serialise a concept that does not exist yet.
+
+### The rule this phase must not break
+
+Determinism. `(spec, seed)` must still produce an identical building. Serialisation
+introduces the temptation to carry incidental state (timestamps, absolute paths, dict
+ordering) into the spec. It must round-trip to the same building, not merely to an equal
+dataclass — T-114's check is written against the **assembly**, not the spec object.
