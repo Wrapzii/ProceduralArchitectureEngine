@@ -179,3 +179,4 @@ Suite at close: 405 passed, 1 failed (@TOWER_ATTACH above). Renders: Saved/Scree
 >>> TRIGGER @RM_LIGHTS — LightAnchor placements S-068..S-070 + manifest export. Owns: new anchors module, decorate/trim anchors, export schema.
 >>> TRIGGER @RM_HEADROOM — Headroom check S-130 + watertight envelope stub S-021/V. Owns: validate.py new checks.
 >>> TRIGGER @RM_CASTLE — Curtain wall + gatehouse greybox (4.1/4.2) compound preset. Owns: compound.py/site.py castle preset.
+>>> DONE @RM_CASTLE_POLISH - Phase 4.1-4.2 greybox: castle_curtain_ranges + build_castle_curtain_compound (west/east wall_plain curtains + twin-tower gatehouse wall_gate_arch role gate); CASTLE_BAILEY_SITE cobble walk; check_range_chain_connection + gate check_entrance_existence fail-closed. test_castle_curtain.py 11 passed; validate critical=[]. Commit 4b3ff49.
