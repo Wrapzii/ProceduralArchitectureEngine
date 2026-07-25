@@ -220,7 +220,7 @@ Suite at close: 405 passed, 1 failed (@TOWER_ATTACH above). Renders: Saved/Scree
 2026-07-25 — Claude: USER-REPORTED DEFECTS FROM RENDERS. Checks + failing tests added so
 these are visible in CI. **Do not weaken the tests to get green — fix the placement.**
 
->>> TRIGGER @STAIR_SPIRAL_FIX — `m_spiral_tower_spec` places FOUR `stair_spiral_quarter`
+>>> NOTE @STAIR_SPIRAL_DEFECT (not a lane — for Master to dispatch) — `m_spiral_tower_spec` places FOUR `stair_spiral_quarter`
     at yaw 0/90/180/270 on the SAME cells (-2,0) and (-1,0), and all four sit OUTSIDE the
     wall envelope. Same class as the old tower-arc scatter: quarters must share a centre
     and STACK vertically to form a helix, not sit on top of each other. User: "single piece
@@ -228,7 +228,7 @@ these are visible in CI. **Do not weaken the tests to get green — fix the plac
     spot". Failing: test_stair_integrity.py::test_no_two_stairs_occupy_the_same_cell and
     ::test_stairs_are_inside_the_building. Owns: spiral placement in solver/plan/assemble.
 
->>> TRIGGER @STAIR_LANDING — NEW CHECK `stair_landing_clearance` finds **29 stairs running
+>>> NOTE @STAIR_LANDING_DEFECT (not a lane — for Master to dispatch) — NEW CHECK `stair_landing_clearance` finds **29 stairs running
     into walls** across every showcase building and every milestone fixture (m2, m3, m8,
     school, spiral). `stair_exit_clearance` only ever checked the void ABOVE a flight, so a
     stair could have clear headroom and still dead-end into masonry at the bottom tread or
@@ -273,19 +273,39 @@ these are visible in CI. **Do not weaken the tests to get green — fix the plac
 2026-07-25 � @RM_ROOMS_CORRIDOR
 >>> DONE @RM_ROOMS_CORRIDOR � Phase 2.3 corridor spine: plan._extend_corridor_spine_to_stairs grows CORRIDOR through INTERIOR (reclaims CLASSROOM bridges) so every wing corridor reaches STAIR/VOID well; validate._check_corridor_stair_connectivity (critical) + classroom_corridor uses _cell_role_is; test_corridor_spine.py. School assemble critical=[]; room_spec/_cell_role_is preserved. Gaps: exterior egress-from-stair graph still via existing storey_egress (not new room?exterior path).
 
->>> TRIGGER @TERRAIN_PHASE9 — NEW roadmap Phase 9 (T-001..T-022): sloped ground, stepped
+>>> NOTE @TERRAIN_PHASE9 — Roadmap Phase 9 (T-001..T-022) recorded: sloped ground, stepped
     buildings, upper-storey exterior entrances, jetties, compact irregular placement.
-    Reference: medieval hill town — buildings at different ground levels, external stone
-    stairs to first-floor doors, jettied upper floors overhanging the street.
+    Reference: medieval hill town.
 
-    START HERE, in order: T-001 `BuildingInstance.base_z_cm` (site.py has cell_offset only,
-    no Z — everything sits at z=0 today), T-002 per-cell site ground height, T-003 plinth
-    snaps to ground with a new `terrain_conformance` check.
+    THIS IS NOT AN OPEN LANE AND NOT A BLOCKER. Nobody is claimed on it and nothing in
+    flight depends on it. It is written down so the capability is not lost; scheduling is
+    the user's call. Do not stop or re-route current lanes for it.
 
-    NOTE the interaction: `aperture_reachability` already makes an upper-storey exterior
-    door illegal without something walkable outside it. That coupling is CORRECT and must
-    stay — an upper door and its stair/landing land together or not at all.
+    When it IS scheduled, the dependency order within the phase is T-001 -> T-002 -> T-003
+    (a ground model first; nothing else in the phase is expressible without one).
 
-    WARNING: every existing check assumes flat ground and one base level. When T-001 lands,
-    re-prove vertical_support, enclosure, floor_coverage and freestanding on a slope. A
-    ground model that quietly breaks five checks is worse than flat ground.
+    Two facts worth knowing before anyone touches it:
+      * `aperture_reachability` already makes an upper-storey exterior door illegal without
+        something walkable outside it. That coupling is correct and should stay.
+      * Existing checks assume flat ground and one base level, so vertical_support,
+        enclosure, floor_coverage and freestanding would need re-proving on a slope.
+
+2026-07-25 — Claude: correction to my own board entries.
+
+I posted three `>>> TRIGGER` lines. Per Docs/CHANGE_PROTOCOL.md a TRIGGER claims files and
+opens a lane, which is Master's call, not a reporting agent's. I was reporting defects and
+recording a roadmap phase, not taking the work. All three are now NOTEs:
+
+  @TERRAIN_PHASE9        -> NOTE (roadmap recorded; blocks nothing, nobody assigned)
+  @STAIR_SPIRAL_DEFECT   -> NOTE (defect + failing test; Master to dispatch)
+  @STAIR_LANDING_DEFECT  -> NOTE (defect + failing test; Master to dispatch)
+
+No lane of mine is open. The failing tests in test_stair_integrity.py stand on their own as
+the record; they do not need a lane to be visible.
+
+BOARD HYGIENE — 13 lanes are currently open with no DONE:
+  @RM_CASTLE @RM_CELLS @RM_ENTRANCE @RM_HEADROOM @RM_LIGHTS @RM_P0_5 @RM_ROOF @RM_ROOMS
+  @RM_SPIRAL @RM_STYLE @TOWER_AABB @WALL_READ @WARN_POLISH
+Some (@TOWER_AABB, @WALL_READ, @WARN_POLISH) date from earlier waves. Per the protocol a
+lane with no DONE is assumed live and its files are off-limits, so stale entries make the
+whole board unreliable. Worth a sweep to close or re-declare them.

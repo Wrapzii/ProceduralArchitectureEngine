@@ -246,10 +246,14 @@ and saying "the walls are sticking through the roof."
 levels, jettied upper floors overhanging the street, external stone stairs climbing to
 first-floor doors, ground-floor undercrofts opening onto the lower path.
 
-This is not decoration; it changes an assumption baked into the engine. **Everything today
-sits at z = 0 on flat ground.** Three concrete blockers, verified:
+**Status: recorded, not scheduled. This phase blocks nothing and nobody is assigned to
+it.** It is written down so the capability is not lost.
 
-| Blocker | Evidence |
+It does change an assumption baked into the engine — everything today sits at z = 0 on flat
+ground — so the three facts below are what any future lane would start from. They are
+observations about current capability, not gates on other work:
+
+| Current limitation | Evidence |
 |---|---|
 | `BuildingInstance` has `cell_offset` only — no Z, no base level | `pae/site.py` |
 | Heightmap sampling exists only in `export/terrain.py`, applied AFTER assembly | binding, not placement |
@@ -304,11 +308,12 @@ The reference's defining feature: the first floor projects beyond the ground flo
 | T-021 | Stepped street with stair runs between levels | continuous walkable path along the street **[V]** |
 | T-022 | Buildings of differing storey heights side by side | roofline still resolves; no roof through a neighbour's wall |
 
-### Suggested order
+### Dependency order *within* the phase, if and when it is scheduled
 
-T-001 → T-002 → T-003 first: without a ground model nothing else in this phase is
-expressible. Then T-007 → T-009 (upper entrances, which is the visible win), then jetties
-T-013 → T-016, then the irregular-placement work.
+T-001 → T-002 → T-003 first: without a ground model nothing else here is expressible. Then
+T-007 → T-009 (upper entrances, the visible win), then jetties T-013 → T-016, then the
+irregular-placement work. This is an internal ordering, not a claim on priority against
+anything else on the roadmap.
 
 ### The caution
 
