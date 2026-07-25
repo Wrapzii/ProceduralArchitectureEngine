@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, List, Mapping, Optional, Set, Tuple, Union
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Set, Tuple, Union
 
 from pae.assembly_types import (
     Assembly,
@@ -18,32 +18,36 @@ from pae.contract import (
     FLOOR_T_CM,
     MODULE_CM,
     STOREY_CM,
+    cell_to_world_cm,
     ground_plinth_z_cm,
     placement_world_aabb,
     rotation_offset_cm,
 )
 from pae.solver import Volume
 
-# Soft separation so crown/cap do not z-fight the drum parapet (visual only).
+# Soft separation between stacked tower roof pieces (visual only; junction owns the joint).
 _TOWER_STACK_GAP_CM = 0.5
+_TOWER_QUARTER_YAWS = (0, 90, 180, 270)
 from pae.plan import CellRole, FloorPlan, StoreyGrid
 from pae.solver import WING_ROLES
 from pae.primitives.catalog import catalog_by_id, get as get_primitive
 from pae.primitives.plinth import ground_plinth_span_size_cm
 from pae.primitives.roofs import (
-    local_slope_rise_cm,
+    VALLEY_WIDTH_CM,
     roof_eave_offset_cm,
     roof_eave_overhang_per_side,
     roof_flat_span_size_cm,
     roof_gable_end_offset_cm,
     roof_gable_end_size_cm,
-    roof_pitched_span_size_cm,
+    roof_hip_span_size_cm,
     roof_rise_cm,
+    roof_valley_seams,
+    roof_valley_span_size_cm,
 )
+from pae.existence import check_entrance_existence
 from pae.primitives.types import PrimitiveDescriptor
 from pae.report import Failure, Report
-
-AssetDBLike = Any
+from pae.style_pack import resolve_piece_id
 StyleLike = Union[Mapping[str, Any], None]
 
 
@@ -114,9 +118,11 @@ class _PieceCatalog:
         is_door: bool,
         is_window: bool,
         style: StyleLike,
+        entrance_role: Optional[str] = None,
     ) -> _ResolvedPiece:
         if is_door:
-            return self.get(_style_door_asset(style))
+            asset_id = _door_asset_for_role(entrance_role, style)
+            return self.get(asset_id)
         if is_window:
             return self.get(_style_window_asset(style))
         return self.get("wall_plain")
@@ -134,30 +140,48 @@ def _style_window_tag(style: StyleLike) -> str:
 
 def _style_window_asset(style: StyleLike) -> str:
     """Map style window tags onto existing aperture wall piece ids."""
-    tag = _style_window_tag(style).lower()
-    mapping = {
-        "window_plain": "wall_window",
-        "window_gothic": "wall_window_lancet",
-        "window_lancet": "wall_window_lancet",
-        "window_gothic_traceried": "wall_window_gothic_traceried",
-        "window_mullioned": "wall_window_mullioned",
-        "window_round": "wall_window_round",
-        "window_oculus": "wall_window_oculus",
-        "window_clerestory": "wall_window_clerestory",
-        "window_bay_wide": "wall_window_bay_wide",
-        "arrowslit": "wall_arrowslit",
-    }
-    return mapping.get(tag, "wall_window")
+    tag = _style_window_tag(style)
+    return resolve_piece_id(style if isinstance(style, dict) else None, role="window", tag=tag)
+
+
+def _style_is_gothic(style: StyleLike) -> bool:
+    if style is None:
+        return False
+    if isinstance(style, dict):
+        win = style.get("window") or {}
+        if isinstance(win, dict):
+            tag = str(win.get("tag") or "").lower()
+            return "gothic" in tag or "lancet" in tag
+    return False
 
 
 def _style_door_asset(style: StyleLike) -> str:
     if style is None:
         return "wall_door"
-    tag = _style_window_tag(style).lower()
-    # Gothic window styles get matching arched doors.
-    if "gothic" in tag or "lancet" in tag:
+    if _style_is_gothic(style):
         return "wall_door_gothic"
     return "wall_door"
+
+
+def _door_asset_for_role(role: Optional[str], style: StyleLike) -> str:
+    """Map entrance role → wall kit piece (§1.1)."""
+    if not role:
+        return _style_door_asset(style)
+    role = role.lower()
+    gothic = _style_is_gothic(style)
+    if role in ("grand", "gate"):
+        return "wall_door_gothic" if gothic else "wall_gate_arch"
+    if role == "main":
+        return "wall_door_gothic" if gothic else "wall_door"
+    if role in ("service", "postern"):
+        return "wall_door_plain"
+    if role == "side":
+        return "wall_door"
+    if role == "balcony":
+        return "wall_door"
+    if role == "internal":
+        return "wall_door_plain"
+    return _style_door_asset(style)
 
 
 def _layer_from_grid(grid: StoreyGrid) -> FloorPlanLayer:
@@ -506,9 +530,11 @@ def _window_cells_for_level(fp: FloorPlan, level: int) -> Set[Tuple[int, int]]:
     """
     if level == 0:
         return set(fp.window_cells)
-    if fp.massing is None or not fp.massing.openings_skip_ground_windows:
+    if fp.massing is None:
         return set(fp.window_cells)
-    return _upper_storey_window_cells(fp, level)
+    if fp.massing.openings_skip_ground_windows or not fp.window_cells:
+        return _upper_storey_window_cells(fp, level)
+    return set(fp.window_cells)
 
 
 def _upper_storey_window_cells(fp: FloorPlan, level: int) -> Set[Tuple[int, int]]:
@@ -524,6 +550,10 @@ def _upper_storey_window_cells(fp: FloorPlan, level: int) -> Set[Tuple[int, int]
     )
     south = sorted((x, y) for x, y in wall_cells if (x, y - 1) not in interior)
     n_win = max(0, massing.openings_windows_per_bay * max(1, len(south)))
+    if n_win == 0 and wall_cells:
+        # Upper storeys need >=1 aperture for storey_egress VOLUME when per_bay is
+        # zero or ground glazing was suppressed.
+        n_win = 1
     door_bays = set(fp.door_cells)
     out: List[Tuple[int, int]] = []
     placed = 0
@@ -537,6 +567,17 @@ def _upper_storey_window_cells(fp: FloorPlan, level: int) -> Set[Tuple[int, int]
     return set(out)
 
 
+def _opening_probe_cell(cell: Tuple[int, int], face: str) -> Tuple[int, int]:
+    """Map boundary-line cell back to footprint cell for openings (§2.3)."""
+    x, y = cell
+    face = face.lower()
+    if face == "east":
+        return (x - 1, y)
+    if face == "north":
+        return (x, y - 1)
+    return cell
+
+
 def _wall_asset_for_cell(
     fp: FloorPlan,
     cell: Tuple[int, int],
@@ -547,15 +588,7 @@ def _wall_asset_for_cell(
     level: int,
 ) -> _ResolvedPiece:
     """Pick wall kit piece; map boundary-line cells back to footprint for openings."""
-    x, y = cell
-    face = face.lower()
-    # East/north walls sit on x1+1 / y1+1 — openings are authored on footprint cells.
-    if face == "east":
-        probe = (x - 1, y)
-    elif face == "north":
-        probe = (x, y - 1)
-    else:
-        probe = cell
+    probe = _opening_probe_cell(cell, face)
     # Openings are per-storey. A ground DOOR role must not stamp a door on every
     # upper perimeter wall at the same bay (tower attach / stacked elevations).
     grid = fp.storeys[level]
@@ -572,7 +605,13 @@ def _wall_asset_for_cell(
         primary = _primary_opening_face(probe, bbox, "window")
         if primary is not None and face != primary:
             is_window = False
-    return catalog.pick_wall(is_door=is_door, is_window=is_window, style=style)
+    entrance_role = fp.entrance_by_cell.get(probe) if is_door else None
+    return catalog.pick_wall(
+        is_door=is_door,
+        is_window=is_window,
+        style=style,
+        entrance_role=entrance_role,
+    )
 
 
 def _interior_exterior_cells(
@@ -625,6 +664,7 @@ def _resolve_walkable_interior(
             CellRole.WALL_LINE,
             CellRole.DOOR,
             CellRole.VOID,
+            CellRole.DOUBLE_VOID,
             CellRole.EXTERIOR,
         ):
             continue
@@ -657,7 +697,7 @@ def _resolve_exterior_cell(
             return (cx, cy)
         if role in _WALKABLE_INTERIOR_ROLES:
             return (cx, cy)
-        if role in (CellRole.WALL_LINE, CellRole.VOID):
+        if role in (CellRole.WALL_LINE, CellRole.VOID, CellRole.DOUBLE_VOID):
             cx += outward[0]
             cy += outward[1]
             continue
@@ -737,6 +777,14 @@ def _place_wall_run(
         )
         offset = _boundary_wall_offset_cm(face, yaw, piece_def)
         pid = _next_piece_id(counters, f"wall_{face}", cell, level)
+        tags = piece_def.tags
+        probe = _opening_probe_cell(cell, face)
+        entrance_role = fp.entrance_by_cell.get(probe)
+        aid = piece_def.asset_id
+        if entrance_role and ("door" in aid or "gate" in aid):
+            from pae.existence import entrance_role_tag
+
+            tags = tags | frozenset({entrance_role_tag(entrance_role)})
         sp = SolidPlacement(
             piece_id=pid,
             asset_id=piece_def.asset_id,
@@ -747,13 +795,13 @@ def _place_wall_run(
             offset_cm=offset,
             size_cm=piece_def.size_cm,
             rotates_about_center=piece_def.rotates_about_center,
-            tags=piece_def.tags,
+            tags=tags,
         )
         placements.append(sp)
         piece_ids.append(pid)
 
         aid = piece_def.asset_id
-        if "door" in aid:
+        if "door" in aid or "gate" in aid:
             layer = _layer_from_grid(next(g for g in fp.storeys if g.level == level))
             interior, exterior = _resolved_aperture_cells(face, cell, layer)
             floor_z = level * STOREY_CM
@@ -923,6 +971,18 @@ def _stair_occupied_cells(fp: FloorPlan) -> Set[Tuple[int, int, int]]:
     """(level, x, y) cells covered by a stair flight — skip floor slabs there."""
     occupied: Set[Tuple[int, int, int]] = set()
     run_cells = list(fp.stair_cells)
+    if not run_cells:
+        return occupied
+    kind = "straight"
+    if fp.massing is not None:
+        kind = str(getattr(fp.massing, "stair_kind", "straight") or "straight").lower()
+    if kind == "spiral" and len(run_cells) == 1:
+        cell = run_cells[0]
+        for level in range(len(fp.storeys) - 1):
+            grid = fp.storeys[level]
+            if grid.get(*cell) == CellRole.STAIR:
+                occupied.add((level, cell[0], cell[1]))
+        return occupied
     if len(run_cells) < 2:
         return occupied
     for level in range(len(fp.storeys) - 1):
@@ -941,20 +1001,67 @@ def _place_stairs(
     counters: Dict[str, int],
     failures: List[Failure],
 ) -> None:
-    """Emit stair pieces per climbed storey (straight / switchback / wide)."""
+    """Emit stair pieces per climbed storey (straight / switchback / wide / spiral)."""
     run_cells = list(fp.stair_cells)
-    if len(run_cells) < 2:
+    if not run_cells:
         return
     kind = "straight"
     if fp.massing is not None:
-        kind = str(getattr(fp.massing, "stair_kind", "straight") or "straight")
+        kind = str(getattr(fp.massing, "stair_kind", "straight") or "straight").lower()
+
+    if kind == "spiral":
+        if len(run_cells) != 1:
+            failures.append(
+                Failure(
+                    check="stair_spiral_cells",
+                    message=(
+                        f"spiral stair requires exactly one stair cell, got {len(run_cells)}"
+                    ),
+                    world_xyz=cell_to_world_cm(run_cells[0][0], run_cells[0][1], 0),
+                    critical=True,
+                )
+            )
+            return
+        spiral_def = catalog.get("stair_spiral_quarter")
+        cell = run_cells[0]
+        quarter_rise = spiral_def.size_cm[2]
+        xy_offset = (0.0, 0.0)
+        if fp.massing is not None:
+            bodies = [v for v in fp.massing.volumes if v.role in WING_ROLES]
+            for vol in fp.massing.volumes:
+                if vol.role == "tower" and (vol.x0, vol.y0) == cell:
+                    xy_offset = _tower_drum_xy_offset_cm(vol, bodies)
+                    break
+        for level in range(len(fp.storeys) - 1):
+            grid = fp.storeys[level]
+            if grid.get(*cell) != CellRole.STAIR:
+                continue
+            for qi, yaw in enumerate((0, 90, 180, 270)):
+                pid = _next_piece_id(counters, f"stair_spiral_{yaw}", cell, level)
+                placements.append(
+                    SolidPlacement(
+                        piece_id=pid,
+                        asset_id=spiral_def.asset_id,
+                        kind="stair",
+                        cell=cell,
+                        level=level,
+                        yaw=yaw,
+                        offset_cm=(xy_offset[0], xy_offset[1], qi * quarter_rise),
+                        size_cm=spiral_def.size_cm,
+                        rotates_about_center=True,
+                        tags=spiral_def.tags,
+                    )
+                )
+        return
+
+    if len(run_cells) < 2:
+        return
 
     asset_id = "stair_straight"
     if kind == "switchback":
         asset_id = "stair_switchback"
     elif kind == "wide":
         asset_id = "stair_wide"
-    # spiral quarters need same-cell stacking — still kit-only until plan emits them
 
     # Switchback / wide need a 2×2 stairwell; expand from the run AABB min corner.
     place_cells = list(run_cells)
@@ -1019,6 +1126,50 @@ def _place_stairs(
                 tags=stair_def.tags,
             )
         )
+
+
+def _punch_stair_exit_holes(
+    *,
+    fp: FloorPlan,
+    catalog: _PieceCatalog,
+    placements: List[SolidPlacement],
+    counters: Dict[str, int],
+) -> None:
+    """Open upper decks at stair exit bays (drum-offset / yawed runs)."""
+    from pae.trim import covered_cells
+
+    hole_piece = catalog.get("floor_hole")
+    existing: Set[Tuple[int, Tuple[int, int]]] = set()
+    for p in placements:
+        if p.asset_id != "floor_hole":
+            continue
+        for cell in covered_cells(p):
+            existing.add((p.level, cell))
+    for stair in placements:
+        if stair.kind != "stair":
+            continue
+        top_level = stair.level + 1
+        if top_level >= len(fp.storeys):
+            continue
+        for cell in covered_cells(stair):
+            key = (top_level, cell)
+            if key in existing:
+                continue
+            existing.add(key)
+            pid = _next_piece_id(counters, "floor_hole", cell, top_level)
+            placements.append(
+                SolidPlacement(
+                    piece_id=pid,
+                    asset_id=hole_piece.asset_id,
+                    kind="floor",
+                    cell=cell,
+                    level=top_level,
+                    yaw=0,
+                    offset_cm=(0.0, 0.0, -FLOOR_T_CM),
+                    size_cm=hole_piece.size_cm,
+                    tags=hole_piece.tags,
+                )
+            )
 
 
 def _circulation_edges(fp: FloorPlan) -> List[CirculationEdge]:
@@ -1153,191 +1304,486 @@ def _place_pitched_roof(
     tower_cells: Set[Tuple[int, int]],
     placements: List[SolidPlacement],
     counters: Dict[str, int],
+    floor_plan: Optional[FloorPlan] = None,
 ) -> None:
     """Place slope decks plus gable-end infill prisms (§6 pitched roof).
 
     Ridge along X (``modules_x >= modules_y``): gable infill only at the two
     ridge ends (``x=rx0`` and ``x=rx1``), spanning full Y; slope wedges run
-  every Y row across full X.  Mirror when the ridge runs along Y.
+    every Y row across full X.  Mirror when the ridge runs along Y.
 
-    Prior failure: gables on every eave bay → sawtooth silhouette.  Earlier
-    failure: no gable fill above eaves → open holes.
+    L/U/courtyard plans get one pitched span per wing (S-019) plus valley stubs
+    on abutments — same wing split as hip/flat.
 
     Tower cells are excluded from the roof footprint — tower uses crown/cap.
     """
-    del grid  # footprint bbox is authoritative for the deck span
     gable_piece = catalog.get("roof_gable_infill")
     slope_piece = catalog.get("roof_pitched_slope")
     roof_z = STOREY_CM
-    eave_ox, eave_oy, _ = roof_eave_offset_cm()
-    cells = [
-        (x, y)
-        for x in range(x0, x1 + 1)
-        for y in range(y0, y1 + 1)
-        if (x, y) not in tower_cells
-    ]
-    if not cells:
+    wing_spans = (
+        _massing_wing_roof_spans(floor_plan, grid) if floor_plan is not None else None
+    )
+    roof_spans = wing_spans if wing_spans else [(x0, y0, x1, y1)]
+    for rx0, ry0, rx1, ry1 in roof_spans:
+        west, east, south, north = roof_eave_overhang_per_side(
+            rx0, ry0, rx1, ry1, roof_spans
+        )
+        eave_ox, eave_oy, _ = roof_eave_offset_cm(
+            overhang_west=west, overhang_south=south
+        )
+        cells = [
+            (x, y)
+            for x in range(rx0, rx1 + 1)
+            for y in range(ry0, ry1 + 1)
+            if (x, y) not in tower_cells
+        ]
+        if not cells:
+            continue
+        sx0 = min(c[0] for c in cells)
+        sy0 = min(c[1] for c in cells)
+        sx1 = max(c[0] for c in cells)
+        sy1 = max(c[1] for c in cells)
+        modules_x = sx1 - sx0 + 1
+        modules_y = sy1 - sy0 + 1
+        ridge_along_x = modules_x >= modules_y
+        span_x = modules_x * MODULE_CM
+        span_y = modules_y * MODULE_CM
+        deck_x = span_x + west + east
+        deck_y = span_y + south + north
+        if ridge_along_x:
+            span_modules = modules_y
+            full_rise = roof_rise_cm(pitch, span_modules * MODULE_CM)
+            gable_height = full_rise + FLOOR_T_CM
+            for x in (sx0, sx1):
+                placements.append(
+                    SolidPlacement(
+                        piece_id=_next_piece_id(counters, "roof_gable", (x, sy0), level),
+                        asset_id=gable_piece.asset_id,
+                        kind="roof",
+                        cell=(x, sy0),
+                        level=level,
+                        yaw=0,
+                        offset_cm=(
+                            *roof_gable_end_offset_cm(
+                                ridge_along_x=True, is_low_end=(x == sx0)
+                            )[:2],
+                            roof_z,
+                        ),
+                        size_cm=roof_gable_end_size_cm(
+                            ridge_along_x=True,
+                            span_x_cm=span_x,
+                            span_y_cm=span_y,
+                            gable_height=gable_height,
+                        ),
+                        rotates_about_center=gable_piece.rotates_about_center,
+                        tags=gable_piece.tags,
+                    )
+                )
+            placements.append(
+                SolidPlacement(
+                    piece_id=_next_piece_id(counters, "roof_slope", (sx0, sy0), level),
+                    asset_id=slope_piece.asset_id,
+                    kind="roof",
+                    cell=(sx0, sy0),
+                    level=level,
+                    yaw=0,
+                    offset_cm=(eave_ox, eave_oy, roof_z),
+                    size_cm=(deck_x, deck_y, gable_height),
+                    rotates_about_center=slope_piece.rotates_about_center,
+                    tags=slope_piece.tags,
+                )
+            )
+        else:
+            span_modules = modules_x
+            full_rise = roof_rise_cm(pitch, span_modules * MODULE_CM)
+            gable_height = full_rise + FLOOR_T_CM
+            for y in (sy0, sy1):
+                placements.append(
+                    SolidPlacement(
+                        piece_id=_next_piece_id(counters, "roof_gable", (sx0, y), level),
+                        asset_id=gable_piece.asset_id,
+                        kind="roof",
+                        cell=(sx0, y),
+                        level=level,
+                        yaw=0,
+                        offset_cm=(
+                            *roof_gable_end_offset_cm(
+                                ridge_along_x=False, is_low_end=(y == sy0)
+                            )[:2],
+                            roof_z,
+                        ),
+                        size_cm=roof_gable_end_size_cm(
+                            ridge_along_x=False,
+                            span_x_cm=span_x,
+                            span_y_cm=span_y,
+                            gable_height=gable_height,
+                        ),
+                        rotates_about_center=gable_piece.rotates_about_center,
+                        tags=gable_piece.tags,
+                    )
+                )
+            placements.append(
+                SolidPlacement(
+                    piece_id=_next_piece_id(counters, "roof_slope", (sx0, sy0), level),
+                    asset_id=slope_piece.asset_id,
+                    kind="roof",
+                    cell=(sx0, sy0),
+                    level=level,
+                    yaw=0,
+                    offset_cm=(eave_ox, eave_oy, roof_z),
+                    size_cm=(deck_x, deck_y, gable_height),
+                    rotates_about_center=slope_piece.rotates_about_center,
+                    tags=slope_piece.tags,
+                )
+            )
+    _place_valley_stubs(
+        level=level,
+        pitch=pitch,
+        catalog=catalog,
+        roof_spans=roof_spans,
+        placements=placements,
+        counters=counters,
+    )
+
+
+def _place_valley_stubs(
+    *,
+    level: int,
+    pitch: float,
+    catalog: _PieceCatalog,
+    roof_spans: Sequence[Tuple[int, int, int, int]],
+    placements: List[SolidPlacement],
+    counters: Dict[str, int],
+) -> None:
+    """Place V-trough valley strips on L/U wing abutments (S-019 stub).
+
+    Does not resolve a single watertight multi-wing surface (S-021) — only
+    marks the shared eave seams so adjacent hips/slopes no longer collide bare.
+    """
+    if len(roof_spans) < 2:
         return
-    rx0 = min(c[0] for c in cells)
-    ry0 = min(c[1] for c in cells)
-    rx1 = max(c[0] for c in cells)
-    ry1 = max(c[1] for c in cells)
-    modules_x = rx1 - rx0 + 1
-    modules_y = ry1 - ry0 + 1
-    ridge_along_x = modules_x >= modules_y
-    if ridge_along_x:
-        span_modules = modules_y
-        full_rise = roof_rise_cm(pitch, span_modules * MODULE_CM)
-        gable_height = full_rise + FLOOR_T_CM
-        span_y = modules_y * MODULE_CM
-        span_x = modules_x * MODULE_CM
-        deck_x, deck_y = roof_pitched_span_size_cm(span_x, span_y)
-        for x in (rx0, rx1):
-            pid = _next_piece_id(counters, "roof_gable", (x, ry0), level)
-            placements.append(
-                SolidPlacement(
-                    piece_id=pid,
-                    asset_id=gable_piece.asset_id,
-                    kind="roof",
-                    cell=(x, ry0),
-                    level=level,
-                    yaw=0,
-                    offset_cm=(
-                        *roof_gable_end_offset_cm(
-                            ridge_along_x=True, is_low_end=(x == rx0)
-                        )[:2],
-                        roof_z,
-                    ),
-                    size_cm=roof_gable_end_size_cm(
-                        ridge_along_x=True,
-                        span_x_cm=span_x,
-                        span_y_cm=span_y,
-                        gable_height=gable_height,
-                    ),
-                    rotates_about_center=gable_piece.rotates_about_center,
-                    tags=gable_piece.tags,
-                )
-            )
-        # One full-footprint A-frame (non-uniform scaled proto), not per-bay wedges.
-        pid = _next_piece_id(counters, "roof_slope", (rx0, ry0), level)
+    valley_piece = catalog.get("roof_valley")
+    roof_z = STOREY_CM
+    for seam in roof_valley_seams(roof_spans):
+        run_modules = seam.run1 - seam.run0 + 1
+        size = roof_valley_span_size_cm(
+            run_modules, pitch=pitch, axis=seam.axis
+        )
+        if seam.axis == "x":
+            cell = (seam.run0, seam.cross_hi)
+            # Centre the trough on the world seam at cross_hi * MODULE.
+            offset = (0.0, -VALLEY_WIDTH_CM * 0.5, roof_z)
+        else:
+            cell = (seam.cross_hi, seam.run0)
+            offset = (-VALLEY_WIDTH_CM * 0.5, 0.0, roof_z)
+        pid = _next_piece_id(counters, "roof_valley", cell, level)
         placements.append(
             SolidPlacement(
                 piece_id=pid,
-                asset_id=slope_piece.asset_id,
+                asset_id=valley_piece.asset_id,
+                kind="roof",
+                cell=cell,
+                level=level,
+                yaw=0,
+                offset_cm=offset,
+                size_cm=size,
+                tags=valley_piece.tags,
+            )
+        )
+
+
+def _place_hip_roof(
+    *,
+    grid: StoreyGrid,
+    level: int,
+    x0: int,
+    y0: int,
+    x1: int,
+    y1: int,
+    pitch: float,
+    catalog: _PieceCatalog,
+    floor_plan: FloorPlan,
+    placements: List[SolidPlacement],
+    counters: Dict[str, int],
+) -> None:
+    """Place four-slope hip roofs per wing span (§6 / S-012).
+
+    L/U/courtyard plans get one hip per enclosed wing volume plus S-019 valley
+    stubs on abutments; interior wing seams suppress eave overhang like flat roofs.
+    """
+    roof_piece = catalog.get("roof_hip")
+    roof_z = STOREY_CM
+    wing_spans = _massing_wing_roof_spans(floor_plan, grid)
+    roof_spans = wing_spans if wing_spans else [(x0, y0, x1, y1)]
+    for rx0, ry0, rx1, ry1 in roof_spans:
+        modules_x = rx1 - rx0 + 1
+        modules_y = ry1 - ry0 + 1
+        west, east, south, north = roof_eave_overhang_per_side(
+            rx0, ry0, rx1, ry1, roof_spans
+        )
+        eave_ox, eave_oy, _ = roof_eave_offset_cm(
+            overhang_west=west, overhang_south=south
+        )
+        pid = _next_piece_id(counters, "roof_hip", (rx0, ry0), level)
+        placements.append(
+            SolidPlacement(
+                piece_id=pid,
+                asset_id=roof_piece.asset_id,
                 kind="roof",
                 cell=(rx0, ry0),
                 level=level,
                 yaw=0,
                 offset_cm=(eave_ox, eave_oy, roof_z),
-                size_cm=(deck_x, deck_y, gable_height),
-                rotates_about_center=slope_piece.rotates_about_center,
-                tags=slope_piece.tags,
+                size_cm=roof_hip_span_size_cm(
+                    modules_x,
+                    modules_y,
+                    pitch=pitch,
+                    overhang_west=west,
+                    overhang_east=east,
+                    overhang_south=south,
+                    overhang_north=north,
+                ),
+                tags=roof_piece.tags,
             )
         )
+    _place_valley_stubs(
+        level=level,
+        pitch=pitch,
+        catalog=catalog,
+        roof_spans=roof_spans,
+        placements=placements,
+        counters=counters,
+    )
+
+
+def _tower_attach_skip_yaw(
+    tower: Volume,
+    bodies: List[Volume],
+) -> Optional[int]:
+    """Wall yaw facing the attached hall — no window punched into the joint."""
+    body = _tower_attached_body(tower, bodies)
+    if body is None:
+        return None
+    west = tower.x1 < body.x0
+    east = tower.x0 > body.x1
+    south = tower.y1 < body.y0
+    north = tower.y0 > body.y1
+    if west:
+        return 180  # east face toward hall
+    if east:
+        return 0
+    if south:
+        return 90
+    if north:
+        return 270
+    return None
+
+
+def _tower_has_spiral_stair(fp: FloorPlan, cell: Tuple[int, int]) -> bool:
+    if fp.massing is None:
+        return False
+    kind = str(getattr(fp.massing, "stair_kind", "") or "").lower()
+    if kind != "spiral":
+        return False
+    return cell in set(fp.stair_cells)
+
+
+def _tower_window_slots(
+    *,
+    level: int,
+    helical: bool,
+    skip_yaw: Optional[int],
+) -> List[Tuple[int, int]]:
+    """(quarter_index, yaw) slots for drum windows on one storey.
+
+    Helical (spiral stair): one aperture per quarter turn, matching stair yaw
+    order 0/90/180/270 so each window sits at that tread height.
+    Perimeter (no spiral): one window per storey, yaw rotating with level.
+    """
+    if helical:
+        slots = list(enumerate(_TOWER_QUARTER_YAWS))
     else:
-        span_modules = modules_x
-        full_rise = roof_rise_cm(pitch, span_modules * MODULE_CM)
-        gable_height = full_rise + FLOOR_T_CM
-        span_x = modules_x * MODULE_CM
-        span_y = modules_y * MODULE_CM
-        deck_x, deck_y = roof_pitched_span_size_cm(span_x, span_y)
-        for y in (ry0, ry1):
-            pid = _next_piece_id(counters, "roof_gable", (rx0, y), level)
+        yaw = _TOWER_QUARTER_YAWS[level % 4]
+        slots = [(level % 4, yaw)]
+    if skip_yaw is None:
+        return slots
+    return [(qi, yaw) for qi, yaw in slots if yaw != skip_yaw]
+
+
+def _tower_window_wall_offset_cm(
+    drum_xy: Tuple[float, float],
+    z_off: float,
+) -> Tuple[float, float, float]:
+    """Drum-centred offset; placement uses rotates_about_center for AABB touch."""
+    return (drum_xy[0], drum_xy[1], z_off)
+
+
+def _tower_exterior_cell(cell: Tuple[int, int], yaw: int) -> Tuple[int, int]:
+    """Neighbour cell on the exterior side of a tower window (by wall yaw)."""
+    cx, cy = cell
+    if yaw == 0:
+        return (cx - 1, cy)
+    if yaw == 90:
+        return (cx, cy + 1)
+    if yaw == 180:
+        return (cx + 1, cy)
+    return (cx, cy - 1)
+
+
+def _place_tower_windows(
+    *,
+    vol: Volume,
+    cell: Tuple[int, int],
+    drum_xy: Tuple[float, float],
+    skip_yaw: Optional[int],
+    helical: bool,
+    catalog: _PieceCatalog,
+    style: StyleLike,
+    placements: List[SolidPlacement],
+    apertures: List[Aperture],
+    counters: Dict[str, int],
+) -> None:
+    """Helical / perimeter drum windows (Phase 0.6 / 4.7).
+
+    Windowed arc quarters carry the opening contract; matching wall pieces
+    (kind=wall) satisfy ``storey_egress`` VOLUME and stay attached via same-cell
+    AABB touch with the drum.
+    """
+    win_arc = catalog.get("tower_arc_quarter_window")
+    solid_arc = catalog.get("tower_arc_quarter")
+    wall_win = catalog.get(_style_window_asset(style))
+    if not (
+        "window" in wall_win.asset_id
+        or "arrowslit" in wall_win.asset_id
+        or "arcade" in wall_win.asset_id
+    ):
+        wall_win = catalog.get("wall_window")
+    quarter_rise = catalog.get("stair_spiral_quarter").size_cm[2]
+
+    for level in range(vol.storeys):
+        window_yaws = {
+            yaw
+            for _, yaw in _tower_window_slots(
+                level=level, helical=helical, skip_yaw=skip_yaw
+            )
+        }
+        for yaw in _TOWER_QUARTER_YAWS:
+            use_window = yaw in window_yaws
+            piece = win_arc if use_window else solid_arc
+            pid = _next_piece_id(
+                counters,
+                f"tower_arc_{'win_' if use_window else ''}{yaw}",
+                cell,
+                level,
+            )
             placements.append(
                 SolidPlacement(
                     piece_id=pid,
-                    asset_id=gable_piece.asset_id,
-                    kind="roof",
-                    cell=(rx0, y),
+                    asset_id=piece.asset_id,
+                    kind="tower_arc",
+                    cell=cell,
                     level=level,
-                    yaw=0,
-                    offset_cm=(
-                        *roof_gable_end_offset_cm(
-                            ridge_along_x=False, is_low_end=(y == ry0)
-                        )[:2],
-                        roof_z,
-                    ),
-                    size_cm=roof_gable_end_size_cm(
-                        ridge_along_x=False,
-                        span_x_cm=span_x,
-                        span_y_cm=span_y,
-                        gable_height=gable_height,
-                    ),
-                    rotates_about_center=gable_piece.rotates_about_center,
-                    tags=gable_piece.tags,
+                    yaw=yaw,
+                    offset_cm=(drum_xy[0], drum_xy[1], 0.0),
+                    size_cm=piece.size_cm,
+                    rotates_about_center=True,
+                    tags=piece.tags,
                 )
             )
-        pid = _next_piece_id(counters, "roof_slope", (rx0, ry0), level)
-        placements.append(
-            SolidPlacement(
-                piece_id=pid,
-                asset_id=slope_piece.asset_id,
-                kind="roof",
-                cell=(rx0, ry0),
+
+        for qi, yaw in _tower_window_slots(
+            level=level, helical=helical, skip_yaw=skip_yaw
+        ):
+            z_off = float(qi * quarter_rise) if helical else 0.0
+            if helical:
+                sx, sy, _ = wall_win.size_cm
+                size = (sx, sy * 0.55, min(quarter_rise * 0.9, STOREY_CM * 0.4))
+            else:
+                size = wall_win.size_cm
+            offset = _tower_window_wall_offset_cm(drum_xy, z_off)
+            wpid = _next_piece_id(counters, f"tower_win_{yaw}", cell, level)
+            tags = wall_win.tags | frozenset({"tower", "drum_window"})
+            sp = SolidPlacement(
+                piece_id=wpid,
+                asset_id=wall_win.asset_id,
+                kind="wall",
+                cell=cell,
                 level=level,
-                yaw=0,
-                offset_cm=(eave_ox, eave_oy, roof_z),
-                size_cm=(deck_x, deck_y, gable_height),
-                rotates_about_center=slope_piece.rotates_about_center,
-                tags=slope_piece.tags,
+                yaw=yaw,
+                offset_cm=offset,
+                size_cm=size,
+                # Centred AABB so freestanding joins the drum (same-cell touch).
+                rotates_about_center=True,
+                tags=tags,
             )
-        )
+            placements.append(sp)
+            floor_z = level * STOREY_CM
+            world = _aperture_world(sp, "window")
+            apertures.append(
+                Aperture(
+                    piece_id=f"win_{wpid}",
+                    kind="window",
+                    wall_piece_id=wpid,
+                    level=level,
+                    sill_z_cm=world[2],
+                    floor_z_cm=floor_z,
+                    interior_cell=cell,
+                    exterior_cell=_tower_exterior_cell(cell, yaw),
+                    world_xyz=world,
+                )
+            )
 
 
 def _place_tower_arcs(
     *,
     floor_plan: FloorPlan,
     catalog: _PieceCatalog,
+    style: StyleLike,
     placements: List[SolidPlacement],
+    apertures: List[Aperture],
     counters: Dict[str, int],
 ) -> None:
-    """Place 4× ``tower_arc_quarter`` at the *same* tower cell (§2.2 centred).
+    """Place tower drum (arcs + helical windows) and roof junction stack.
 
-    Prior failure: offsetting quarters to four cells scattered the drum and
-    left no curved wall. Quarters share the circle centre; yaw only.
+    Drum: 4× arc quarters at the *same* cell (§2.2 centred). Selected quarters
+    swap to ``tower_arc_quarter_window`` along the spiral (or one per storey).
+    Roof: ``tower_junction`` → crown → cap (defined joint, not a floating cone).
     """
     if floor_plan.massing is None:
         return
-    arc = catalog.get("tower_arc_quarter")
+    junction = catalog.get("tower_junction")
     crown = catalog.get("tower_crown")
     cap = catalog.get("tower_cap")
     bodies = [v for v in floor_plan.massing.volumes if v.role in WING_ROLES]
     for vol in floor_plan.massing.volumes:
         if vol.role != "tower":
             continue
-        # 1×1 tower footprint — all quarters share (x0, y0).
         cell = (vol.x0, vol.y0)
         drum_xy = _tower_drum_xy_offset_cm(vol, bodies)
-        for level in range(vol.storeys):
-            for yaw in (0, 90, 180, 270):
-                # §2.2 centred exception — no min-corner yaw offset, same cell.
-                pid = _next_piece_id(counters, f"tower_arc_{yaw}", cell, level)
-                placements.append(
-                    SolidPlacement(
-                        piece_id=pid,
-                        asset_id=arc.asset_id,
-                        kind="tower_arc",
-                        cell=cell,
-                        level=level,
-                        yaw=yaw,
-                        offset_cm=(drum_xy[0], drum_xy[1], 0.0),
-                        size_cm=arc.size_cm,
-                        rotates_about_center=True,
-                        tags=arc.tags,
-                    )
-                )
-        # Crown + cap on the drum top (centred, same cell).
+        skip_yaw = _tower_attach_skip_yaw(vol, bodies)
+        helical = _tower_has_spiral_stair(floor_plan, cell)
+        _place_tower_windows(
+            vol=vol,
+            cell=cell,
+            drum_xy=drum_xy,
+            skip_yaw=skip_yaw,
+            helical=helical,
+            catalog=catalog,
+            style=style,
+            placements=placements,
+            apertures=apertures,
+            counters=counters,
+        )
         top = vol.storeys - 1
-        crown_z = STOREY_CM + _TOWER_STACK_GAP_CM
+        junction_z = STOREY_CM
+        crown_z = junction_z + junction.size_cm[2] + _TOWER_STACK_GAP_CM
+        cap_z = crown_z + crown.size_cm[2] + _TOWER_STACK_GAP_CM
         for piece, kind, z_off in (
+            (junction, "tower_crown", junction_z),
             (crown, "tower_crown", crown_z),
-            (
-                cap,
-                "tower_cap",
-                crown_z + crown.size_cm[2] + _TOWER_STACK_GAP_CM,
-            ),
+            (cap, "tower_cap", cap_z),
         ):
-            pid = _next_piece_id(counters, kind, cell, top)
+            pid = _next_piece_id(counters, piece.asset_id, cell, top)
             placements.append(
                 SolidPlacement(
                     piece_id=pid,
@@ -1479,7 +1925,7 @@ def assemble(
             for (cx, cy), role in grid.cells.items():
                 # Punch stairwell openings: plan VOIDs, and any stair-run cell on
                 # upper decks (multi-storey wells keep STAIR on intermediate floors).
-                needs_hole = role == CellRole.VOID or (
+                needs_hole = role in (CellRole.VOID, CellRole.DOUBLE_VOID) or (
                     level > 0 and (cx, cy) in floor_plan.stair_cells
                 )
                 if not needs_hole:
@@ -1549,6 +1995,21 @@ def assemble(
                     tower_cells=_tower_cells(floor_plan),
                     placements=placements,
                     counters=counters,
+                    floor_plan=floor_plan,
+                )
+            elif floor_plan.roof_kind == "hip":
+                _place_hip_roof(
+                    grid=grid,
+                    level=level,
+                    x0=x0,
+                    y0=y0,
+                    x1=x1,
+                    y1=y1,
+                    pitch=floor_plan.roof_pitch,
+                    catalog=catalog,
+                    floor_plan=floor_plan,
+                    placements=placements,
+                    counters=counters,
                 )
 
     _place_interior_partitions(
@@ -1568,11 +2029,20 @@ def assemble(
         failures=failures,
     )
 
-    # Round towers: 4 arc quarters × same cell (§2.2 centred exception).
+    _punch_stair_exit_holes(
+        fp=floor_plan,
+        catalog=catalog,
+        placements=placements,
+        counters=counters,
+    )
+
+    # Round towers: drum arcs + helical/perimeter windows + junction roof stack.
     _place_tower_arcs(
         floor_plan=floor_plan,
         catalog=catalog,
+        style=style,
         placements=placements,
+        apertures=apertures,
         counters=counters,
     )
 
@@ -1639,7 +2109,20 @@ def assemble(
         apertures=apertures,
         storeys=storeys,
         aperture_policy=StyleAperturePolicy(),
+        room_specs=[
+            {
+                "name": r.name,
+                "kind": r.kind,
+                "area_bays": r.area_bays,
+                "double_height": r.double_height,
+            }
+            for r in floor_plan.rooms
+        ],
     )
+    if floor_plan.massing is not None and floor_plan.massing.entrances:
+        failures.extend(
+            check_entrance_existence(floor_plan.massing.entrances, assembly)
+        )
     return assembly, Report.from_failures(failures)
 
 

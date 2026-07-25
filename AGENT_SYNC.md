@@ -184,3 +184,6 @@ Suite at close: 405 passed, 1 failed (@TOWER_ATTACH above). Renders: Saved/Scree
 
 2026-07-25 — @RM_ENTRANCE_ADV
 >>> TRIGGER @RM_ENTRANCE_ADV — Phase 1.5 no-hole-without-door. Owns: pae/existence.py, EntranceSpec-only in spec.py (no RoomSpec), assemble door-role only if needed, validate.py APPEND no_bare_aperture only (do not touch aperture_reachability), test_entrances.py. Do not demote critical checks.
+
+2026-07-25 — @RM_TOWER_WIN
+>>> DONE @RM_TOWER_WIN — Phase 0.6: helical/perimeter tower windows (tower_arc_quarter_window + drum wall overlays; skip attach-face yaw); tower_junction ring under crown/cap. Spiral stairs preserved. Tests: test_tower_windows.py (8) + test_tower_mesh stack. storey_egress VOLUME green; no freestanding islands.

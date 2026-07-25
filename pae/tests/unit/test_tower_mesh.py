@@ -178,7 +178,7 @@ def test_cap_cone_aabb_and_apex():
 
 
 def test_tower_crown_cap_stack_z_offsets():
-    """Crown sits on drum top; cap on crown — no storey-height float gap."""
+    """Junction sits on drum top; crown on junction; cap on crown."""
     from pae.plan import plan
     from pae.solver import solve
     from pae.spec import load_style, m3_keep_tower_spec
@@ -193,11 +193,15 @@ def test_tower_crown_cap_stack_z_offsets():
     assert len(towers) == 1
     vol = towers[0]
     drum_top_z = vol.storeys * STOREY_CM
+    junction_desc = get("tower_junction")
     crown_desc = get("tower_crown")
+    junctions = [p for p in assembly.placements if p.asset_id == "tower_junction"]
     crowns = [p for p in assembly.placements if p.asset_id == "tower_crown"]
     caps = [p for p in assembly.placements if p.asset_id == "tower_cap"]
-    assert len(crowns) == 1 and len(caps) == 1
+    assert len(junctions) == 1 and len(crowns) == 1 and len(caps) == 1
+    j_z = junctions[0].level * STOREY_CM + junctions[0].offset_cm[2]
     crown_z = crowns[0].level * STOREY_CM + crowns[0].offset_cm[2]
     cap_z = caps[0].level * STOREY_CM + caps[0].offset_cm[2]
-    assert crown_z == pytest.approx(drum_top_z, abs=1.0)
-    assert cap_z == pytest.approx(drum_top_z + crown_desc.size_cm[2], abs=2.0)
+    assert j_z == pytest.approx(drum_top_z, abs=1.0)
+    assert crown_z == pytest.approx(j_z + junction_desc.size_cm[2], abs=2.0)
+    assert cap_z == pytest.approx(crown_z + crown_desc.size_cm[2], abs=2.0)

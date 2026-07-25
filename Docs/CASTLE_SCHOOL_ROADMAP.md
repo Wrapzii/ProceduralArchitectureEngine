@@ -29,7 +29,7 @@ fix each time was a check, not a patch.
 | ~~0.2~~ | ~~Stair-top clearance cell-based~~ | **DONE (M7)** — `_check_stair_exit_clearance` uses `covered_cells` for stair footprint, holes, and solid plugs (Rule 5.1). | Ledger D-5 |
 | ~~0.3~~ | ~~`roof_penetration` check is a warning, not critical~~ | **DONE (M7)** — school academy triaged: 0 hits (flat roofs sit ``FLOOR_T`` above wall heads; no blades). Eave-tuck and gable-ridge designed pairs exempted; check promoted to **critical**. Tests: ``test_roof_penetration_triage.py``. | |
 | 0.5 | `aperture_reachability`, `storey_egress` GROUND/VOLUME are WARNINGS | They are correct and find 25 real doorway-to-nothing defects across the milestone fixtures (M2's first-floor door opens into air) | Promoting now breaks 26 tests in other lanes. Fix the fixtures with `pae.variation`, then promote to critical. **A warning that stays a warning past one milestone is decoration.** Partial: assemble no longer stacks L0 doors onto upper storeys; M3 aperture polish green. |
-| 0.6 | Circular towers have no windows and a poor roof junction | Tower drum is arc quarters with no aperture support; the cap meets the drum without a defined joint | Needs helical window placement following the internal stair — see Phase 4.7 |
+| ~~0.6~~ | ~~Circular towers have no windows and a poor roof junction~~ | **DONE** — helical / perimeter drum windows (`tower_arc_quarter_window` + wall overlays); `tower_junction` ring under crown/cap. Tests: `test_tower_windows.py`. | Phase 4.7 |
 | ~~0.4~~ | ~~Gallery roof partial edge attachment~~ | **DONE (M7)** — one spanning gallery roof per range with court-face eaves (`EAVE_OVERHANG_CM`). | |
 
 ---
@@ -64,6 +64,9 @@ within tolerance.
 **1.5 No opening without a door.** Already enforced for balconies. Must become general:
 any breach in the envelope carries a door or gate piece, never a bare hole.
 *Verified by:* extend `aperture_sanity` to fail on an opening with no door/gate asset.
+**DONE (RM_ENTRANCE_ADV):** `no_bare_aperture` check — door apertures, `balcony_door`, and
+`entrance_role_*` placements must resolve to a door/gate asset (`pae/existence.py` +
+`validate._check_no_bare_aperture_holes`). Tests in `test_entrances.py`.
 
 ---
 
@@ -108,6 +111,12 @@ and a walkable-path check from ground to every storey.
 ---
 
 ## Phase 4 — Castle-specific structures
+
+**Greybox landed (4.1–4.2):** `castle_gatehouse_spec()`, `castle_curtain_wall_spec()`,
+`castle_bailey_spec()`, and `build_castle_curtain_compound()` in `pae/spec.py` /
+`pae/compound.py` compose twin-tower gatehouses (`wall_gate_arch` via entrance role
+`gate`) with west/east curtain runs (`wall_plain`, `parapet_solid`, `battlement` trim).
+Validated with `critical=[]`; portcullis, murder holes, and barbican remain future work.
 
 **4.1 Curtain walls** with wall-walks, parapets and battlements — a run between towers,
 not a building.
