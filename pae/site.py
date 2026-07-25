@@ -27,6 +27,7 @@ from dataclasses import dataclass, field
 from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 from pae.assembly_types import Assembly, FloorPlanLayer, SolidPlacement
+from pae.boundary import FACE_YAW, boundary_offset_cm
 from pae.contract import MODULE_CM
 from pae.primitives.catalog import catalog_by_id
 from pae.trim import covered_cells
@@ -84,17 +85,19 @@ _NEIGHBOURS = {
     "west": (-1, 0),
     "east": (1, 0),
 }
-_FACE_YAW = {"south": 90, "north": 90, "west": 0, "east": 0}
+# Boundary placement comes from pae.boundary. site.py used to carry its own copy that
+# applied the far-edge rule but NOT the yaw rotation compensation, so every south/north
+# fence — which is yawed 90 deg — landed a full module out. It read as fences and gates
+# being off by one at the corners.
+_FACE_YAW = FACE_YAW
 
 
-def _face_offset(face: str, thickness_cm: float) -> Tuple[float, float, float]:
-    if face == "south":
-        return (0.0, 0.0, 0.0)
-    if face == "north":
-        return (0.0, MODULE_CM - thickness_cm, 0.0)
-    if face == "west":
-        return (0.0, 0.0, 0.0)
-    return (MODULE_CM - thickness_cm, 0.0, 0.0)
+def _face_offset(
+    face: str,
+    size_cm: Tuple[float, float, float],
+    z_cm: float = 0.0,
+) -> Tuple[float, float, float]:
+    return boundary_offset_cm(face, size_cm, z_cm=z_cm)
 
 
 # ---------------------------------------------------------------------------
@@ -382,7 +385,7 @@ def build_site(
 
     # Kerbs on the outer edge of the walk, where it meets lawn.
     if opts.kerbs and layout.walk:
-        kerb_t = catalog[opts.kerb_piece].size_cm[0]
+        kerb_size = catalog[opts.kerb_piece].size_cm
         for cx, cy in sorted(layout.walk):
             for face, (dx, dy) in _NEIGHBOURS.items():
                 n = (cx + dx, cy + dy)
@@ -396,7 +399,7 @@ def build_site(
                         cell=(cx, cy),
                         level=0,
                         yaw=_FACE_YAW[face],
-                        offset_cm=_face_offset(face, kerb_t),
+                        offset_cm=_face_offset(face, kerb_size),
                         size_cm=catalog[opts.kerb_piece].size_cm,
                         tags=catalog[opts.kerb_piece].tags | frozenset({"site"}),
                     )
@@ -405,7 +408,7 @@ def build_site(
     # Boundary fence around the whole site, with a gate on a regular rhythm.
     if opts.boundary_fence:
         site_cells = inner | layout.lawn
-        fence_t = catalog[opts.fence_piece].size_cm[0]
+        fence_size = catalog[opts.fence_piece].size_cm
         edges: List[Tuple[Cell, str]] = []
         for cx, cy in sorted(site_cells):
             for face, (dx, dy) in _NEIGHBOURS.items():
@@ -424,7 +427,7 @@ def build_site(
                     cell=cell,
                     level=0,
                     yaw=_FACE_YAW[face],
-                    offset_cm=_face_offset(face, fence_t),
+                    offset_cm=_face_offset(face, desc.size_cm),
                     size_cm=desc.size_cm,
                     tags=desc.tags | frozenset({"site", "boundary"}),
                 )

@@ -247,3 +247,98 @@ def test_compound_is_deterministic():
     a1, _, _ = build_compound()
     a2, _, _ = build_compound()
     assert [p.piece_id for p in a1.placements] == [p.piece_id for p in a2.placements]
+
+
+# --- balcony spec + boundary corner fix (verification pass) -----------------
+
+
+def test_boundary_fence_pieces_stay_inside_their_own_cell():
+    """site.py carried its own _face_offset with NO yaw compensation, so every
+    south/north fence — which is yawed 90 deg — landed a full module out. It read as
+    gates and fences being off by one at the corners."""
+    from pae.contract import MODULE_CM as M
+
+    sited, _, _ = build_site(_assemble(m1_box_house_spec()))
+    for p in sited.placements:
+        if p.kind != "barrier":
+            continue
+        mn, mx = _aabb(p)
+        cx0, cy0 = p.cell[0] * M, p.cell[1] * M
+        assert mn[0] >= cx0 - 0.01 and mn[1] >= cy0 - 0.01, p.piece_id
+        assert mx[0] <= cx0 + M + 0.01 and mx[1] <= cy0 + M + 0.01, p.piece_id
+
+
+def test_default_compound_is_a_real_quadrangle():
+    """Four copies of one square pavilion can never enclose a court."""
+    _, layout, report = build_compound()
+    assert report.ok
+    assert len(layout.courtyard) >= 12, layout.courtyard
+
+
+def test_balcony_always_has_a_door():
+    """A balcony with no door is a balcony you cannot reach."""
+    assembly, layout, _ = build_compound()
+    assert layout.balcony_cells
+    doors = [p for p in assembly.placements if "balcony_door" in p.tags]
+    assert doors, "gallery has no access door"
+
+
+def test_balcony_door_count_is_configurable():
+    from pae.compound import BalconySpec
+
+    few, _, _ = build_compound(balcony=BalconySpec(doors_per_range=1))
+    many, _, _ = build_compound(balcony=BalconySpec(doors_per_range=4))
+    n_few = sum(1 for p in few.placements if "balcony_door" in p.tags)
+    n_many = sum(1 for p in many.placements if "balcony_door" in p.tags)
+    assert n_many > n_few, (n_few, n_many)
+
+
+def test_balcony_sides_can_be_restricted():
+    from pae.compound import BalconySpec
+
+    one, layout_one, _ = build_compound(balcony=BalconySpec(sides=("south_hall",)))
+    allr, layout_all, _ = build_compound(balcony=BalconySpec())
+    assert len(layout_one.balcony_cells) < len(layout_all.balcony_cells)
+
+
+def test_balcony_railing_and_roof_are_optional():
+    from pae.compound import BalconySpec
+
+    plain, _, _ = build_compound(
+        balcony=BalconySpec(railing=False, under_roof=False)
+    )
+    ids = {p.asset_id for p in plain.placements if "balcony" in p.tags}
+    assert "balustrade_stone" not in ids
+    assert not any(
+        p.asset_id == "roof_flat" and "balcony" in p.tags for p in plain.placements
+    )
+
+
+def test_balcony_railing_only_on_open_edges():
+    """A rail between two walkway cells is not a balcony edge — placing one on every
+    non-built face turned the whole court into a grid of fences."""
+    assembly, layout, _ = build_compound()
+    rails = [
+        p for p in assembly.placements
+        if "balcony" in p.tags and p.kind == "barrier"
+    ]
+    assert len(rails) <= len(layout.balcony_cells), (len(rails), len(layout.balcony_cells))
+
+
+def test_gallery_cells_are_claimed_once():
+    """A corner cell touches two ranges; claiming per range duplicated its deck."""
+    assembly, layout, _ = build_compound()
+    decks = [
+        p for p in assembly.placements
+        if "balcony" in p.tags and p.kind == "floor"
+    ]
+    assert len(decks) == len(layout.balcony_cells), (len(decks), len(layout.balcony_cells))
+
+
+def test_covered_gallery_is_carried_to_the_roof():
+    """Posts must continue past the deck to the roof, or the roof floats."""
+    from pae.compound import BalconySpec
+
+    assembly, _, _ = build_compound(balcony=BalconySpec(under_roof=True))
+    _, vreport = validate(assembly)
+    assert vreport.ok, [f.message for f in vreport.critical]
