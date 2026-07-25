@@ -8,14 +8,23 @@ from pathlib import Path
 import pytest
 
 from pae.assets.db import AssetDB
+from pae.assets.demo_seed import (
+    M5_DEMO_CRATE_ID,
+    M5_DEMO_CRATE_XY_CM,
+    M5_DEMO_CRATE_Z_CM,
+    m5_demo_fixture_path,
+    seed_m5_demo_assets,
+)
 from pae.assets.fit import snap_fit
 from pae.assets.import_ import MeasuredAABB, import_asset_measured
+from pae.assets.obj_measure import measure_obj_aabb
 from pae.assets.query import list_decorative_for_generator
 from pae.comfy import confirm_decorative, ingest_decorative
 from pae.contract import STOREY_CM
 from pae.decorate import decorate, pick_prop_assets
-from pae.pipeline import run_through_decorate
+from pae.pipeline import run_through_assemble, run_through_decorate
 from pae.spec import m1_box_house_spec
+from pae.validate import validate
 
 
 # Measured decorative sizes — intentionally off-grid (precision irrelevant for props).
@@ -175,6 +184,52 @@ class TestM5DecorateFromDb:
                 )
                 assert dreport.ok  # warning only
                 assert not any(p.kind == "prop" for p in assembly.placements)
+            finally:
+                db.close()
+
+
+class TestM5DemoFixture:
+    def test_obj_fixture_measured_size(self):
+        measured = measure_obj_aabb(m5_demo_fixture_path())
+        assert measured.size_cm == (
+            M5_DEMO_CRATE_XY_CM,
+            M5_DEMO_CRATE_XY_CM,
+            M5_DEMO_CRATE_Z_CM,
+        )
+
+    def test_seed_db_places_props_and_increases_placement_count(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = AssetDB(Path(tmp) / "m5_demo.db")
+            try:
+                ingested = seed_m5_demo_assets(db)
+                assert ingested.artifact is not None
+                assert ingested.artifact.written_to_db
+                stored = db.get_asset(M5_DEMO_CRATE_ID)
+                assert stored is not None
+                assert stored.size_cm == (
+                    M5_DEMO_CRATE_XY_CM,
+                    M5_DEMO_CRATE_XY_CM,
+                    M5_DEMO_CRATE_Z_CM,
+                )
+                assert "human_confirmed" in stored.tags
+                assert "m5_demo" in stored.tags
+                assert any(s.name == "base" for s in stored.sockets)
+
+                _, _, bare, _ = run_through_assemble(m1_box_house_spec(seed=11))
+                _, _, decorated, dreport = run_through_decorate(
+                    m1_box_house_spec(seed=11),
+                    asset_db=db,
+                    seed=11,
+                )
+                assert dreport.ok
+                assert len(decorated.placements) > len(bare.placements)
+                assert any(
+                    p.kind == "prop" and p.asset_id == M5_DEMO_CRATE_ID
+                    for p in decorated.placements
+                )
+                _, vreport = validate(decorated)
+                assert vreport.ok
+                assert not any(f.critical for f in vreport.failures)
             finally:
                 db.close()
 

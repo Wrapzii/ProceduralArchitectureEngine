@@ -1,0 +1,16 @@
+# M5 demo decorative crate — axis-aligned box 50×50×80 cm (min-corner origin).
+# Used by test_m5_dynamic_assets and tools/m5_demo_seed_db.py.
+v 0 0 0
+v 50 0 0
+v 50 50 0
+v 0 50 0
+v 0 0 80
+v 50 0 80
+v 50 50 80
+v 0 50 80
+f 1 2 3 4
+f 5 6 7 8
+f 1 2 6 5
+f 2 3 7 6
+f 3 4 8 7
+f 4 1 5 8

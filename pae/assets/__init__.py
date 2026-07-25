@@ -5,6 +5,15 @@ so the implementation lives in `import_.py` (`pae.assets.import_`).
 """
 
 from pae.assets.db import Asset, AssetDB, Socket
+from pae.assets.demo_seed import (
+    DEFAULT_M5_DEMO_DB,
+    M5_DEMO_CRATE_ID,
+    M5_DEMO_CRATE_XY_CM,
+    M5_DEMO_CRATE_Z_CM,
+    m5_demo_fixture_path,
+    seed_m5_demo_assets,
+)
+from pae.assets.obj_measure import measure_obj_aabb
 from pae.assets.fit import (
     evaluate_footprint_fit,
     footprint_modules as module_count_for_axis,
@@ -30,6 +39,7 @@ from pae.assets.sockets import GeometryDescriptor, propose_sockets, sockets_comp
 __all__ = [
     "Asset",
     "AssetDB",
+    "DEFAULT_M5_DEMO_DB",
     "DEFAULT_DECOR_TAGS",
     "GeometryDescriptor",
     "ImportResult",
@@ -41,7 +51,13 @@ __all__ = [
     "import_asset_measured",
     "list_by_tags",
     "list_decorative_for_generator",
+    "M5_DEMO_CRATE_ID",
+    "M5_DEMO_CRATE_XY_CM",
+    "M5_DEMO_CRATE_Z_CM",
+    "m5_demo_fixture_path",
+    "measure_obj_aabb",
     "min_corner_origin_offset",
+    "seed_m5_demo_assets",
     "module_count_for_axis",
     "normalize_to_min_corner",
     "propose_sockets",
