@@ -217,3 +217,118 @@ def test_gallery_headless_offsets_are_monotonic_along_x():
     # Headless path records extent; blender path records offset_m — check labels order.
     labels = [m["label"] for m in result["milestones"]]
     assert labels == ["m1", "m2", "m3", "m4_l", "m4_u", "m4_c"]
+
+
+def test_stair_proof_bounds_cm_includes_stair_and_holes():
+    from pae.blender_build import is_stair_proof_placement, stair_proof_bounds_cm
+    from pae.pipeline import run_through_assemble
+    from pae.spec import m2_two_storey_stair_spec
+
+    _, _, assembly, _ = run_through_assemble(m2_two_storey_stair_spec())
+    proof = [p for p in assembly.placements if is_stair_proof_placement(p)]
+    assert len(proof) == 3  # 1 stair + 2 floor_hole
+    bb_min, bb_max = stair_proof_bounds_cm(assembly)
+    assert bb_max[0] > bb_min[0]
+    assert bb_max[1] > bb_min[1]
+    assert bb_max[2] > bb_min[2]
+
+
+def test_stair_proof_camera_pose_targets_stair_aabb_center():
+    import math
+
+    from pae.blender_build import (
+        STAIR_PROOF_CAM_DIRECTION,
+        stair_proof_bounds_m,
+        stair_proof_camera_pose_from_bounds_m,
+    )
+    from pae.pipeline import run_through_assemble
+    from pae.spec import m2_two_storey_stair_spec
+
+    _, _, assembly, _ = run_through_assemble(m2_two_storey_stair_spec())
+    bb_min, bb_max = stair_proof_bounds_m(assembly)
+    pose = stair_proof_camera_pose_from_bounds_m(bb_min, bb_max)
+    cx = (bb_min[0] + bb_max[0]) * 0.5
+    cy = (bb_min[1] + bb_max[1]) * 0.5
+    cz = (bb_min[2] + bb_max[2]) * 0.5
+    assert pose["target"] == (cx, cy, cz)
+    loc = pose["location"]
+    tgt = pose["target"]
+    dist = math.sqrt(sum((loc[i] - tgt[i]) ** 2 for i in range(3)))
+    assert dist == pytest.approx(pose["radius_m"], rel=1e-6)
+    dx = loc[0] - tgt[0]
+    dy = loc[1] - tgt[1]
+    dz = loc[2] - tgt[2]
+    length = math.sqrt(dx * dx + dy * dy + dz * dz)
+    exp_x, exp_y, exp_z = STAIR_PROOF_CAM_DIRECTION
+    exp_len = math.sqrt(exp_x * exp_x + exp_y * exp_y + exp_z * exp_z)
+    assert dx / length == pytest.approx(exp_x / exp_len, abs=1e-6)
+    assert dy / length == pytest.approx(exp_y / exp_len, abs=1e-6)
+    assert dz / length == pytest.approx(exp_z / exp_len, abs=1e-6)
+
+
+def test_build_m2_stair_proof_headless():
+    from pae.blender_build import M2_STAIR_PROOF_SCREENSHOT_REL, build_m2_stair_proof
+
+    result = build_m2_stair_proof(write_png=False)
+    assert result["ok"] is True
+    assert result["mode"] == "stair_proof"
+    assert result["stair_proof_placements"] == 3
+    assert result["camera_pose"]["ortho"] is True
+    if not HAS_BPY:
+        assert result["blender"] is False
+        assert result["screenshot"] is None
+    assert str(M2_STAIR_PROOF_SCREENSHOT_REL).endswith("m2_stair_proof.png")
+
+
+def test_write_m2_stair_proof_screenshot_no_bpy_is_noop():
+    from pae.blender_build import write_m2_stair_proof_screenshot
+
+    if HAS_BPY:
+        pytest.skip("headless no-op only without bpy")
+    assert write_m2_stair_proof_screenshot() is None
+
+
+_GALLERY_PRIMARY_KINDS = (
+    "wall",
+    "floor",
+    "ground",
+    "roof",
+    "stair",
+    "tower_arc",
+    "tower_crown",
+    "tower_cap",
+    "door",
+    "window",
+)
+
+
+def test_kind_material_colors_required_keys():
+    from pae.blender_build import KIND_MATERIAL_COLORS
+
+    assert set(_GALLERY_PRIMARY_KINDS) <= set(KIND_MATERIAL_COLORS.keys())
+
+
+def test_kind_material_colors_are_distinct():
+    from pae.blender_build import material_color_for_kind
+
+    rgbs = [material_color_for_kind(k)[:3] for k in _GALLERY_PRIMARY_KINDS]
+    for i, a in enumerate(rgbs):
+        for b in rgbs[i + 1 :]:
+            dist = sum(abs(a[j] - b[j]) for j in range(3))
+            assert dist > 0.12, f"colors too similar: {a} vs {b}"
+
+
+def test_material_color_for_kind_fallback():
+    from pae.blender_build import material_color_for_kind
+
+    assert material_color_for_kind("unknown_kind") == (0.75, 0.75, 0.75, 1.0)
+
+
+def test_kind_material_colors_workbench_friendly():
+    from pae.blender_build import KIND_MATERIAL_COLORS
+
+    for _kind, (r, g, b, a) in KIND_MATERIAL_COLORS.items():
+        assert 0.15 <= r <= 0.85
+        assert 0.15 <= g <= 0.85
+        assert 0.15 <= b <= 0.85
+        assert a == 1.0
