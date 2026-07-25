@@ -45,6 +45,9 @@ def validate(assembly: Assembly) -> Tuple[Assembly, Report]:
     failures.extend(_check_classroom_corridor_connectivity(assembly))
     failures.extend(_check_run_fit(assembly))
     failures.extend(_check_aperture_sanity(assembly))
+    failures.extend(_check_structural_islands(assembly))
+    failures.extend(_check_canopy_attachment(assembly))
+    failures.extend(_check_roof_penetration(assembly))
     failures = _sort_failures(failures)
     return assembly, Report.from_failures(failures)
 
@@ -1118,6 +1121,211 @@ def _check_stair_exit_clearance(assembly: Assembly) -> List[Failure]:
 
 
 # --- §7.8 run fit ------------------------------------------------------------
+
+
+# --- §7.12 freestanding entities --------------------------------------------
+
+# Kinds that are legitimately their own island: ground surfaces tile the site, and a
+# boundary fence is SUPPOSED to stand apart from the building. Everything else that is
+# part of the structure must be reachable from the structure.
+ISLAND_EXEMPT_KINDS = frozenset({"surface"})
+ISLAND_EXEMPT_TAGS = frozenset({"site", "boundary"})
+
+
+def _island_exempt(p: SolidPlacement) -> bool:
+    return p.kind in ISLAND_EXEMPT_KINDS or bool(ISLAND_EXEMPT_TAGS & set(p.tags))
+
+
+def _check_structural_islands(assembly: Assembly) -> List[Failure]:
+    """Every structural piece must connect, directly or transitively, to the main mass.
+
+    WHY: vertical support only asks "is something under me". A gallery roof carried on its
+    own posts satisfies that perfectly while touching nothing else — it is a separate
+    building floating beside the real one. That is exactly what shipped: the balcony roofs
+    were the right height to stand up and the wrong height to meet the range roof, and the
+    render showed a detached canopy that every existing check passed.
+
+    So: build the touch graph over structural placements and require ONE component. Any
+    other component is freestanding and reported with its size and location, because a
+    two-piece island is a different bug from a two-hundred-piece one.
+    """
+    pieces = [p for p in assembly.placements if not _island_exempt(p)]
+    if len(pieces) < 2:
+        return []
+
+    boxes = [_placement_aabb(p) for p in pieces]
+    n = len(pieces)
+
+    # Bucket by cell neighbourhood so this stays near-linear instead of O(n^2) on a site
+    # with thousands of placements.
+    buckets: Dict[Tuple[int, int], List[int]] = {}
+    for i, p in enumerate(pieces):
+        buckets.setdefault(p.cell, []).append(i)
+
+    parent = list(range(n))
+
+    def find(a: int) -> int:
+        while parent[a] != a:
+            parent[a] = parent[parent[a]]
+            a = parent[a]
+        return a
+
+    def union(a: int, b: int) -> None:
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[rb] = ra
+
+    for i, p in enumerate(pieces):
+        cx, cy = p.cell
+        for dx in (-1, 0, 1):
+            for dy in (-1, 0, 1):
+                for j in buckets.get((cx + dx, cy + dy), ()):
+                    if j <= i:
+                        continue
+                    if aabb_intersects(boxes[i][0], boxes[i][1], boxes[j][0], boxes[j][1]):
+                        union(i, j)
+
+    groups: Dict[int, List[int]] = {}
+    for i in range(n):
+        groups.setdefault(find(i), []).append(i)
+    if len(groups) < 2:
+        return []
+
+    ordered = sorted(groups.values(), key=len, reverse=True)
+    failures: List[Failure] = []
+    for island in ordered[1:]:
+        rep = pieces[island[0]]
+        bb_min, bb_max = boxes[island[0]]
+        names = ", ".join(sorted(pieces[i].asset_id for i in island[:4]))
+        failures.append(
+            Failure(
+                check="freestanding",
+                message=(
+                    f"freestanding group of {len(island)} piece(s) not connected to the "
+                    f"structure — {names}"
+                ),
+                world_xyz=_centre(bb_min, bb_max),
+                piece_id=rep.piece_id,
+                critical=True,
+            )
+        )
+    return failures
+
+
+def _check_canopy_attachment(assembly: Assembly) -> List[Failure]:
+    """A roof must meet the building envelope, not merely stand on posts.
+
+    WHY THIS IS SEPARATE FROM THE ISLAND CHECK: a gallery roof carried on columns is
+    *transitively* connected — roof to post to deck to building — so the touch graph says
+    it is fine. But as a roof it is a detached canopy floating beside the real roof with a
+    gap between them. Shipped exactly that: gallery roofs at z 670–700 against range roofs
+    at 700–730, and 7 of 16 touched no wall and no other roof.
+
+    So the rule is about what a roof must touch, not whether it is reachable: a roof piece
+    must abut a wall, a parapet, or another roof that itself abuts one. Columns do not
+    count — that is the whole point.
+    """
+    roofs = [p for p in assembly.placements if p.kind in ("roof", "roofline")]
+    if not roofs:
+        return []
+    envelope = [
+        p
+        for p in assembly.placements
+        if p.kind in ("wall", "battlement")
+        or (p.kind == "barrier" and "parapet" in p.tags)
+    ]
+    if not envelope:
+        return []
+
+    roof_boxes = [_placement_aabb(p) for p in roofs]
+    env_boxes = [_placement_aabb(p) for p in envelope]
+
+    attached = [
+        any(aabb_intersects(rb[0], rb[1], eb[0], eb[1]) for eb in env_boxes)
+        for rb in roof_boxes
+    ]
+    # Spread attachment through roof-to-roof contact until it stops growing.
+    changed = True
+    while changed:
+        changed = False
+        for i, ok in enumerate(attached):
+            if ok:
+                continue
+            for j, ok_j in enumerate(attached):
+                if not ok_j or i == j:
+                    continue
+                if aabb_intersects(
+                    roof_boxes[i][0], roof_boxes[i][1],
+                    roof_boxes[j][0], roof_boxes[j][1],
+                ):
+                    attached[i] = True
+                    changed = True
+                    break
+
+    failures: List[Failure] = []
+    for p, box, ok in zip(roofs, roof_boxes, attached):
+        if ok:
+            continue
+        failures.append(
+            Failure(
+                check="canopy_attachment",
+                message=(
+                    f"freestanding roof {p.piece_id} ({p.asset_id}) — meets no wall, "
+                    f"parapet or attached roof; it is a detached canopy"
+                ),
+                world_xyz=_centre(box[0], box[1]),
+                piece_id=p.piece_id,
+                critical=True,
+            )
+        )
+    return failures
+
+
+def _check_roof_penetration(assembly: Assembly) -> List[Failure]:
+    """Nothing structural may poke up through its own roof.
+
+    A wall that runs past the roof plane reads as a blade sticking out of the building.
+    Parapets, battlements and roofline pieces (chimneys, spires, dormers) are SUPPOSED to
+    rise above the roof, so they are exempt by kind — the check is about walls and columns
+    that were never meant to be seen from above.
+    """
+    from pae.trim import covered_cells
+
+    roof_top: Dict[Tuple[int, int], float] = {}
+    for p in assembly.placements:
+        if p.kind != "roof":
+            continue
+        top = _placement_aabb(p)[1][2]
+        for c in covered_cells(p):
+            roof_top[c] = max(roof_top.get(c, -1e9), top)
+    if not roof_top:
+        return []
+
+    failures: List[Failure] = []
+    for p in assembly.placements:
+        if p.kind not in ("wall", "column"):
+            continue
+        if {"parapet", "battlement", "roofline"} & set(p.tags):
+            continue
+        bb_min, bb_max = _placement_aabb(p)
+        for c in covered_cells(p):
+            limit = roof_top.get(c)
+            if limit is None or bb_max[2] <= limit + TOL_CM:
+                continue
+            failures.append(
+                Failure(
+                    check="roof_penetration",
+                    message=(
+                        f"{p.piece_id} ({p.asset_id}) rises {bb_max[2] - limit:.1f} cm "
+                        f"through the roof above it"
+                    ),
+                    world_xyz=_centre(bb_min, bb_max),
+                    piece_id=p.piece_id,
+                    critical=False,
+                )
+            )
+            break
+    return failures
 
 
 def _check_run_fit(assembly: Assembly) -> List[Failure]:

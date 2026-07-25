@@ -262,37 +262,56 @@ def _railings(assembly: Assembly, opts: TrimOptions) -> List[SolidPlacement]:
 
 
 def _buttresses(assembly: Assembly, opts: TrimOptions) -> List[SolidPlacement]:
-    """Buttresses on the exterior faces of tall ranges, on a bay rhythm."""
+    """Buttresses on the exterior faces of tall ranges, on a bay rhythm.
+
+    Works from WALL PLACEMENTS, not from the set of cells that contain walls. The first
+    version picked a face by "this neighbour is not interior", which says nothing about
+    whether a wall exists on that face — so buttresses were planted against thin air on
+    corner cells. The freestanding check caught five of them in the school.
+    """
     out: List[SolidPlacement] = []
     if assembly.storeys < BUTTRESS_MIN_STOREYS:
         return out
 
-    ground_walls = _wall_cells_by_level(assembly).get(0, set())
-    if not ground_walls:
+    walls = [p for p in _by_kind(assembly, "wall") if p.level == 0]
+    if not walls:
         return out
 
     interior = _deck_cells_by_level(assembly).get(0, set())
     depth = catalog_by_id()[opts.buttress_piece].size_cm
 
-    for i, (cx, cy) in enumerate(sorted(ground_walls)):
+    for i, wall in enumerate(sorted(walls, key=lambda p: (p.cell, p.piece_id))):
         if i % BUTTRESS_EVERY_BAYS:
             continue
-        # Face the buttress outward: pick the neighbour that is NOT interior.
-        for face, (dx, dy) in _NEIGHBOURS.items():
-            if (cx + dx, cy + dy) in interior:
-                continue
-            yaw, off = outward_offset_cm(face, depth)
-            out.append(
-                _placement(
-                    opts.buttress_piece,
-                    (cx, cy),
-                    0,
-                    yaw=yaw,
-                    offset_cm=off,
-                    suffix=face,
-                )
+        bb_min, bb_max = placement_world_aabb(
+            wall.cell[0], wall.cell[1], wall.level, wall.yaw, wall.size_cm,
+            wall.offset_cm, rotates_about_center=wall.rotates_about_center,
+        )
+        # Which boundary line does this wall actually SIT on? Deriving the face from the
+        # cell's neighbours instead put a west buttress against a wall standing on the
+        # cell's east edge — 340 cm of masonry braced against thin air.
+        cell = wall.cell
+        cx0, cy0 = cell[0] * MODULE_CM, cell[1] * MODULE_CM
+        near = MODULE_CM * 0.5
+        if (bb_max[0] - bb_min[0]) < (bb_max[1] - bb_min[1]):
+            face = "west" if (bb_min[0] - cx0) < near else "east"
+        else:
+            face = "south" if (bb_min[1] - cy0) < near else "north"
+        dx, dy = _NEIGHBOURS[face]
+        if (cell[0] + dx, cell[1] + dy) in interior:
+            continue  # that face looks inward — bracing there would be inside a room
+        chosen = face
+        yaw, off = outward_offset_cm(chosen, depth)
+        out.append(
+            _placement(
+                opts.buttress_piece,
+                cell,
+                0,
+                yaw=yaw,
+                offset_cm=off,
+                suffix=chosen,
             )
-            break
+        )
     return out
 
 

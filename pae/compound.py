@@ -382,10 +382,13 @@ def add_balconies(
                     extra.append(_place(bal.post_piece, cell, level,
                                         suffix="post", tag=name))
             if bal.under_roof:
+                # Sit the gallery roof on the SAME plane as the range roof (one full
+                # storey above the top level datum), not a slab-thickness below it.
+                # Offsetting by STOREY - FLOOR_T put the canopy 30 cm low, so it met the
+                # range roof edge-on with a step and a gap instead of running into it.
                 top = max(all_levels)
-                roof = catalog[bal.roof_piece]
                 extra.append(_place(bal.roof_piece, cell, top,
-                                    offset_cm=(0.0, 0.0, STOREY_CM - roof.size_cm[2]),
+                                    offset_cm=(0.0, 0.0, STOREY_CM),
                                     suffix="roof", tag=name))
 
         # Access doors: swap wall bays behind the gallery for door pieces.
@@ -413,6 +416,28 @@ def add_balconies(
                         rotates_about_center=door.rotates_about_center,
                         tags=door.tags | frozenset({"balcony", "balcony_door", name}),
                     ))
+
+    # Parapets stranded mid-roof: trim gave each range a parapet on its court-facing
+    # edge, which was correct then. Roofing the gallery extends the roof plane past that
+    # edge, so the parapet is no longer at a boundary — it is a grey wall standing up
+    # through the middle of the blue roof. Drop any parapet now fully surrounded by roof.
+    roofed: Set[Cell] = set()
+    for p in assembly.placements:
+        if p.kind == "roof":
+            roofed |= covered_cells(p)
+    for p in extra:
+        if p.kind == "roof":
+            roofed |= covered_cells(p)
+    for p in assembly.placements:
+        if p.kind != "barrier" or "parapet" not in p.tags:
+            continue
+        cells = covered_cells(p)
+        if all(
+            (c[0] + dx, c[1] + dy) in roofed
+            for c in cells
+            for dx, dy in _NEIGHBOURS.values()
+        ):
+            drop.add(p.piece_id)
 
     extra.sort(key=lambda p: (p.level, p.cell, p.asset_id, p.piece_id))
     kept = [p for p in assembly.placements if p.piece_id not in drop]
