@@ -26,7 +26,7 @@ exemption is written in code, with this reason, per Handbook §3.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Sequence, Set, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 from pae.assembly_types import Assembly, SolidPlacement
 from pae.contract import (
@@ -90,45 +90,6 @@ class BandingSpec:
 
     def wants_face(self, face: Face) -> bool:
         return not self.faces or face in self.faces
-
-
-def _clear_course_height(
-    wanted_z: float,
-    band_h: float,
-    openings: Sequence[Tuple[float, float]],
-) -> Optional[float]:
-    """Nearest height to ``wanted_z`` at which a course clears EVERY opening.
-
-    Masonry runs a string course under the sills or over the heads; it does not stop at
-    each window and start again after it. So instead of skipping bays, move the whole run
-    to a height that works for the whole elevation. Returns None when no such height
-    exists, in which case the course is dropped for that elevation entirely.
-    """
-
-    def clear(z: float) -> bool:
-        return all(
-            not (z + band_h > a0 + TOL_CM and z < a1 - TOL_CM)
-            for a0, a1 in openings
-        )
-
-    if clear(wanted_z):
-        return wanted_z
-    if not openings:
-        return wanted_z
-
-    lowest_sill = min(a0 for a0, _a1 in openings)
-    highest_head = max(a1 for _a0, a1 in openings)
-    candidates = []
-    below = lowest_sill - band_h - TOL_CM
-    above = highest_head + TOL_CM
-    if below >= 0.0:
-        candidates.append(below)
-    if above + band_h <= STOREY_CM:
-        candidates.append(above)
-    candidates = [c for c in candidates if clear(c)]
-    if not candidates:
-        return None
-    return min(candidates, key=lambda c: abs(c - wanted_z))
 
 
 def _crosses_opening(opening, z0: float, z1: float) -> bool:
@@ -270,11 +231,9 @@ def band(
     # ------------------------------------------------------------------
     # Group walls into ELEVATIONS, not bays.
     #
-    # The first version placed a course per bay and skipped any bay containing an
-    # opening. That produces disconnected strips scattered across a wall - banding that
-    # starts and stops at nothing, which is worse than none. Real articulation is a
-    # CONTINUOUS run at one height along a whole elevation, set to clear the openings,
-    # with vertical members at the corners and junctions where walls actually meet.
+    # Courses land at the requested storey fraction on every bay that can take them.
+    # Bays with door/window openings are skipped until we can split a run into segments
+    # (roadmap). Verticals and coping still group by elevation so corners line up.
     # ------------------------------------------------------------------
     elevations: Dict[Tuple[int, int, int, Face], List[SolidPlacement]] = {}
     for pid, face in faces.items():
@@ -291,20 +250,13 @@ def band(
         level, axis, _plane, face = key
         members.sort(key=lambda m: m.cell[axis])
 
-        openings: List[Tuple[float, float]] = []
-        for m in members:
-            ap = getattr(catalog.get(m.asset_id), "aperture", None)
-            if ap is not None:
-                openings.append((ap.min_cm[2], ap.max_cm[2]))
-
         for course in opts.courses:
+            z = STOREY_CM * course.height_frac
             band_h = catalog[course.piece].size_cm[2]
-            z = _clear_course_height(STOREY_CM * course.height_frac, band_h, openings)
-            if z is None:
-                # No height on this elevation clears every opening. Drop the COURSE for
-                # the whole elevation - never leave a partial run.
-                continue
             for m in members:
+                opening = getattr(catalog.get(m.asset_id), "aperture", None)
+                if _crosses_opening(opening, z, z + band_h):
+                    continue
                 extra.append(
                     _place_on_face(
                         course.piece, m, face,
