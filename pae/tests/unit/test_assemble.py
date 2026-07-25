@@ -9,6 +9,7 @@ from pae.contract import (
     FLOOR_T_CM,
     MODULE_CM,
     STOREY_CM,
+    TOL_CM,
     WALL_T_CM,
     floor_placement_z_cm,
     ground_plinth_z_cm,
@@ -337,8 +338,60 @@ def test_m3_pitched_validate_passes():
     assert report.critical == []
 
 
+def _hall_footprint_bbox_cm(massing):
+    """Axis-aligned hall envelope (main/wing floor cells) in world cm."""
+    mains = [v for v in massing.volumes if v.role in ("main", "wing")]
+    assert mains
+    x0 = min(v.x0 for v in mains)
+    y0 = min(v.y0 for v in mains)
+    x1 = max(v.x1 for v in mains)
+    y1 = max(v.y1 for v in mains)
+    return (
+        (x0 * MODULE_CM, y0 * MODULE_CM),
+        ((x1 + 1) * MODULE_CM, (y1 + 1) * MODULE_CM),
+    )
+
+
+def _tower_drum_center_cm(assembly, *, level: int = 0) -> tuple[float, float]:
+    arcs = [
+        p
+        for p in assembly.placements
+        if p.asset_id == "tower_arc_quarter" and p.level == level
+    ]
+    assert arcs
+    p = arcs[0]
+    return (
+        p.cell[0] * MODULE_CM + p.offset_cm[0],
+        p.cell[1] * MODULE_CM + p.offset_cm[1],
+    )
+
+
+def _on_hall_exterior(
+    center: tuple[float, float],
+    hall_min: tuple[float, float],
+    hall_max: tuple[float, float],
+    *,
+    tol: float = TOL_CM,
+) -> bool:
+    """Centre is outside the open hall interior or on the footprint bbox shell."""
+    cx, cy = center
+    hx0, hy0 = hall_min
+    hx1, hy1 = hall_max
+    inside_x = hx0 - tol < cx < hx1 + tol
+    inside_y = hy0 - tol < cy < hy1 + tol
+    if inside_x and inside_y:
+        return False
+    on_shell = (
+        abs(cx - hx0) <= tol
+        or abs(cx - hx1) <= tol
+        or abs(cy - hy0) <= tol
+        or abs(cy - hy1) <= tol
+    )
+    return on_shell or not (inside_x and inside_y)
+
+
 def test_m3_tower_arcs_same_cell():
-    """M3 — 4× tower_arc_quarter share one cell; rotates_about_center; XY offset 0.
+    """M3 — 4× tower_arc_quarter share one cell; rotates_about_center; shared XY offset.
 
     Historical bug: quarters offset to four cells → no curved wall.
     """
@@ -351,7 +404,8 @@ def test_m3_tower_arcs_same_cell():
     # All quarters at the SAME cell (no 4-cell scatter).
     assert {p.cell for p in arcs} == {tower_cell}
     assert all(p.rotates_about_center is True for p in arcs)
-    assert all(p.offset_cm[0] == 0.0 and p.offset_cm[1] == 0.0 for p in arcs)
+    offsets = {(p.offset_cm[0], p.offset_cm[1]) for p in arcs}
+    assert len(offsets) == 1, "all quarters share one drum-centre offset"
     # Four yaws per tower storey.
     for level in range(towers[0].storeys):
         level_arcs = [p for p in arcs if p.level == level]
@@ -361,3 +415,16 @@ def test_m3_tower_arcs_same_cell():
     # Crown + cap present on the drum.
     assert any(p.asset_id == "tower_crown" for p in assembly.placements)
     assert any(p.asset_id == "tower_cap" for p in assembly.placements)
+
+
+def test_m3_tower_drum_outside_hall_footprint():
+    """M3 drum centre clears the hall bbox; east drum edge kisses west wall."""
+    assembly, _, massing = _assembly_from_spec(m3_keep_tower_spec())
+    hall_min, hall_max = _hall_footprint_bbox_cm(massing)
+    center = _tower_drum_center_cm(assembly)
+    assert _on_hall_exterior(center, hall_min, hall_max)
+    r = MODULE_CM
+    cx, cy = center
+    # West tower: entire drum west of hall west face (x = hall_min.x).
+    assert cx + r <= hall_min[0] + TOL_CM
+    assert cy == pytest.approx(200.0, abs=TOL_CM)

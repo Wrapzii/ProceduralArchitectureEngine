@@ -22,6 +22,10 @@ from pae.contract import (
     placement_world_aabb,
     rotation_offset_cm,
 )
+from pae.solver import Volume
+
+# Soft separation so crown/cap do not z-fight the drum parapet (visual only).
+_TOWER_STACK_GAP_CM = 0.5
 from pae.plan import CellRole, FloorPlan, StoreyGrid
 from pae.primitives.catalog import catalog_by_id, get as get_primitive
 from pae.primitives.roofs import (
@@ -785,6 +789,94 @@ def _circulation_edges(fp: FloorPlan) -> List[CirculationEdge]:
     return edges
 
 
+def _tower_abuts_body(tower: Volume, body: Volume) -> bool:
+    """True when *tower* sits on a wall run or corner of *body* (solver parity)."""
+    body_cells = body.cells()
+    t_cells = tower.cells()
+    if t_cells & body_cells:
+        return True
+    for tx, ty in t_cells:
+        for dx in (-1, 0, 1):
+            for dy in (-1, 0, 1):
+                if dx == 0 and dy == 0:
+                    continue
+                if (tx + dx, ty + dy) in body_cells:
+                    return True
+    return False
+
+
+def _tower_attached_body(tower: Volume, bodies: List[Volume]) -> Optional[Volume]:
+    mains = [v for v in bodies if v.role in ("main", "wing")]
+    for body in mains:
+        if _tower_abuts_body(tower, body):
+            return body
+    return None
+
+
+def _shared_edge_mid_cm(
+    tower: Volume,
+    body: Volume,
+    *,
+    axis: str,
+) -> float:
+    """Midpoint (cm) along the shared cell span on *axis* ('x' or 'y')."""
+    if axis == "y":
+        y0 = max(tower.y0, body.y0)
+        y1 = min(tower.y1, body.y1)
+        if y0 > y1:
+            return (tower.y0 + tower.y1 + 1) * 0.5 * MODULE_CM
+        return (y0 * MODULE_CM + (y1 + 1) * MODULE_CM) * 0.5
+    x0 = max(tower.x0, body.x0)
+    x1 = min(tower.x1, body.x1)
+    if x0 > x1:
+        return (tower.x0 + tower.x1 + 1) * 0.5 * MODULE_CM
+    return (x0 * MODULE_CM + (x1 + 1) * MODULE_CM) * 0.5
+
+
+def _tower_drum_xy_offset_cm(
+    tower: Volume,
+    bodies: List[Volume],
+) -> Tuple[float, float]:
+    """Drum-centre XY offset from the attach-cell min corner (§2.2 centred).
+
+    Annulus outer radius = one MODULE (diameter 2×MODULE).  Default placement
+    puts the rotation centre on the cell min-corner, which swings half the drum
+    through the hall footprint.  Offset outward along the abutment normal so the
+    drum clears the hall envelope or only kisses the exterior wall.
+    """
+    cell_corner_x = tower.x0 * MODULE_CM
+    cell_corner_y = tower.y0 * MODULE_CM
+    body = _tower_attached_body(tower, bodies)
+    if body is None:
+        return (0.0, 0.0)
+
+    r = MODULE_CM
+    west = tower.x1 < body.x0
+    east = tower.x0 > body.x1
+    south = tower.y1 < body.y0
+    north = tower.y0 > body.y1
+
+    # Push one full radius beyond the hall face so max/min drum edge kisses the wall.
+    cx = cell_corner_x + r
+    cy = cell_corner_y + r
+    if west:
+        cx = body.x0 * MODULE_CM - 2.0 * r
+    elif east:
+        cx = (body.x1 + 1) * MODULE_CM + 2.0 * r
+    if south:
+        cy = body.y0 * MODULE_CM - 2.0 * r
+    elif north:
+        cy = (body.y1 + 1) * MODULE_CM + 2.0 * r
+
+    # Wall attach (single-axis abut): centre on the shared edge midline.
+    if (west or east) and not (south or north):
+        cy = _shared_edge_mid_cm(tower, body, axis="y")
+    elif (south or north) and not (west or east):
+        cx = _shared_edge_mid_cm(tower, body, axis="x")
+
+    return (cx - cell_corner_x, cy - cell_corner_y)
+
+
 def _tower_cells(fp: FloorPlan) -> Set[Tuple[int, int]]:
     """Cells owned by tower volumes (cap/arcs, not pitched roof)."""
     cells: Set[Tuple[int, int]] = set()
@@ -934,11 +1026,13 @@ def _place_tower_arcs(
     arc = catalog.get("tower_arc_quarter")
     crown = catalog.get("tower_crown")
     cap = catalog.get("tower_cap")
+    bodies = [v for v in floor_plan.massing.volumes if v.role in ("main", "wing")]
     for vol in floor_plan.massing.volumes:
         if vol.role != "tower":
             continue
         # 1×1 tower footprint — all quarters share (x0, y0).
         cell = (vol.x0, vol.y0)
+        drum_xy = _tower_drum_xy_offset_cm(vol, bodies)
         for level in range(vol.storeys):
             for yaw in (0, 90, 180, 270):
                 # §2.2 centred exception — no min-corner yaw offset, same cell.
@@ -951,7 +1045,7 @@ def _place_tower_arcs(
                         cell=cell,
                         level=level,
                         yaw=yaw,
-                        offset_cm=(0.0, 0.0, 0.0),
+                        offset_cm=(drum_xy[0], drum_xy[1], 0.0),
                         size_cm=arc.size_cm,
                         rotates_about_center=True,
                         tags=arc.tags,
@@ -959,10 +1053,14 @@ def _place_tower_arcs(
                 )
         # Crown + cap on the drum top (centred, same cell).
         top = vol.storeys - 1
-        crown_z = STOREY_CM
+        crown_z = STOREY_CM + _TOWER_STACK_GAP_CM
         for piece, kind, z_off in (
             (crown, "tower_crown", crown_z),
-            (cap, "tower_cap", crown_z + crown.size_cm[2]),
+            (
+                cap,
+                "tower_cap",
+                crown_z + crown.size_cm[2] + _TOWER_STACK_GAP_CM,
+            ),
         ):
             pid = _next_piece_id(counters, kind, cell, top)
             placements.append(
@@ -973,7 +1071,7 @@ def _place_tower_arcs(
                     cell=cell,
                     level=top,
                     yaw=0,
-                    offset_cm=(0.0, 0.0, z_off),
+                    offset_cm=(drum_xy[0], drum_xy[1], z_off),
                     size_cm=piece.size_cm,
                     rotates_about_center=True,
                     tags=piece.tags,
