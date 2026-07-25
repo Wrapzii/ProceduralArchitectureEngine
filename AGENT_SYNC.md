@@ -269,5 +269,22 @@ these are visible in CI. **Do not weaken the tests to get green — fix the plac
     height_frac=0.5 on m1_box_house). Courses now land at `STOREY_CM * height_frac`; only
     bays that would cross an aperture are skipped. 15 banding tests + opening-cross test pass.
 
-2026-07-25 � @RM_ROOMS_CORRIDOR
->>> DONE @RM_ROOMS_CORRIDOR � Phase 2.3 corridor spine: plan._extend_corridor_spine_to_stairs grows CORRIDOR through INTERIOR (reclaims CLASSROOM bridges) so every wing corridor reaches STAIR/VOID well; validate._check_corridor_stair_connectivity (critical) + classroom_corridor uses _cell_role_is; test_corridor_spine.py. School assemble critical=[]; room_spec/_cell_role_is preserved. Gaps: exterior egress-from-stair graph still via existing storey_egress (not new room?exterior path).
+2026-07-25 � @RM_ROOMS_CORRIDOR
+>>> DONE @RM_ROOMS_CORRIDOR � Phase 2.3 corridor spine: plan._extend_corridor_spine_to_stairs grows CORRIDOR through INTERIOR (reclaims CLASSROOM bridges) so every wing corridor reaches STAIR/VOID well; validate._check_corridor_stair_connectivity (critical) + classroom_corridor uses _cell_role_is; test_corridor_spine.py. School assemble critical=[]; room_spec/_cell_role_is preserved. Gaps: exterior egress-from-stair graph still via existing storey_egress (not new room?exterior path).
+
+>>> TRIGGER @TERRAIN_PHASE9 — NEW roadmap Phase 9 (T-001..T-022): sloped ground, stepped
+    buildings, upper-storey exterior entrances, jetties, compact irregular placement.
+    Reference: medieval hill town — buildings at different ground levels, external stone
+    stairs to first-floor doors, jettied upper floors overhanging the street.
+
+    START HERE, in order: T-001 `BuildingInstance.base_z_cm` (site.py has cell_offset only,
+    no Z — everything sits at z=0 today), T-002 per-cell site ground height, T-003 plinth
+    snaps to ground with a new `terrain_conformance` check.
+
+    NOTE the interaction: `aperture_reachability` already makes an upper-storey exterior
+    door illegal without something walkable outside it. That coupling is CORRECT and must
+    stay — an upper door and its stair/landing land together or not at all.
+
+    WARNING: every existing check assumes flat ground and one base level. When T-001 lands,
+    re-prove vertical_support, enclosure, floor_coverage and freestanding on a slope. A
+    ground model that quietly breaks five checks is worse than flat ground.

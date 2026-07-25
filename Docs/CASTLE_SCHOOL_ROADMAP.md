@@ -237,3 +237,83 @@ Every item above is a *capability* plus a *check*. Ship them together. The engin
 is unambiguous on this: capability without verification produces a building that passes
 every test and is visibly wrong, and the cost is paid later by a person looking at a render
 and saying "the walls are sticking through the roof."
+
+---
+
+## Phase 9 — Sloped ground, stepped buildings, upper-storey entrances
+
+**Reference:** a medieval hill town — buildings stepping up a slope at different ground
+levels, jettied upper floors overhanging the street, external stone stairs climbing to
+first-floor doors, ground-floor undercrofts opening onto the lower path.
+
+This is not decoration; it changes an assumption baked into the engine. **Everything today
+sits at z = 0 on flat ground.** Three concrete blockers, verified:
+
+| Blocker | Evidence |
+|---|---|
+| `BuildingInstance` has `cell_offset` only — no Z, no base level | `pae/site.py` |
+| Heightmap sampling exists only in `export/terrain.py`, applied AFTER assembly | binding, not placement |
+| `steps_external` is a 3-riser one-bay piece; nothing places it and it cannot climb a storey | catalog |
+
+### 9.1 Ground model
+
+| # | Objective | Check owed |
+|---|---|---|
+| T-001 | `BuildingInstance.base_z_cm` / `base_level` so buildings sit at different heights | placement respects it; no building buried or floating **[V]** |
+| T-002 | A site **ground surface** — per-cell ground height, sampled from a heightmap or authored as steps | every cell has exactly one ground height |
+| T-003 | Buildings snap their plinth to the ground under their footprint, not to z = 0 | `terrain_conformance`: plinth top within tolerance of ground at every footprint cell **[V]** |
+| T-004 | Split-level buildings — one range whose wings sit at different base heights | floor continuity across the split; a step, never a gap |
+| T-005 | Undercroft / cellar storey exposed on the downhill side, buried uphill | enclosure still valid where buried |
+| T-006 | Retaining walls where the cut exceeds one storey | support; both ends attached |
+
+### 9.2 Upper-storey entrances
+
+**This interacts directly with an existing check.** `aperture_reachability` currently makes
+an upper-storey exterior door ILLEGAL unless something walkable sits outside it. That is the
+correct coupling and must stay: you may not have a first-floor door without a stair, landing
+or gallery reaching it. The feature and its access must land together.
+
+| # | Objective | Check owed |
+|---|---|---|
+| T-007 | `EntranceSpec` role `upper_exterior` — a door on storey N opening to outside air | must be paired with T-008 or T-009; `aperture_reachability` enforces it |
+| T-008 | **External stair run** climbing a full storey against a facade, with landing | landing cell clear at both ends (`stair_landing_clearance`); railed on the open side |
+| T-009 | External **landing / porch platform** at storey height, reached by a stair | support; railed; door opens onto it |
+| T-010 | Stair may be perpendicular OR parallel to the facade it serves | no clash with openings on that facade **[V]** |
+| T-011 | Stairs shared between two buildings (one flight, two doors) | both doors reachable from the same landing |
+| T-012 | Ground-level door AND upper door on the same facade, vertically offset | aperture alignment; stair does not block the lower door **[V]** |
+
+### 9.3 Jetties and overhangs
+
+The reference's defining feature: the first floor projects beyond the ground floor.
+
+| # | Objective | Check owed |
+|---|---|---|
+| T-013 | **Real jetty** — upper floor slab projects past the wall below by a style fraction | projection within style range; slab supported by the wall below **[V]** |
+| T-014 | Jetty brackets / corbels under the overhang | attachment to the wall below |
+| T-015 | `band_course_jettied` (exists, decorative) becomes the *visible edge* of a real jetty | the course aligns with the actual slab edge **[V]** |
+| T-016 | Upper storey wider than the one below, on one or more faces | wall above must land on the jetty, not on air |
+| T-017 | Overhang must not collide with the neighbouring building across a narrow street | inter-building clearance **[V]** |
+
+### 9.4 Compact irregular placement
+
+| # | Objective | Check owed |
+|---|---|---|
+| T-018 | Buildings abutting party-wall to party-wall with no gap | no interpenetration; shared wall counted once |
+| T-019 | Non-orthogonal / rotated placement on the site grid (45° steps at minimum) | the yaw table (§2.2) must extend or the piece must be re-cut |
+| T-020 | Irregular street edge — buildings set back varying depths | walk still reaches every entrance **[V]** |
+| T-021 | Stepped street with stair runs between levels | continuous walkable path along the street **[V]** |
+| T-022 | Buildings of differing storey heights side by side | roofline still resolves; no roof through a neighbour's wall |
+
+### Suggested order
+
+T-001 → T-002 → T-003 first: without a ground model nothing else in this phase is
+expressible. Then T-007 → T-009 (upper entrances, which is the visible win), then jetties
+T-013 → T-016, then the irregular-placement work.
+
+### The caution
+
+Every existing check assumes flat ground and a single base level. When T-001 lands, sweep
+these and prove they still hold: `vertical_support` (a plinth on a slope), `enclosure`
+(a buried storey), `floor_coverage` (a split level), `freestanding` (a building touching
+only its retaining wall), and `terrain_conformance` (new). A ground model that quietly
+breaks five checks is worse than flat ground.
