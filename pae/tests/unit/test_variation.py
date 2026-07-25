@@ -25,14 +25,16 @@ def _doors(a):
     )
 
 
-def test_doorway_to_nothing_is_reported_before_the_fix():
-    """The assembler stacks a door on every storey; upper ones open into air."""
+def test_unreachable_upper_doors_are_not_stacked_by_assembler():
+    """Ground doors must not stamp the same bay on every upper storey."""
     a = _asm()
-    _, report = validate(a)
-    # Currently a WARNING while the milestone fixtures still contain the defect
-    # (roadmap 0.5). Look at all failures, not just critical.
-    bad = [f for f in report.failures if f.check == "aperture_reachability"]
-    assert bad, "the defect this fix exists for is no longer reproducible"
+    upper = [
+        (p.level, p.cell, p.asset_id)
+        for p in a.placements
+        if p.kind == "wall" and ("door" in p.asset_id or "gate" in p.asset_id)
+        and p.level > 0
+    ]
+    assert not upper, f"assembler still stacks doors above ground: {upper}"
 
 
 def test_variation_removes_every_doorway_to_nothing():

@@ -229,8 +229,8 @@ somewhere" is not a bug report.
   as an annulus), or **a new check whose hits you have not yet triaged**.
 
 Shipping a new check as a warning is acceptable *once*, with a roadmap entry to triage and
-promote it. `roof_penetration` is currently in this state. A warning that stays a warning
-for more than one milestone is decoration.
+promote it. `roof_penetration` was triaged (M7 / defect 0.3) and is now **critical**.
+A warning that stays a warning for more than one milestone is decoration.
 
 ---
 

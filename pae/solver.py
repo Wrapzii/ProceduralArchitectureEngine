@@ -471,80 +471,145 @@ def _tower_needs_repair(tower: Volume, bodies: List[Volume]) -> bool:
     return not any(_tower_touches(tower, b) for b in bodies)
 
 
-def _exterior_tower_candidates(bodies: List[Volume]) -> List[Tuple[int, int]]:
-    """Wall-edge then corner cells outside every enclosed body (M3 prefers wall)."""
+def _tower_candidate_volume(cx: int, cy: int) -> Volume:
+    return Volume(
+        id="_cand",
+        x0=cx,
+        y0=cy,
+        x1=cx,
+        y1=cy,
+        storeys=1,
+        role="tower",
+    )
+
+
+def _valid_tower_attach_cell(
+    cx: int,
+    cy: int,
+    bodies: List[Volume],
+) -> bool:
+    """True when *(cx, cy)* is outside all bodies and 8-adjacent to a wing."""
+    cand = _tower_candidate_volume(cx, cy)
+    if any(cand.overlaps(b) for b in bodies):
+        return False
+    return any(_tower_touches(cand, b) for b in bodies)
+
+
+def _body_perimeter_outside_cells(
+    body: Volume,
+) -> Tuple[List[Tuple[int, int]], List[Tuple[int, int]]]:
+    """Outside cells along *body* perimeter — wall (4-neighbour) then corners (8-only)."""
+    body_cells = body.cells()
+    perimeter: Set[Tuple[int, int]] = set()
+    for x, y in body_cells:
+        for dx, dy in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+            if (x + dx, y + dy) not in body_cells:
+                perimeter.add((x, y))
+                break
+
     wall: List[Tuple[int, int]] = []
     corners: List[Tuple[int, int]] = []
-    for body in bodies:
-        mx = body.x0 + (body.x1 - body.x0) // 2
-        my = body.y0 + (body.y1 - body.y0) // 2
-        wall.extend(
-            [
-                (body.x0 - 1, my),
-                (body.x1 + 1, my),
-                (mx, body.y0 - 1),
-                (mx, body.y1 + 1),
-            ]
-        )
-        corners.extend(
-            [
-                (body.x0 - 1, body.y0 - 1),
-                (body.x1 + 1, body.y0 - 1),
-                (body.x0 - 1, body.y1 + 1),
-                (body.x1 + 1, body.y1 + 1),
-            ]
-        )
-    # Prefer wall abut (edge) over diagonal corners — keeps 4-connect circulation.
-    ordered = wall + corners
+    seen: Set[Tuple[int, int]] = set()
+    for x, y in sorted(perimeter):
+        for dx, dy in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+            ox, oy = x + dx, y + dy
+            if (ox, oy) in body_cells or (ox, oy) in seen:
+                continue
+            seen.add((ox, oy))
+            wall.append((ox, oy))
+        for dx, dy in ((-1, -1), (-1, 1), (1, -1), (1, 1)):
+            ox, oy = x + dx, y + dy
+            if (ox, oy) in body_cells or (ox, oy) in seen:
+                continue
+            seen.add((ox, oy))
+            corners.append((ox, oy))
+    return wall, corners
+
+
+def exterior_tower_attach_cells(
+    bodies: List[Volume],
+    *,
+    prefer_wall: bool = True,
+) -> List[Tuple[int, int]]:
+    """Exterior 1×1 cells that abut any ``WING_ROLES`` body (for factories / repair).
+
+    Walks the full perimeter of every body — not just mid-wall samples — so L/U/
+    courtyard/school massing always exposes valid attach points on hall, wing, admin,
+    and classroom_wing volumes.
+    """
+    wing_bodies = [b for b in bodies if b.role in WING_ROLES]
+    if not wing_bodies:
+        return []
+
+    wall: List[Tuple[int, int]] = []
+    corners: List[Tuple[int, int]] = []
+    for body in wing_bodies:
+        w, c = _body_perimeter_outside_cells(body)
+        wall.extend(w)
+        corners.extend(c)
+
+    ordered = wall + corners if prefer_wall else corners + wall
     good: List[Tuple[int, int]] = []
     seen: Set[Tuple[int, int]] = set()
     for cx, cy in ordered:
         if (cx, cy) in seen:
             continue
         seen.add((cx, cy))
-        cand = Volume(
-            id="_cand",
-            x0=cx,
-            y0=cy,
-            x1=cx,
-            y1=cy,
-            storeys=1,
-            role="tower",
-        )
-        if any(cand.overlaps(b) for b in bodies):
-            continue
-        if not any(_tower_touches(cand, b) for b in bodies):
-            continue
-        good.append((cx, cy))
+        if _valid_tower_attach_cell(cx, cy, wing_bodies):
+            good.append((cx, cy))
     return good
 
 
-def _local_repair_towers(volumes: List[Volume]) -> List[Volume]:
-    """Nudge free-floating *or overlapping* towers to nearest exterior wall/corner.
+def _exterior_tower_candidates(bodies: List[Volume]) -> List[Tuple[int, int]]:
+    """Wall-edge then corner cells outside every enclosed body (M3 prefers wall)."""
+    return exterior_tower_attach_cells(bodies, prefer_wall=True)
 
-    Historical bug: interior tower cells ``_tower_touches`` the body via overlap,
-    so repair skipped them and ``volumes_no_overlap`` failed the solve.
+
+def _nearest_tower_attach_cell(
+    tx: int,
+    ty: int,
+    bodies: List[Volume],
+) -> Optional[Tuple[int, int]]:
+    """Closest valid exterior attach cell, or ``None`` when no attach exists."""
+    candidates = _exterior_tower_candidates(bodies)
+    if candidates:
+        return min(candidates, key=lambda c: abs(c[0] - tx) + abs(c[1] - ty))
+
+    # Last resort: scan a padded bbox around the union of all wing bodies.
+    x0 = min(b.x0 for b in bodies) - 2
+    y0 = min(b.y0 for b in bodies) - 2
+    x1 = max(b.x1 for b in bodies) + 2
+    y1 = max(b.y1 for b in bodies) + 2
+    fallback: List[Tuple[int, int]] = []
+    for cx in range(x0, x1 + 1):
+        for cy in range(y0, y1 + 1):
+            if _valid_tower_attach_cell(cx, cy, bodies):
+                fallback.append((cx, cy))
+    if not fallback:
+        return None
+    return min(fallback, key=lambda c: abs(c[0] - tx) + abs(c[1] - ty))
+
+
+def _local_repair_towers(volumes: List[Volume]) -> List[Volume]:
+    """Snap free-floating *or overlapping* towers onto a wing body perimeter.
+
+    Historical bugs (Ledger C-5):
+    - Interior tower cells ``_tower_touches`` via overlap, so repair skipped them.
+    - Mid-wall-only candidates missed valid attach on L/U/courtyard wings.
+    - Fallback corners were not filtered for touch / no-overlap.
     """
     mains = [v for v in volumes if v.role in WING_ROLES]
     if not mains:
         return volumes
-    candidates = _exterior_tower_candidates(mains)
     repaired: List[Volume] = []
     for v in volumes:
         if v.role != "tower" or not _tower_needs_repair(v, mains):
             repaired.append(v)
             continue
-        tx, ty = v.x0, v.y0
-        if not candidates:
-            # Fallback: primary-body corners (legacy behaviour).
-            body = mains[0]
-            candidates = [
-                (body.x0 - 1, body.y0 - 1),
-                (body.x1 + 1, body.y0 - 1),
-                (body.x0 - 1, body.y1 + 1),
-                (body.x1 + 1, body.y1 + 1),
-            ]
-        best = min(candidates, key=lambda c: abs(c[0] - tx) + abs(c[1] - ty))
+        best = _nearest_tower_attach_cell(v.x0, v.y0, mains)
+        if best is None:
+            repaired.append(v)
+            continue
         repaired.append(
             Volume(
                 id=v.id,

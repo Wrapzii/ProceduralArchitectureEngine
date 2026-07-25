@@ -28,8 +28,9 @@ from typing import Dict, List, Optional, Sequence, Set, Tuple
 
 from pae.assembly_types import Assembly, SolidPlacement
 from pae.boundary import FACE_YAW, boundary_offset_cm
-from pae.contract import FLOOR_T_CM, MODULE_CM, STOREY_CM
+from pae.contract import EAVE_OVERHANG_CM, FLOOR_T_CM, MODULE_CM, STOREY_CM
 from pae.primitives.catalog import catalog_by_id
+from pae.primitives.roofs import roof_eave_offset_cm, roof_flat_span_size_cm
 from pae.report import Failure, Report
 from pae.site import (
     BuildingInstance,
@@ -247,6 +248,89 @@ def _place(
     )
 
 
+def _gallery_roof_overhangs(
+    mine: Set[Cell],
+    *,
+    balcony_cells: Set[Cell],
+) -> Tuple[float, float, float, float]:
+    """Eave overhang (west, east, south, north) for one range's gallery roof span.
+
+    WHY: per-cell ``roof_flat`` decks stop at the cell boundary.  The range roof spans its
+    full footprint with ``EAVE_OVERHANG_CM`` on exterior faces; the gallery canopy must do
+    the same or it meets the range roof only along part of its edge and stops short of the
+    balustrade on the open court side.  Interior seams where two gallery runs meet get zero
+    overhang so the slabs butt cleanly.
+    """
+    min_x = min(c[0] for c in mine)
+    max_x = max(c[0] for c in mine)
+    min_y = min(c[1] for c in mine)
+    max_y = max(c[1] for c in mine)
+    oh = EAVE_OVERHANG_CM
+
+    def side_overhang(face: str) -> float:
+        dx, dy = _NEIGHBOURS[face]
+        if face == "west":
+            edge = {(min_x, cy) for cy in range(min_y, max_y + 1)}
+        elif face == "east":
+            edge = {(max_x, cy) for cy in range(min_y, max_y + 1)}
+        elif face == "south":
+            edge = {(cx, min_y) for cx in range(min_x, max_x + 1)}
+        else:
+            edge = {(cx, max_y) for cx in range(min_x, max_x + 1)}
+        outside = {(cx + dx, cy + dy) for cx, cy in edge}
+        if outside & balcony_cells:
+            return 0.0
+        return oh
+
+    return (
+        side_overhang("west"),
+        side_overhang("east"),
+        side_overhang("south"),
+        side_overhang("north"),
+    )
+
+
+def _place_gallery_roof(
+    piece: str,
+    mine: Set[Cell],
+    level: int,
+    *,
+    balcony_cells: Set[Cell],
+    tag: str,
+) -> SolidPlacement:
+    """One spanning flat roof covering every gallery cell claimed by ``tag``."""
+    desc = catalog_by_id()[piece]
+    min_x = min(c[0] for c in mine)
+    min_y = min(c[1] for c in mine)
+    max_x = max(c[0] for c in mine)
+    max_y = max(c[1] for c in mine)
+    modules_x = max_x - min_x + 1
+    modules_y = max_y - min_y + 1
+    west, east, south, north = _gallery_roof_overhangs(
+        mine, balcony_cells=balcony_cells,
+    )
+    eave_ox, eave_oy, _ = roof_eave_offset_cm(overhang_west=west, overhang_south=south)
+    return SolidPlacement(
+        piece_id=f"{tag}_{piece}_{level}_{min_x}_{min_y}_roof",
+        asset_id=piece,
+        kind=desc.kind,
+        cell=(min_x, min_y),
+        level=level,
+        yaw=0,
+        offset_cm=(eave_ox, eave_oy, STOREY_CM),
+        size_cm=roof_flat_span_size_cm(
+            modules_x,
+            modules_y,
+            overhang_west=west,
+            overhang_east=east,
+            overhang_south=south,
+            overhang_north=north,
+        ),
+        rotates_about_center=desc.rotates_about_center,
+        tags=desc.tags | frozenset({"balcony", tag, "gallery_roof"}),
+    )
+
+
 def _court_facing_walls(
     assembly: Assembly,
     name: str,
@@ -381,15 +465,19 @@ def add_balconies(
                 for level in range(0, top_post):
                     extra.append(_place(bal.post_piece, cell, level,
                                         suffix="post", tag=name))
-            if bal.under_roof:
-                # Sit the gallery roof on the SAME plane as the range roof (one full
-                # storey above the top level datum), not a slab-thickness below it.
-                # Offsetting by STOREY - FLOOR_T put the canopy 30 cm low, so it met the
-                # range roof edge-on with a step and a gap instead of running into it.
-                top = max(all_levels)
-                extra.append(_place(bal.roof_piece, cell, top,
-                                    offset_cm=(0.0, 0.0, STOREY_CM),
-                                    suffix="roof", tag=name))
+
+        if bal.under_roof:
+            # Span the full gallery run in one slab with eave overhang like the range roof,
+            # not one module per cell — otherwise the canopy stops at the cell line and 7 of
+            # 16 outer pieces met no wall and no range roof (roadmap 0.4 / C-2).
+            top = max(all_levels)
+            extra.append(_place_gallery_roof(
+                bal.roof_piece,
+                set(mine),
+                top,
+                balcony_cells=balcony_cells,
+                tag=name,
+            ))
 
         # Access doors: swap wall bays behind the gallery for door pieces.
         if bal.doors_per_range > 0:

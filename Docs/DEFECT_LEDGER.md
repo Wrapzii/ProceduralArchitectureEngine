@@ -47,7 +47,7 @@ Severity: **S1** shipped and visible · **S2** caught in review/CI · **S3** nea
 | C-2 | S1 | Gallery roof standing apart from the building | Roof carried on its own posts — *transitively* connected, so the touch graph passed it | `canopy_attachment`: a roof must meet a wall/parapet/attached roof; columns don't count |
 | C-3 | S1 | Grey walls standing up through the middle of the blue roof | Trim gave each range a parapet on its court-facing edge (correct then); roofing the gallery extended the roof past that edge, stranding it mid-plane | Drop parapets fully surrounded by roof |
 | C-4 | S1 | Gallery canopy meets the range roof with a step and a gap | Canopy offset by `STOREY − FLOOR_T`, putting it 30 cm below the range roof plane | Offset by `STOREY` — same plane |
-| C-5 | S2 | 26-piece tower entirely detached from its building | Solver's local repair nudges overlapping towers toward a wall but never asserts contact | **OPEN** — roadmap defect 0.1 |
+| C-5 | S2 | 26-piece tower entirely detached from its building | Solver's local repair nudges overlapping towers toward a wall but never asserts contact; assemble drum offset was `2r` leaving an air gap | **FIXED (M7)** — perimeter attach snap in solver; drum offset `r` so AABB kisses hall. Random freestanding tower arcs cleared. |
 | C-6 | S1 | 8 m hole at each gable | Walls stop at the eaves; nothing generated the gable infill | `roof_gable_infill` |
 | C-7 | S1 | Arcade impossible to tile | 1.76 m pillar in a 4 m module → 2.24 m daylight and two dangling ends | `snap_fit` with a 6 % stretch ceiling; reject otherwise |
 
@@ -59,7 +59,8 @@ Severity: **S1** shipped and visible · **S2** caught in review/CI · **S3** nea
 | D-2 | S1 | Court filled with a grid of fences (~3.8 rails/cell) | Railing placed on every face that was not a building, including faces onto other walkway cells | Rail only where the deck meets open air |
 | D-3 | S1 | Railing planted in the stairwell void | "Deck beside the hole" was true because the spanning deck covers the hole cells too | Subtract hole cells from the deck set before testing |
 | D-4 | S2 | Gallery roof floating a storey above the balustrade | Posts stopped at the deck when `under_roof` was on | Posts continue to the roof |
-| D-5 | — | Stair top plugged / unclear | `stair_exit_clearance` matches holes by `h.cell` — violates Rule 5.1 | **OPEN** — roadmap defect 0.2 |
+| D-5 | S2 | Stair top plugged / unclear | `stair_exit_clearance` matches holes by `h.cell` — violates Rule 5.1 | **FIXED (M7)** — hole/stair/plug matching uses `covered_cells` |
+| D-6 | S2 | Gallery canopy only partially met range roof | Per-cell gallery `roof_flat` without eaves vs spanning range roofs | **FIXED (M7)** — one spanning canopy per range with court-face eaves |
 
 ## D2. Apertures and variation (user-reported from renders)
 

@@ -149,3 +149,21 @@ never reason from `p.cell` (use `covered_cells`); never hand-roll a placement of
 Suite at close: 405 passed, 1 failed (@TOWER_ATTACH above). Renders: Saved/Screenshots/verify_compound_{aerial,quad,balcony,roofflush}.png
 >>> DONE @BANDING — Coping/facade articulation placeable anywhere (bands.py + banding.py). New kind "band", 5 pieces (course, jettied course w/ joist ends, pilaster, diagonal brace, coping cap). BandingSpec: courses at any storey fraction, verticals every N bays, braces, coping, face/level filters. band_attachment check defines attachment as FOUR conditions (HOST/COVERAGE/FLUSH/PROUD), not "not freestanding". Bands exempt from vertical_support with documented reason. Test-first per Handbook §6. Kit 55 -> 64 pieces.
 >>> DONE @STYLE_ROADMAP — Docs/STYLE_AND_DETAIL_ROADMAP.md: 135 objectives (S-001..S-135) for wizarding-school/medieval style. Cross-referenced from CASTLE_SCHOOL_ROADMAP.md. NOTE: angled roofs already work (roof_pitched_slope + roof_gable_infill, used by M3); the compound reads flat because its ranges specify RoofSpec(kind="flat").
+
+2026-07-25 — Master: M7 Phase 0 (roadmap defects). Docs verified unchanged (CASTLE/STYLE/HANDBOOK/LEDGER/PROTOCOL hashes).
+>>> TRIGGER @M7_TOWER — Defect 0.1 / Ledger C-5: solver tower attach must guarantee contact. Owns: pae/solver.py, pae/tests/unit/test_solver.py, property random-spec tower cases. Do NOT touch validate/banding/variation/showcase.
+>>> TRIGGER @M7_STAIR_CELLS — Defect 0.2 / Ledger D-5: stair_exit_clearance use covered_cells not p.cell. Owns: stair_exit section of pae/validate.py + test_stair_exit_clearance.py ONLY. Coordinate if validate.py dirty — merge, do not wipe.
+>>> TRIGGER @M7_ROOF_TRIAGE — Defect 0.3: triage school roof_penetration hits; promote or exempt with reason. Owns: roof_penetration in validate.py + school test. Merge with dirty validate.
+>>> TRIGGER @M7_GALLERY_CANOPY — Defect 0.4: gallery roof full outer attachment. Owns: pae/compound.py + trim canopy tests. Do NOT touch banding/variation.
+>>> DONE @M7_TOWER — Perimeter attach snap + exterior_tower_attach_cells; 0/200 tower_attached on random solve. Freestanding mesh arcs left for @M7_TOWER_ASM.
+>>> DONE @M7_STAIR_CELLS — stair_exit_clearance uses covered_cells (Rule 5.1). 12 stair exit tests pass.
+>>> DONE @M7_ROOF_TRIAGE — school roof_penetration hits=0; designed exemptions; check promoted critical. 0.3 CLOSED.
+>>> DONE @M7_GALLERY_CANOPY — spanning gallery roof + eaves per range (20→4 roofs). 39 compound tests pass.
+>>> DONE @M7_EGRESS — property factory emits full stair footprints for multi-storey. storey_egress cleared.
+>>> TRIGGER @M7_TOWER_ASM — Freestanding tower_arc after assemble drum offset. Owns assemble.py tower offset.
+>>> TRIGGER @M7_APERTURE — m3 aperture_reachability L1 door. Owns validate aperture_reachability / assemble doors.
+>>> TRIGGER @M7_SHOW_VAR — showcase library_tower freestanding spire; variation window clustering.
+>>> DONE @M7_TOWER_ASM — drum offset 2r→r; tower AABB kisses hall; random freestanding cleared.
+>>> DONE @M7_APERTURE — per-storey door/window (no L0 door stack on L1); m3 aperture polish green.
+>>> DONE @M7_SHOW_VAR — spire/finial inherit cap XY; window spread pass for long runs.
+>>> DONE @M7_PHASE0 — Phase 0.1–0.4 closed. Suite: 467 passed / 0 failed. Remaining open: 0.5 (promote aperture_reachability after fixture polish), 0.6 tower windows.

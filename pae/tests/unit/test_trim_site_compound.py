@@ -342,3 +342,91 @@ def test_covered_gallery_is_carried_to_the_roof():
     assembly, _, _ = build_compound(balcony=BalconySpec(under_roof=True))
     _, vreport = validate(assembly)
     assert vreport.ok, [f.message for f in vreport.critical]
+
+
+def _gallery_roofs(assembly):
+    return [p for p in assembly.placements if p.kind == "roof" and "balcony" in p.tags]
+
+
+def _gallery_roofs_unattached_to_envelope(assembly) -> list:
+    """Gallery roofs that directly touch no wall, parapet, or range roof (roadmap 0.4)."""
+    from pae.validate import _placement_aabb
+    from pae.contract import aabb_intersects
+    from pae.trim import covered_cells
+
+    gallery_roofs = _gallery_roofs(assembly)
+    envelope = [
+        p
+        for p in assembly.placements
+        if p.kind in ("wall", "battlement")
+        or (p.kind == "barrier" and "parapet" in p.tags)
+    ]
+    env_boxes = [_placement_aabb(p) for p in envelope]
+    range_boxes = [
+        _placement_aabb(p)
+        for p in assembly.placements
+        if p.kind == "roof" and "balcony" not in p.tags
+    ]
+    wall_cells: set = set()
+    range_cells: set = set()
+    for p in envelope:
+        wall_cells |= covered_cells(p)
+    for p in assembly.placements:
+        if p.kind == "roof" and "balcony" not in p.tags:
+            range_cells |= covered_cells(p)
+
+    loose = []
+    for p in gallery_roofs:
+        box = _placement_aabb(p)
+        touches_wall = any(
+            aabb_intersects(box[0], box[1], eb[0], eb[1]) for eb in env_boxes
+        )
+        touches_range = any(
+            aabb_intersects(box[0], box[1], rb[0], rb[1]) for rb in range_boxes
+        )
+        cells = covered_cells(p)
+        cell_adjacent = False
+        for c in cells:
+            for dx, dy in ((0, 1), (0, -1), (1, 0), (-1, 0)):
+                n = (c[0] + dx, c[1] + dy)
+                if n in wall_cells or n in range_cells:
+                    cell_adjacent = True
+                    break
+            if cell_adjacent:
+                break
+        if not touches_wall and not touches_range and not cell_adjacent:
+            loose.append(p)
+    return loose
+
+
+def test_gallery_roof_spans_each_range_and_attaches_to_envelope():
+    """Canopy must meet wall/parapet/range roof — not one floating slab per cell (0.4)."""
+    from pae.contract import EAVE_OVERHANG_CM, MODULE_CM
+
+    assembly, layout, _ = build_compound()
+    gallery_roofs = _gallery_roofs(assembly)
+    assert len(gallery_roofs) == 4, len(gallery_roofs)
+    assert not _gallery_roofs_unattached_to_envelope(assembly)
+
+    for p in gallery_roofs:
+        mn, mx = _aabb(p)
+        cells = covered_cells(p)
+        min_x = min(c[0] for c in cells)
+        max_x = max(c[0] for c in cells)
+        min_y = min(c[1] for c in cells)
+        max_y = max(c[1] for c in cells)
+        # Open court face must run out to cell boundary + eave (full outer dimension).
+        for cx in range(min_x, max_x + 1):
+            if (cx, max_y + 1) not in layout.balcony_cells:
+                assert mx[1] >= (max_y + 1) * MODULE_CM + EAVE_OVERHANG_CM - 1.0
+        for cy in range(min_y, max_y + 1):
+            if (min_x - 1, cy) not in layout.balcony_cells:
+                assert mn[0] <= min_x * MODULE_CM - EAVE_OVERHANG_CM + 1.0
+            if (max_x + 1, cy) not in layout.balcony_cells:
+                assert mx[0] >= (max_x + 1) * MODULE_CM + EAVE_OVERHANG_CM - 1.0
+        for cx in range(min_x, max_x + 1):
+            if (cx, min_y - 1) not in layout.balcony_cells:
+                assert mn[1] <= min_y * MODULE_CM - EAVE_OVERHANG_CM + 1.0
+
+    _, vreport = validate(assembly)
+    assert vreport.ok, [f.message for f in vreport.critical]

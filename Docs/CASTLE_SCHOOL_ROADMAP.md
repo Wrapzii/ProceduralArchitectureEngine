@@ -25,12 +25,12 @@ fix each time was a check, not a patch.
 
 | # | Defect | Evidence | Notes |
 |---|---|---|---|
-| 0.1 | Random-spec towers can be fully detached | `test_random_specs_validate_ok` fails: *freestanding group of 26 pieces — tower_arc_quarter* | Found by the new freestanding check. The solver's local repair nudges overlapping towers to an exterior wall but does not guarantee contact. **Suite is currently red on this — it is a true positive, not a flake.** |
-| 0.2 | Stair-top clearance check is cell-based | `_check_stair_exit_clearance` matches holes by `h.cell` and `placement_footprint_cells(stair)` | Same class as every spanning-slab bug fixed this session: a spanning deck or a hole whose origin cell differs from the stair's slips through. Needs `covered_cells`. |
-| 0.3 | `roof_penetration` check is a warning, not critical | Fires on the school academy; hits not yet triaged | Either the school has legitimate gable/clerestory walls above a roof, or it has real blades sticking out. Must be triaged and then promoted to critical. |
-| 0.5 | `aperture_reachability`, `storey_egress` GROUND/VOLUME are WARNINGS | They are correct and find 25 real doorway-to-nothing defects across the milestone fixtures (M2's first-floor door opens into air) | Promoting now breaks 26 tests in other lanes. Fix the fixtures with `pae.variation`, then promote to critical. **A warning that stays a warning past one milestone is decoration.** |
+| ~~0.1~~ | ~~Random-spec towers fully detached~~ | **DONE (M7)** — solver perimeter attach snap + assemble drum offset `2r→r` so arcs kiss the hall. Random validate green for freestanding towers. | Ledger C-5 |
+| ~~0.2~~ | ~~Stair-top clearance cell-based~~ | **DONE (M7)** — `_check_stair_exit_clearance` uses `covered_cells` for stair footprint, holes, and solid plugs (Rule 5.1). | Ledger D-5 |
+| ~~0.3~~ | ~~`roof_penetration` check is a warning, not critical~~ | **DONE (M7)** — school academy triaged: 0 hits (flat roofs sit ``FLOOR_T`` above wall heads; no blades). Eave-tuck and gable-ridge designed pairs exempted; check promoted to **critical**. Tests: ``test_roof_penetration_triage.py``. | |
+| 0.5 | `aperture_reachability`, `storey_egress` GROUND/VOLUME are WARNINGS | They are correct and find 25 real doorway-to-nothing defects across the milestone fixtures (M2's first-floor door opens into air) | Promoting now breaks 26 tests in other lanes. Fix the fixtures with `pae.variation`, then promote to critical. **A warning that stays a warning past one milestone is decoration.** Partial: assemble no longer stacks L0 doors onto upper storeys; M3 aperture polish green. |
 | 0.6 | Circular towers have no windows and a poor roof junction | Tower drum is arc quarters with no aperture support; the cap meets the drum without a defined joint | Needs helical window placement following the internal stair — see Phase 4.7 |
-| 0.4 | Gallery roof meets the range roof only along part of its edge | Measured: 7 of 16 gallery roof pieces touch no wall and no range roof | Now coplanar, but the canopy does not run out to its full outer dimension. |
+| ~~0.4~~ | ~~Gallery roof partial edge attachment~~ | **DONE (M7)** — one spanning gallery roof per range with court-face eaves (`EAVE_OVERHANG_CM`). | |
 
 ---
 

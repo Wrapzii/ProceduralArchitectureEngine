@@ -313,6 +313,76 @@ def vary(
         for i in order[:need]:
             out[i] = _swap(out[i], fam, "glazed_minimum")
 
+    # 4. Spread windows along long wall runs. Door bays and rhythm blanking can leave
+    # every light on one end of an 8-bay elevation even when the pattern is "alternate".
+    runs: Dict[Tuple[int, int, int], List[int]] = {}
+    for i, p in enumerate(out):
+        if p.kind != "wall" or p.piece_id not in exterior_faces:
+            continue
+        axis = 1 if p.yaw in (0, 180) else 0
+        rk = (p.level, axis, p.cell[1 - axis])
+        runs.setdefault(rk, []).append(i)
+
+    for rk, idxs in runs.items():
+        if len(idxs) < 6:
+            continue
+        axis = rk[1]
+        ordered = sorted(idxs, key=lambda i: out[i].cell[axis])
+        bays = [out[i].cell[axis] for i in ordered]
+        full = max(bays) - min(bays) + 1
+        win_idxs = [i for i in ordered if "window" in out[i].asset_id]
+        if not win_idxs:
+            continue
+        win_bays = [out[i].cell[axis] for i in win_idxs]
+        span = max(win_bays) - min(win_bays) + 1
+        if span >= full * 0.5:
+            continue
+
+        door_idxs = {
+            i
+            for i in ordered
+            if "door" in out[i].asset_id or "gate" in out[i].asset_id
+        }
+        blank_idxs = [
+            i
+            for i in ordered
+            if i not in door_idxs
+            and "window" not in out[i].asset_id
+            and out[i].asset_id == opts.blank_piece
+        ]
+        if not blank_idxs:
+            continue
+
+        lo, hi = min(bays), max(bays)
+        cluster_mid = (min(win_bays) + max(win_bays)) * 0.5
+        run_mid = (lo + hi) * 0.5
+        # Cluster biased high → open blanks toward the low end, and vice versa.
+        toward_lo = cluster_mid > run_mid
+        lvl = out[ordered[0]].level
+        fam = storey_family.get(lvl, opts.window_pieces[0])
+        target_span = max(int(full * 0.5 + 0.999), span + 1)
+
+        while span < target_span and blank_idxs:
+            if toward_lo:
+                candidates = [i for i in blank_idxs if out[i].cell[axis] < min(win_bays)]
+                if not candidates:
+                    candidates = [i for i in blank_idxs if out[i].cell[axis] <= cluster_mid]
+            else:
+                candidates = [i for i in blank_idxs if out[i].cell[axis] > max(win_bays)]
+                if not candidates:
+                    candidates = [i for i in blank_idxs if out[i].cell[axis] >= cluster_mid]
+            if not candidates:
+                break
+            pick = (
+                min(candidates, key=lambda i: out[i].cell[axis])
+                if toward_lo
+                else max(candidates, key=lambda i: out[i].cell[axis])
+            )
+            out[pick] = _swap(out[pick], fam, "spread_glazed")
+            blank_idxs.remove(pick)
+            win_bays.append(out[pick].cell[axis])
+            span = max(win_bays) - min(win_bays) + 1
+
     varied = Assembly(
         placements=out,
         floor_plan=assembly.floor_plan,

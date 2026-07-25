@@ -993,10 +993,12 @@ def _stair_head_clearance_aabbs(
     Uses a centred corridor inside the hole, not the full void AABB — perimeter
     walls that only kiss the hole rim are not blockers.
     """
+    from pae.trim import covered_cells
+
     # ~80 cm pass-through (half-extent); well inside the 380 cm hole opening.
     half = 40.0
     boxes: List[Tuple[Tuple[float, float, float], Tuple[float, float, float]]] = []
-    for cell in placement_footprint_cells(stair):
+    for cell in covered_cells(stair):
         hole = hole_by_cell.get(cell)
         if hole is None:
             continue
@@ -1040,10 +1042,15 @@ def _check_stair_exit_clearance(assembly: Assembly) -> List[Failure]:
     """Fail-closed: stair tops must open — never dead-end into floor/roof/wall.
 
     For each stair:
-    1. Every footprint cell on the storey above needs a ``floor_hole``.
-    2. No solid 1×1 floor pad may sit on those cells (plugs the exit).
+    1. Every ``covered_cells`` bay on the storey above needs a ``floor_hole``.
+    2. No solid 1×1 floor pad may cover those bays (plugs the exit).
     3. Headroom above each hole must not be filled by wall / roof / solid floor.
+
+    Rule 5.1: never match holes or pads by ``p.cell`` alone — spanning decks and
+    yawed stairs place holes at origins that differ from the stair anchor.
     """
+    from pae.trim import covered_cells
+
     failures: List[Failure] = []
     stairs = [p for p in assembly.placements if p.kind == "stair"]
     if not stairs:
@@ -1057,10 +1064,13 @@ def _check_stair_exit_clearance(assembly: Assembly) -> List[Failure]:
 
     for stair in stairs:
         top_level = stair.level + 1
-        cells = placement_footprint_cells(stair)
-        hole_by_cell = {
-            h.cell: h for h in holes if h.level == top_level and h.cell in set(cells)
-        }
+        exit_cells = covered_cells(stair)
+        hole_by_cell: Dict[Tuple[int, int], SolidPlacement] = {}
+        for h in holes:
+            if h.level != top_level:
+                continue
+            for c in covered_cells(h):
+                hole_by_cell[c] = h
         smin, smax = _placement_aabb(stair)
         top_xyz = (
             0.5 * (smin[0] + smax[0]),
@@ -1068,7 +1078,7 @@ def _check_stair_exit_clearance(assembly: Assembly) -> List[Failure]:
             smax[2],
         )
 
-        for cell in cells:
+        for cell in exit_cells:
             if cell not in hole_by_cell:
                 failures.append(
                     Failure(
@@ -1086,14 +1096,15 @@ def _check_stair_exit_clearance(assembly: Assembly) -> List[Failure]:
         for p in assembly.placements:
             if p.level != top_level or not _is_module_solid_floor(p):
                 continue
-            if p.cell not in set(cells):
+            plugged = covered_cells(p) & exit_cells
+            if not plugged:
                 continue
             failures.append(
                 Failure(
                     check="stair_exit_clearance",
                     message=(
                         f"stair {stair.piece_id} top plugged by solid floor "
-                        f"{p.piece_id} at cell {p.cell} — use floor_hole, not a pad"
+                        f"{p.piece_id} covering {sorted(plugged)} — use floor_hole, not a pad"
                     ),
                     world_xyz=top_xyz,
                     piece_id=p.piece_id,
@@ -1290,6 +1301,58 @@ def _check_canopy_attachment(assembly: Assembly) -> List[Failure]:
     return failures
 
 
+def _designed_roof_penetration_eave_tuck(
+    piece: SolidPlacement,
+    *,
+    rise_cm: float,
+    roof_asset_id: str,
+) -> bool:
+    """Wall/column head tucked into a flat roof slab (§2.3 / ``_designed_wall_roof_pair``).
+
+    Flat decks are ``STOREY + FLOOR_T``; perimeter walls stop at ``STOREY``.  A rise
+    within ``FLOOR_T`` is the designed eave overlap, not a blade through the roof.
+    """
+    if piece.kind not in ("wall", "column"):
+        return False
+    if roof_asset_id != "roof_flat":
+        return False
+    return 0.0 < rise_cm <= FLOOR_T_CM + TOL_CM
+
+
+def _designed_roof_penetration_gable_ridge(
+    piece: SolidPlacement,
+    *,
+    rise_cm: float,
+    roof_asset_id: str,
+) -> bool:
+    """Perimeter wall meets the gable infill prism at the ridge end (§6 pitched roof).
+
+    Gable-end walls and ``roof_gable_infill`` share the ridge silhouette; the wall
+    head may coincide with the infill top within tolerance.
+    """
+    if piece.kind != "wall" or roof_asset_id != "roof_gable_infill":
+        return False
+    return 0.0 < rise_cm <= TOL_CM
+
+
+def _roof_penetration_exempt(
+    piece: SolidPlacement,
+    *,
+    rise_cm: float,
+    roof_asset_id: str,
+) -> bool:
+    """Pairs that may rise through the local roof plane by design."""
+    if _designed_roof_penetration_eave_tuck(
+        piece, rise_cm=rise_cm, roof_asset_id=roof_asset_id
+    ):
+        return True
+    if _designed_roof_penetration_gable_ridge(
+        piece, rise_cm=rise_cm, roof_asset_id=roof_asset_id
+    ):
+        return True
+    return False
+
+
 def _check_roof_penetration(assembly: Assembly) -> List[Failure]:
     """Nothing structural may poke up through its own roof.
 
@@ -1297,16 +1360,23 @@ def _check_roof_penetration(assembly: Assembly) -> List[Failure]:
     Parapets, battlements and roofline pieces (chimneys, spires, dormers) are SUPPOSED to
     rise above the roof, so they are exempt by kind — the check is about walls and columns
     that were never meant to be seen from above.
+
+    Triage (M7 / school academy): gothic_academy flat roofs sit ``FLOOR_T`` above wall
+    heads by design — no penetration is reported.  Eave tuck and gable-ridge coincidences
+    are exempt via ``_roof_penetration_exempt``.  Any other rise through the roof plane
+    is critical (real blade).
     """
     from pae.trim import covered_cells
 
-    roof_top: Dict[Tuple[int, int], float] = {}
+    roof_top: Dict[Tuple[int, int], Tuple[float, str]] = {}
     for p in assembly.placements:
         if p.kind != "roof":
             continue
         top = _placement_aabb(p)[1][2]
         for c in covered_cells(p):
-            roof_top[c] = max(roof_top.get(c, -1e9), top)
+            prev = roof_top.get(c)
+            if prev is None or top > prev[0]:
+                roof_top[c] = (top, p.asset_id)
     if not roof_top:
         return []
 
@@ -1318,19 +1388,27 @@ def _check_roof_penetration(assembly: Assembly) -> List[Failure]:
             continue
         bb_min, bb_max = _placement_aabb(p)
         for c in covered_cells(p):
-            limit = roof_top.get(c)
-            if limit is None or bb_max[2] <= limit + TOL_CM:
+            entry = roof_top.get(c)
+            if entry is None:
+                continue
+            limit, roof_asset_id = entry
+            rise_cm = bb_max[2] - limit
+            if rise_cm <= TOL_CM:
+                continue
+            if _roof_penetration_exempt(
+                p, rise_cm=rise_cm, roof_asset_id=roof_asset_id
+            ):
                 continue
             failures.append(
                 Failure(
                     check="roof_penetration",
                     message=(
-                        f"{p.piece_id} ({p.asset_id}) rises {bb_max[2] - limit:.1f} cm "
+                        f"{p.piece_id} ({p.asset_id}) rises {rise_cm:.1f} cm "
                         f"through the roof above it"
                     ),
                     world_xyz=_centre(bb_min, bb_max),
                     piece_id=p.piece_id,
-                    critical=False,
+                    critical=True,
                 )
             )
             break

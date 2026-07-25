@@ -497,6 +497,46 @@ def _primary_opening_face(
     return faces[0]
 
 
+def _window_cells_for_level(fp: FloorPlan, level: int) -> Set[Tuple[int, int]]:
+    """Per-storey window bays.
+
+    Ground openings come from the plan. When ``skip_ground_windows`` is set, upper
+    storeys still need glazed perimeter bays (storey_egress VOLUME) without copying
+    an empty ground list onto every floor.
+    """
+    if level == 0:
+        return set(fp.window_cells)
+    if fp.massing is None or not fp.massing.openings_skip_ground_windows:
+        return set(fp.window_cells)
+    return _upper_storey_window_cells(fp, level)
+
+
+def _upper_storey_window_cells(fp: FloorPlan, level: int) -> Set[Tuple[int, int]]:
+    """Mirror plan._place_doors_windows glazing for levels above ground."""
+    from pae.plan import _enclosed_cells_at_level
+
+    massing = fp.massing
+    assert massing is not None
+    grid = fp.storeys[level]
+    interior = _enclosed_cells_at_level(massing, level)
+    wall_cells = sorted(
+        (x, y) for (x, y), role in grid.cells.items() if role == CellRole.WALL_LINE
+    )
+    south = sorted((x, y) for x, y in wall_cells if (x, y - 1) not in interior)
+    n_win = max(0, massing.openings_windows_per_bay * max(1, len(south)))
+    door_bays = set(fp.door_cells)
+    out: List[Tuple[int, int]] = []
+    placed = 0
+    for cell in wall_cells:
+        if placed >= n_win:
+            break
+        if cell in door_bays:
+            continue
+        out.append(cell)
+        placed += 1
+    return set(out)
+
+
 def _wall_asset_for_cell(
     fp: FloorPlan,
     cell: Tuple[int, int],
@@ -504,6 +544,7 @@ def _wall_asset_for_cell(
     catalog: _PieceCatalog,
     style: StyleLike,
     bbox: Tuple[int, int, int, int],
+    level: int,
 ) -> _ResolvedPiece:
     """Pick wall kit piece; map boundary-line cells back to footprint for openings."""
     x, y = cell
@@ -515,10 +556,14 @@ def _wall_asset_for_cell(
         probe = (x, y - 1)
     else:
         probe = cell
-    is_door = probe in fp.door_cells or any(
-        grid.get(probe[0], probe[1]) == CellRole.DOOR for grid in fp.storeys
+    # Openings are per-storey. A ground DOOR role must not stamp a door on every
+    # upper perimeter wall at the same bay (tower attach / stacked elevations).
+    grid = fp.storeys[level]
+    is_door = (
+        (level == 0 and probe in fp.door_cells)
+        or grid.get(probe[0], probe[1]) == CellRole.DOOR
     )
-    is_window = probe in fp.window_cells
+    is_window = probe in _window_cells_for_level(fp, level)
     if is_door:
         primary = _primary_opening_face(probe, bbox, "door")
         if primary is not None and face != primary:
@@ -687,7 +732,9 @@ def _place_wall_run(
     yaw = yaw_by_face[face]
     for cell in cells:
 
-        piece_def = _wall_asset_for_cell(fp, cell, face, catalog, style, bbox)
+        piece_def = _wall_asset_for_cell(
+            fp, cell, face, catalog, style, bbox, level
+        )
         offset = _boundary_wall_offset_cm(face, yaw, piece_def)
         pid = _next_piece_id(counters, f"wall_{face}", cell, level)
         sp = SolidPlacement(
@@ -1060,17 +1107,18 @@ def _tower_drum_xy_offset_cm(
     south = tower.y1 < body.y0
     north = tower.y0 > body.y1
 
-    # Push one full radius beyond the hall face so max/min drum edge kisses the wall.
+    # Push one MODULE outward from the default centred pose so the drum AABB
+    # kisses the hall exterior (2×r left a full-module air gap → freestanding).
     cx = cell_corner_x + r
     cy = cell_corner_y + r
     if west:
-        cx = body.x0 * MODULE_CM - 2.0 * r
+        cx = body.x0 * MODULE_CM - r
     elif east:
-        cx = (body.x1 + 1) * MODULE_CM + 2.0 * r
+        cx = (body.x1 + 1) * MODULE_CM + r
     if south:
-        cy = body.y0 * MODULE_CM - 2.0 * r
+        cy = body.y0 * MODULE_CM - r
     elif north:
-        cy = (body.y1 + 1) * MODULE_CM + 2.0 * r
+        cy = (body.y1 + 1) * MODULE_CM + r
 
     # Wall attach (single-axis abut): centre on the shared edge midline.
     if (west or east) and not (south or north):

@@ -488,9 +488,47 @@ def test_m3_tower_drum_outside_hall_footprint():
     assert _on_hall_exterior(center, hall_min, hall_max)
     r = MODULE_CM
     cx, cy = center
-    # West tower: entire drum west of hall west face (x = hall_min.x).
-    assert cx + r <= hall_min[0] + TOL_CM
+    # West tower: drum east AABB edge kisses hall west face (x = hall_min.x).
+    assert cx + r == pytest.approx(hall_min[0], abs=TOL_CM)
     assert cy == pytest.approx(200.0, abs=TOL_CM)
+
+
+def test_m3_tower_touches_hall_after_drum_offset():
+    """M3 tower stack must stay in the structural touch graph after drum offset."""
+    from pae.validate import _placement_aabb, aabb_intersects
+
+    assembly, _, massing = _assembly_from_spec(m3_keep_tower_spec())
+    _, report = validate(assembly)
+    assert not any(f.check == "freestanding" for f in report.critical)
+
+    hall_min, hall_max = _hall_footprint_bbox_cm(massing)
+    center = _tower_drum_center_cm(assembly)
+    r = MODULE_CM
+    cx, cy = center
+    assert cx + r == pytest.approx(hall_min[0], abs=TOL_CM)
+
+    tower_pieces = [
+        p
+        for p in assembly.placements
+        if p.asset_id.startswith("tower_") or p.kind in ("tower_arc", "tower_crown", "tower_cap")
+    ]
+    envelope = [
+        p
+        for p in assembly.placements
+        if p.kind in ("wall", "floor", "ground", "roof", "battlement")
+        or (p.kind == "barrier" and "parapet" in p.tags)
+    ]
+    assert tower_pieces and envelope
+    connected = False
+    for tp in tower_pieces:
+        tbb = _placement_aabb(tp)
+        for ep in envelope:
+            if aabb_intersects(tbb[0], tbb[1], *_placement_aabb(ep)):
+                connected = True
+                break
+        if connected:
+            break
+    assert connected, "tower pieces must AABB-touch hall envelope after drum offset"
 
 
 def _hall_tower_xy_union_cm(assembly, massing) -> tuple[tuple[float, float], tuple[float, float]]:

@@ -377,12 +377,15 @@ def _roofline(assembly: Assembly, opts: TrimOptions) -> List[SolidPlacement]:
     if len(caps) >= 1 and len(_by_kind(assembly, "tower_arc")) >= SPIRE_MIN_TOWER_PIECES:
         for cap in caps:
             top = cap.offset_cm[2] + cap.size_cm[2]
+            # Centred tower caps carry an XY offset to the drum centre; spires must
+            # inherit it or they land on the cell origin and fail the touch graph.
+            cap_xy = (cap.offset_cm[0], cap.offset_cm[1])
             out.append(
                 _placement(
                     opts.spire_piece,
                     cap.cell,
                     cap.level,
-                    offset_cm=(0.0, 0.0, top),
+                    offset_cm=(cap_xy[0], cap_xy[1], top),
                     suffix="spire",
                 )
             )
@@ -392,7 +395,7 @@ def _roofline(assembly: Assembly, opts: TrimOptions) -> List[SolidPlacement]:
                     opts.finial_piece,
                     cap.cell,
                     cap.level,
-                    offset_cm=(0.0, 0.0, top + spire_h),
+                    offset_cm=(cap_xy[0], cap_xy[1], top + spire_h),
                     suffix="finial",
                 )
             )
