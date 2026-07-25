@@ -5,6 +5,7 @@ Usage (from any shell with RE + PAE on disk)::
     python tools/pae_build_in_blender.py
     python tools/pae_build_in_blender.py --gallery
     python tools/pae_build_in_blender.py --stair-proof
+    python tools/pae_build_in_blender.py --openings-proof
 
 Inside Blender MCP ``execute_blender_code`` directly (preferred for agents)::
 
@@ -22,6 +23,11 @@ M2 stair + floor-hole proof (isolated collection, hides roof/upper slab)::
 
     from pae.blender_build import build_m2_stair_proof
     build_m2_stair_proof()
+
+M1 door + window openings proof (south/west exterior shell, SE elevated)::
+
+    from pae.blender_build import build_m1_openings_proof
+    build_m1_openings_proof()
 """
 
 from __future__ import annotations
@@ -42,6 +48,7 @@ BUILD = PAE / "pae" / "blender_build.py"
 LIVE_PNG = PAE / "Saved" / "Screenshots" / "m1_live.png"
 GALLERY_PNG = PAE / "Saved" / "Screenshots" / "gallery_m1_m4.png"
 STAIR_PROOF_PNG = PAE / "Saved" / "Screenshots" / "m2_stair_proof.png"
+OPENINGS_PROOF_PNG = PAE / "Saved" / "Screenshots" / "m1_openings_proof.png"
 
 
 def _gallery_code() -> str:
@@ -68,6 +75,18 @@ print("PAE_STAIR_PROOF_BUILD", result)
 """
 
 
+def _openings_proof_code() -> str:
+    return rf"""
+import runpy
+ns = runpy.run_path(
+    r"{BUILD.as_posix()}",
+    run_name="pae_blender_build",
+)
+result = ns["build_m1_openings_proof"](write_png=True)
+print("PAE_OPENINGS_PROOF_BUILD", result)
+"""
+
+
 def _live_code() -> str:
     return rf"""
 import runpy
@@ -91,17 +110,26 @@ def main() -> None:
         action="store_true",
         help="Build isolated M2 stair + floor-hole proof shot (m2_stair_proof.png)",
     )
+    parser.add_argument(
+        "--openings-proof",
+        action="store_true",
+        help="Build isolated M1 door+window proof shot (m1_openings_proof.png)",
+    )
     args = parser.parse_args()
 
     if not BUILD.is_file():
         raise SystemExit(f"missing build script: {BUILD}")
 
-    if args.stair_proof and args.gallery:
-        raise SystemExit("choose one of --gallery or --stair-proof")
+    flags = sum(bool(x) for x in (args.stair_proof, args.openings_proof, args.gallery))
+    if flags > 1:
+        raise SystemExit("choose one of --gallery, --stair-proof, or --openings-proof")
 
     if args.stair_proof:
         code = _stair_proof_code()
         png = STAIR_PROOF_PNG
+    elif args.openings_proof:
+        code = _openings_proof_code()
+        png = OPENINGS_PROOF_PNG
     elif args.gallery:
         code = _gallery_code()
         png = GALLERY_PNG

@@ -319,6 +319,97 @@ def test_write_m2_stair_proof_screenshot_no_bpy_is_noop():
     assert write_m2_stair_proof_screenshot() is None
 
 
+def test_openings_proof_bounds_cm_includes_door_and_windows():
+    from pae.blender_build import (
+        is_openings_proof_aperture_placement,
+        is_openings_proof_placement,
+        openings_proof_bounds_cm,
+    )
+    from pae.pipeline import run_through_assemble
+    from pae.spec import m1_box_house_spec
+
+    _, _, assembly, _ = run_through_assemble(m1_box_house_spec())
+    apertures = [p for p in assembly.placements if is_openings_proof_aperture_placement(p)]
+    assert len(apertures) == 3
+    shell = [p for p in assembly.placements if is_openings_proof_placement(p)]
+    assert len(shell) >= 3
+    bb_min, bb_max = openings_proof_bounds_cm(assembly)
+    assert bb_max[0] > bb_min[0]
+    assert bb_max[1] > bb_min[1]
+    assert bb_max[2] > bb_min[2]
+    assert bb_min[0] == pytest.approx(0.0)
+    assert bb_min[1] == pytest.approx(0.0)
+
+
+def test_openings_proof_camera_pose_targets_shell_center_se():
+    import math
+
+    from pae.blender_build import (
+        OPENINGS_PROOF_CAM_DIRECTION,
+        openings_proof_bounds_m,
+        openings_proof_camera_pose_from_bounds_m,
+    )
+    from pae.pipeline import run_through_assemble
+    from pae.spec import m1_box_house_spec
+
+    _, _, assembly, _ = run_through_assemble(m1_box_house_spec())
+    bb_min, bb_max = openings_proof_bounds_m(assembly)
+    pose = openings_proof_camera_pose_from_bounds_m(bb_min, bb_max)
+    cx = (bb_min[0] + bb_max[0]) * 0.5
+    cy = (bb_min[1] + bb_max[1]) * 0.5
+    cz = (bb_min[2] + bb_max[2]) * 0.5
+    assert pose["target"] == (cx, cy, cz)
+    loc = pose["location"]
+    tgt = pose["target"]
+    dist = math.sqrt(sum((loc[i] - tgt[i]) ** 2 for i in range(3)))
+    assert dist == pytest.approx(pose["radius_m"], rel=1e-6)
+    dx = loc[0] - tgt[0]
+    dy = loc[1] - tgt[1]
+    dz = loc[2] - tgt[2]
+    length = math.sqrt(dx * dx + dy * dy + dz * dz)
+    exp_x, exp_y, exp_z = OPENINGS_PROOF_CAM_DIRECTION
+    exp_len = math.sqrt(exp_x * exp_x + exp_y * exp_y + exp_z * exp_z)
+    assert dx / length == pytest.approx(exp_x / exp_len, abs=1e-6)
+    assert dy / length == pytest.approx(exp_y / exp_len, abs=1e-6)
+    assert dz / length == pytest.approx(exp_z / exp_len, abs=1e-6)
+    assert pose["ortho"] is True
+
+
+def test_openings_proof_visible_asset_hides_north_east():
+    from pae.blender_build import is_openings_proof_visible_asset
+
+    assert is_openings_proof_visible_asset("wall_door", "wall_south_0_0_0")
+    assert is_openings_proof_visible_asset("wall_window", "wall_west_0_0_1")
+    assert not is_openings_proof_visible_asset("wall_plain", "wall_north_0_3_0")
+    assert not is_openings_proof_visible_asset("wall_plain", "wall_east_4_0_0")
+    assert not is_openings_proof_visible_asset("roof_flat", "roof_0_0_0")
+    assert not is_openings_proof_visible_asset("floor", "floor_0_0_0")
+    assert is_openings_proof_visible_asset("ground_plinth", "ground_0_0_0")
+
+
+def test_build_m1_openings_proof_headless():
+    from pae.blender_build import M1_OPENINGS_PROOF_SCREENSHOT_REL, build_m1_openings_proof
+
+    result = build_m1_openings_proof(write_png=False)
+    assert result["ok"] is True
+    assert result["mode"] == "openings_proof"
+    assert result["openings_proof_apertures"] == 3
+    assert result["openings_proof_placements"] >= 3
+    assert result["camera_pose"]["ortho"] is True
+    if not HAS_BPY:
+        assert result["blender"] is False
+        assert result["screenshot"] is None
+    assert str(M1_OPENINGS_PROOF_SCREENSHOT_REL).endswith("m1_openings_proof.png")
+
+
+def test_write_m1_openings_proof_screenshot_no_bpy_is_noop():
+    from pae.blender_build import write_m1_openings_proof_screenshot
+
+    if HAS_BPY:
+        pytest.skip("headless no-op only without bpy")
+    assert write_m1_openings_proof_screenshot() is None
+
+
 _GALLERY_PRIMARY_KINDS = (
     "wall",
     "floor",
