@@ -18,6 +18,7 @@ from pae.contract import (
     FLOOR_T_CM,
     MODULE_CM,
     STOREY_CM,
+    WALL_T_CM,
     cell_to_world_cm,
     ground_plinth_z_cm,
     placement_world_aabb,
@@ -32,8 +33,7 @@ _TOWER_QUARTER_YAWS = (0, 90, 180, 270)
 # ``rotates_about_center=True`` does **not** rotate the XY box — thin/long axes
 # must be baked per yaw. Outer drum half-extent is ``MODULE/2`` (arc size MODULE).
 # Push to the rim and bias away from the attach kiss so overlays do not slice the
-# hall wall (interpenetration / headroom / roof_penetration).
-_TOWER_WIN_THICK_CM = 60.0
+# hall wall (interpenetration / headroom / roof_penetration). Rim thickness = WALL_T_CM.
 _TOWER_WIN_CHORD_CM = MODULE_CM * 0.45
 _TOWER_WIN_HEIGHT_CM = 160.0  # under storey / roof; aperture sill stays on the piece
 from pae.plan import CellRole, FloorPlan, StoreyGrid
@@ -1659,7 +1659,7 @@ def _tower_window_shell_pose(
     not follow yaw. When the face is perpendicular to the attach axis, the chord
     is biased toward the free hemisphere so it clears the hall kiss wall.
     """
-    thick = _TOWER_WIN_THICK_CM
+    thick = WALL_T_CM
     half = MODULE_CM * 0.5
     radial = half - thick * 0.5
     dx, dy = drum_xy

@@ -314,6 +314,7 @@ whole board unreliable. Worth a sweep to close or re-declare them.
 >>> TRIGGER @VAL_STYLE_FINAL — Permanently green style_pack + light_anchors.
 >>> TRIGGER @VAL_STAIR — Spiral co-occupancy + stairs-into-walls integrity.
 >>> TRIGGER @VAL_MAGIC — Tower window magic numbers.
+>>> DONE @VAL_MAGIC ? `_TOWER_WIN_THICK_CM` removed; rim thickness uses `WALL_T_CM`; `test_tower_windows` hall-wall bound uses `-MODULE_CM + TOL_CM`. magic_number_grep OK; tower_windows 9 passed.
 >>> TRIGGER @DOCS_WAVE3 — Mark 1.3/1.4/2.3 DONE in roadmap.
 >>> TRIGGER @RM_PHASE9 — One Phase 9 verified slice.
 >>> TRIGGER @RM_FITOUT — Phase 2.5 fit-out greybox + containment check.

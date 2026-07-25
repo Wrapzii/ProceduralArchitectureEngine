@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pae.contract import MODULE_CM, STOREY_CM
+from pae.contract import MODULE_CM, STOREY_CM, TOL_CM
 from pae.pipeline import run_through_assemble, run_through_validate_trim
 from pae.primitives.catalog import get as get_primitive
 from pae.spec import m3_keep_tower_spec, m_spiral_tower_spec
@@ -67,7 +67,7 @@ def test_m3_tower_has_perimeter_windows_and_apertures():
     west_wins = [p for p in drum_wins if p.yaw == 0]
     assert west_wins, "expected a west-face perimeter window on m3"
     wmin, wmax = _placement_aabb(west_wins[0])
-    assert wmax[0] <= -400.0 + 1.0, "west rim window must not enter hall wall"
+    assert wmax[0] <= -MODULE_CM + TOL_CM, "west rim window must not enter hall wall"
 
 
 def test_tower_windows_clear_hall_validation():
