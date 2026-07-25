@@ -1135,7 +1135,17 @@ def build_castle_curtain_compound(
     if not sreport.ok:
         return sited, layout, sreport
     layout.courtyard = site_layout.courtyard
-    return sited, layout, Report.from_failures([])
+
+    # VALIDATE, and return what it finds — same defect as build_fortress_compound.
+    # This returned a hardcoded empty report, so the castle announced "0 critical"
+    # while validate() on the same assembly found 6, including four upper walls with
+    # no ground-floor support beneath them and a structure owning three separate
+    # ground-level stair cores. Both were visible in the render and reported by the
+    # user; both were already caught; both were discarded here.
+    from pae.validate import validate as _validate
+
+    _checked, vreport = _validate(sited)
+    return sited, layout, vreport
 
 
 def build_gatehouse_curtain(
@@ -2013,7 +2023,19 @@ def build_fortress_compound(
     sited = _strip_trim_tower_helixes(sited)
     sited = repair_stair_landing_walls(sited)
     sited = repair_junction_deck_headroom(sited)
-    return sited, layout, Report.from_failures([])
+
+    # VALIDATE, and return what it finds. This returned ``Report.from_failures([])`` —
+    # a hardcoded empty report — so the fortress announced "0 critical, 0 warnings" no
+    # matter what it had built. Running validate() on the same assembly returned 596
+    # findings, including walls driven through each other and 1200 cm holes in the
+    # curtain. Every agent working from this report believed the build was clean.
+    #
+    # A builder that cannot fail is not a gate. If this starts reporting criticals,
+    # that is the point — fix the geometry, do not go back to discarding the report.
+    from pae.validate import validate as _validate
+
+    _checked, vreport = _validate(sited)
+    return sited, layout, vreport
 
 
 def build_fortress_bailey_compound(
