@@ -585,6 +585,231 @@ def _filter_stair_void_blocked(
     return classrooms, corridors, parts
 
 
+# Roles the corridor spine may walk through / reclaim while linking to stairs.
+_SPINE_WALK = frozenset({CellRole.INTERIOR, CellRole.CORRIDOR, CellRole.DOOR})
+_SPINE_RECLAIM = frozenset({CellRole.CLASSROOM})
+_SPINE_GOAL = frozenset({CellRole.STAIR, CellRole.VOID})
+
+
+def _stair_goal_cells(
+    grid: StoreyGrid, stair_xy: List[Tuple[int, int]]
+) -> Set[Tuple[int, int]]:
+    """STAIR on climbed levels; VOID well cells on the top landing storey."""
+    goals: Set[Tuple[int, int]] = set()
+    for x, y in stair_xy:
+        role = grid.get(x, y)
+        if role in _SPINE_GOAL:
+            goals.add((x, y))
+    return goals
+
+
+def _corridor_component_reaches_stair(
+    corridor: Set[Tuple[int, int]],
+    goals: Set[Tuple[int, int]],
+    grid: StoreyGrid,
+) -> bool:
+    """True if any corridor cell is 4-adjacent to a stair/void goal (spine already linked)."""
+    if not corridor or not goals:
+        return False
+    for cx, cy in corridor:
+        if (cx, cy) in goals:
+            return True
+        for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+            if (cx + dx, cy + dy) in goals:
+                return True
+    return False
+
+
+def _shortest_spine_path(
+    starts: Set[Tuple[int, int]],
+    goals: Set[Tuple[int, int]],
+    grid: StoreyGrid,
+) -> Optional[List[Tuple[int, int]]]:
+    """BFS through INTERIOR/CORRIDOR/DOOR and reclaimable CLASSROOM toward stair goals.
+
+    Returns the list of cells to mark CORRIDOR (excluding the goal stair/void cell).
+    Prefer paths that reclaim fewer CLASSROOM cells (cost 1 vs 0 for open spine).
+    """
+    if not starts or not goals:
+        return None
+    # state: cell → (prev, cost)
+    prev: Dict[Tuple[int, int], Optional[Tuple[int, int]]] = {}
+    cost: Dict[Tuple[int, int], int] = {}
+    q: deque[Tuple[int, int]] = deque()
+    for s in sorted(starts):
+        prev[s] = None
+        cost[s] = 0
+        q.append(s)
+    found: Optional[Tuple[int, int]] = None
+    found_cost = 10**9
+    while q:
+        cur = q.popleft()
+        cx, cy = cur
+        # Success: standing on a cell adjacent to a goal (or on a corridor that already
+        # touches one — handled before BFS). Do not enter the goal cell itself.
+        for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+            n = (cx + dx, cy + dy)
+            if n in goals and cost[cur] < found_cost:
+                found = cur
+                found_cost = cost[cur]
+        if found is not None and cost[cur] > found_cost:
+            continue
+        for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+            n = (cx + dx, cy + dy)
+            role = grid.get(*n)
+            step = 0
+            if role in _SPINE_WALK or n in starts:
+                step = 0
+            elif role in _SPINE_RECLAIM:
+                step = 1
+            else:
+                continue
+            new_cost = cost[cur] + step
+            if n in cost and cost[n] <= new_cost:
+                continue
+            if n in goals:
+                continue
+            cost[n] = new_cost
+            prev[n] = cur
+            q.append(n)
+    if found is None:
+        return None
+    path: List[Tuple[int, int]] = []
+    cur_o: Optional[Tuple[int, int]] = found
+    while cur_o is not None:
+        path.append(cur_o)
+        cur_o = prev.get(cur_o)
+    path.reverse()
+    return path
+
+
+def _corridor_components(
+    cells: Set[Tuple[int, int]],
+) -> List[Set[Tuple[int, int]]]:
+    """4-connected components over a corridor cell set."""
+    remaining = set(cells)
+    comps: List[Set[Tuple[int, int]]] = []
+    while remaining:
+        start = min(remaining)
+        comp: Set[Tuple[int, int]] = set()
+        q: deque[Tuple[int, int]] = deque([start])
+        remaining.discard(start)
+        while q:
+            cur = q.popleft()
+            comp.add(cur)
+            cx, cy = cur
+            for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                n = (cx + dx, cy + dy)
+                if n in remaining:
+                    remaining.discard(n)
+                    q.append(n)
+        comps.append(comp)
+    return comps
+
+
+def _extend_corridor_spine_to_stairs(
+    storeys: List[StoreyGrid],
+    massing: Massing,
+    classroom_cells: List[Tuple[int, int, int]],
+    corridor_cells: List[Tuple[int, int, int]],
+    partitions: List[Tuple[int, int, int, str, bool]],
+) -> Tuple[
+    List[Tuple[int, int, int]],
+    List[Tuple[int, int, int]],
+    List[Tuple[int, int, int, str, bool]],
+    List[Failure],
+]:
+    """Phase 2.3: grow CORRIDOR through INTERIOR (reclaim CLASSROOM if needed) to stairs.
+
+    Rooms hang off the corridor; the corridor must reach every stair well. When a
+    double-loaded wing seals the corridor behind classrooms, reclaim the shortest
+    classroom bridge so the spine touches STAIR (or top-storey VOID well).
+    """
+    failures: List[Failure] = []
+    if not corridor_cells:
+        return classroom_cells, corridor_cells, partitions, failures
+
+    stair_xy = list(massing.stair_cells)
+    if massing.storeys <= 1 or not stair_xy:
+        # Single-storey / no stairs: spine need not reach a well.
+        return classroom_cells, corridor_cells, partitions, failures
+
+    classroom_set = set(classroom_cells)
+    corridor_set = set(corridor_cells)
+    corridor_seen = set(corridor_cells)
+
+    for level, grid in enumerate(storeys):
+        goals = _stair_goal_cells(grid, stair_xy)
+        level_corr = {(x, y) for (lv, x, y) in corridor_set if lv == level}
+        if not level_corr:
+            continue
+        if not goals:
+            failures.append(
+                Failure(
+                    check="corridor_spine",
+                    message=(
+                        f"storey {level} has corridor cells but no stair/void "
+                        "goal to link the circulation spine"
+                    ),
+                    world_xyz=cell_to_world_cm(0, 0, level),
+                )
+            )
+            continue
+
+        for comp in _corridor_components(level_corr):
+            if _corridor_component_reaches_stair(comp, goals, grid):
+                continue
+            path = _shortest_spine_path(comp, goals, grid)
+            if path is None:
+                sample = next(iter(comp))
+                failures.append(
+                    Failure(
+                        check="corridor_spine",
+                        message=(
+                            f"corridor component at {sample} level {level} "
+                            "cannot reach a stair"
+                        ),
+                        world_xyz=cell_to_world_cm(sample[0], sample[1], level),
+                    )
+                )
+                continue
+            for x, y in path:
+                role = grid.get(x, y)
+                if role == CellRole.CORRIDOR:
+                    continue
+                if role in _SPINE_RECLAIM:
+                    classroom_set.discard((level, x, y))
+                    partitions = [
+                        p
+                        for p in partitions
+                        if not (p[2] == level and p[0] == x and p[1] == y)
+                    ]
+                if role in _SPINE_WALK or role in _SPINE_RECLAIM:
+                    grid.set(x, y, CellRole.CORRIDOR)
+                    key = (level, x, y)
+                    if key not in corridor_seen:
+                        corridor_seen.add(key)
+                        corridor_set.add(key)
+                        level_corr.add((x, y))
+            linked = set(comp) | set(path)
+            if not _corridor_component_reaches_stair(linked, goals, grid):
+                sample = path[-1]
+                failures.append(
+                    Failure(
+                        check="corridor_spine",
+                        message=(
+                            f"spine path at level {level} ended at {sample} "
+                            "without adjoining a stair"
+                        ),
+                        world_xyz=cell_to_world_cm(sample[0], sample[1], level),
+                    )
+                )
+
+    classrooms = sorted(classroom_set)
+    corridors = sorted(corridor_set)
+    return classrooms, corridors, partitions, failures
+
+
 def _apply_stairs(
     storeys: List[StoreyGrid],
     massing: Massing,
@@ -790,6 +1015,18 @@ def plan(massing: Massing) -> Tuple[Optional[FloorPlan], Report]:
     classroom_cells, corridor_cells, interior_partitions = _filter_stair_void_blocked(
         storeys, classroom_cells, corridor_cells, interior_partitions
     )
+
+    # Phase 2.3: corridor spine reaches stairs (may reclaim classroom bridges).
+    classroom_cells, corridor_cells, interior_partitions, spine_failures = (
+        _extend_corridor_spine_to_stairs(
+            storeys,
+            massing,
+            classroom_cells,
+            corridor_cells,
+            interior_partitions,
+        )
+    )
+    failures.extend(spine_failures)
 
     graph, circ_failures = _build_circulation(massing, interior_by_level, storeys)
     failures.extend(circ_failures)

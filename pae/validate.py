@@ -51,6 +51,7 @@ def validate(assembly: Assembly) -> Tuple[Assembly, Report]:
     failures.extend(_check_stair_reachability(assembly))
     failures.extend(_check_stair_exit_clearance(assembly))
     failures.extend(_check_classroom_corridor_connectivity(assembly))
+    failures.extend(_check_corridor_stair_connectivity(assembly))
     failures.extend(_check_run_fit(assembly))
     failures.extend(_check_aperture_sanity(assembly))
     failures.extend(_check_no_bare_aperture_holes(assembly))
@@ -1029,6 +1030,7 @@ def _check_classroom_corridor_connectivity(assembly: Assembly) -> List[Failure]:
     """Every CLASSROOM cell must reach a CORRIDOR via a door partition on the shared edge.
 
     Buildings without classrooms skip this check. Critical when classrooms exist.
+    Uses ``_cell_role_is`` so reload_pae stale CellRole enums do not false-fail.
     """
     from pae.trim import covered_cells
 
@@ -1052,9 +1054,9 @@ def _check_classroom_corridor_connectivity(assembly: Assembly) -> List[Failure]:
             for lx in range(layer.width):
                 role = layer.cells[ly][lx]
                 cx, cy = ox + lx, oy + ly
-                if role == CellRole.CLASSROOM:
+                if _cell_role_is(role, CellRole.CLASSROOM):
                     classrooms.append((cx, cy))
-                elif role == CellRole.CORRIDOR:
+                elif _cell_role_is(role, CellRole.CORRIDOR):
                     corridors.add((cx, cy))
         if not classrooms:
             continue
@@ -1112,6 +1114,112 @@ def _check_classroom_corridor_connectivity(assembly: Assembly) -> List[Failure]:
                         critical=True,
                     )
                 )
+    return failures
+
+
+def _stair_well_xy(assembly: Assembly) -> Set[Tuple[int, int]]:
+    """Plan XY of the stair well — any cell that is STAIR on some storey."""
+    wells: Set[Tuple[int, int]] = set()
+    for layer in assembly.floor_plan.values():
+        ox, oy = layer.origin_cell
+        for ly in range(layer.height):
+            for lx in range(layer.width):
+                if _cell_role_is(layer.cells[ly][lx], CellRole.STAIR):
+                    wells.add((ox + lx, oy + ly))
+    return wells
+
+
+def _corridor_reaches_goals(
+    corridors: Set[Tuple[int, int]],
+    goals: Set[Tuple[int, int]],
+) -> bool:
+    """Every 4-connected CORRIDOR component must touch a stair/void goal."""
+    if not corridors or not goals:
+        return False
+    from collections import deque
+
+    remaining = set(corridors)
+    while remaining:
+        start = min(remaining)
+        comp: Set[Tuple[int, int]] = set()
+        q: deque[Tuple[int, int]] = deque([start])
+        remaining.discard(start)
+        touches = False
+        while q:
+            cx, cy = q.popleft()
+            comp.add((cx, cy))
+            if (cx, cy) in goals:
+                touches = True
+            for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                n = (cx + dx, cy + dy)
+                if n in goals:
+                    touches = True
+                if n in remaining:
+                    remaining.discard(n)
+                    q.append(n)
+        if not touches:
+            return False
+    return True
+
+
+def _check_corridor_stair_connectivity(assembly: Assembly) -> List[Failure]:
+    """Phase 2.3: every CORRIDOR component must reach the stair well via CORRIDOR cells.
+
+    Skip when the building has no corridor program or no stair well. Critical when
+    both exist — rooms hang off the corridor; the corridor must reach every stair.
+    """
+    failures: List[Failure] = []
+    wells = _stair_well_xy(assembly)
+    if not wells:
+        return failures
+
+    for level, layer in sorted(assembly.floor_plan.items()):
+        ox, oy = layer.origin_cell
+        corridors: Set[Tuple[int, int]] = set()
+        goals: Set[Tuple[int, int]] = set()
+        for ly in range(layer.height):
+            for lx in range(layer.width):
+                role = layer.cells[ly][lx]
+                cx, cy = ox + lx, oy + ly
+                if _cell_role_is(role, CellRole.CORRIDOR):
+                    corridors.add((cx, cy))
+                if (cx, cy) in wells and (
+                    _cell_role_is(role, CellRole.STAIR)
+                    or _cell_role_is(role, CellRole.VOID)
+                ):
+                    goals.add((cx, cy))
+        if not corridors:
+            continue
+        if not goals:
+            failures.append(
+                Failure(
+                    check="corridor_stair",
+                    message=(
+                        f"storey {level} has corridor cells but no stair/void "
+                        "well cells to reach"
+                    ),
+                    world_xyz=(0.0, 0.0, float(level * STOREY_CM)),
+                    critical=True,
+                )
+            )
+            continue
+        if not _corridor_reaches_goals(corridors, goals):
+            sample = next(iter(sorted(corridors)))
+            failures.append(
+                Failure(
+                    check="corridor_stair",
+                    message=(
+                        f"corridor on storey {level} does not reach a stair "
+                        f"(sample cell {sample})"
+                    ),
+                    world_xyz=(
+                        sample[0] * MODULE_CM + MODULE_CM * 0.5,
+                        sample[1] * MODULE_CM + MODULE_CM * 0.5,
+                        float(level * STOREY_CM),
+                    ),
+                    critical=True,
+                )
+            )
     return failures
 
 

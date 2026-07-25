@@ -268,3 +268,6 @@ these are visible in CI. **Do not weaken the tests to get green â€” fix the plac
     `_clear_course_height` was bumping entire runs above door/window heads (~83 cm at
     height_frac=0.5 on m1_box_house). Courses now land at `STOREY_CM * height_frac`; only
     bays that would cross an aperture are skipped. 15 banding tests + opening-cross test pass.
+
+2026-07-25 — @RM_ROOMS_CORRIDOR
+>>> DONE @RM_ROOMS_CORRIDOR — Phase 2.3 corridor spine: plan._extend_corridor_spine_to_stairs grows CORRIDOR through INTERIOR (reclaims CLASSROOM bridges) so every wing corridor reaches STAIR/VOID well; validate._check_corridor_stair_connectivity (critical) + classroom_corridor uses _cell_role_is; test_corridor_spine.py. School assemble critical=[]; room_spec/_cell_role_is preserved. Gaps: exterior egress-from-stair graph still via existing storey_egress (not new room?exterior path).
