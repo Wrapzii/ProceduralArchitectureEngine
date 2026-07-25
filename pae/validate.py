@@ -46,6 +46,7 @@ def validate(assembly: Assembly) -> Tuple[Assembly, Report]:
     failures.extend(_check_interpenetration(assembly))
     failures.extend(_check_enclosure(assembly))
     failures.extend(_check_floor_coverage(assembly))
+    failures.extend(_check_fitout_containment(assembly))
     failures.extend(_check_double_height_no_floor(assembly))
     failures.extend(_check_room_specs(assembly))
     failures.extend(_check_stair_reachability(assembly))
@@ -763,6 +764,81 @@ def _mark_cells_blocked_by_aabb(
 
 
 # --- §7.6 floor coverage -----------------------------------------------------
+
+
+def _check_fitout_containment(assembly: Assembly) -> List[Failure]:
+    """Phase 2.5 — greybox fit-out props must stay inside rooms on the floor slab.
+
+    Applies only to props tagged ``fitout_greybox`` (M5 AssetDB props are unaffected).
+    """
+    from pae.fitout import _has_declared_hall, is_fitout_cell
+
+    failures: List[Failure] = []
+    if not assembly.floor_plan:
+        return failures
+
+    hall_declared = _has_declared_hall(assembly)
+
+    for p in assembly.placements:
+        if "fitout_greybox" not in p.tags:
+            continue
+        level = p.level
+        cell = p.cell
+        if not is_fitout_cell(
+            assembly.floor_plan, level, cell, hall_declared=hall_declared
+        ):
+            failures.append(
+                Failure(
+                    check="fitout_containment",
+                    message=(
+                        f"fit-out prop {p.piece_id} at cell {cell} level {level} "
+                        "is not in a CLASSROOM or great_hall cell"
+                    ),
+                    world_xyz=(
+                        cell[0] * MODULE_CM + MODULE_CM * 0.5,
+                        cell[1] * MODULE_CM + MODULE_CM * 0.5,
+                        level * STOREY_CM,
+                    ),
+                    piece_id=p.piece_id,
+                    critical=True,
+                )
+            )
+            continue
+
+        floor_z = level * STOREY_CM
+        pmin, pmax = _placement_aabb(p)
+        if abs(pmin[2] - floor_z) > TOL_CM:
+            failures.append(
+                Failure(
+                    check="fitout_containment",
+                    message=(
+                        f"fit-out prop {p.piece_id} bottom z={pmin[2]:.1f} cm "
+                        f"is not on floor top z={floor_z:.1f} cm"
+                    ),
+                    world_xyz=_centre(pmin, pmax),
+                    piece_id=p.piece_id,
+                    critical=True,
+                )
+            )
+
+        cell_x0 = cell[0] * MODULE_CM - TOL_CM
+        cell_y0 = cell[1] * MODULE_CM - TOL_CM
+        cell_x1 = (cell[0] + 1) * MODULE_CM + TOL_CM
+        cell_y1 = (cell[1] + 1) * MODULE_CM + TOL_CM
+        if pmin[0] < cell_x0 or pmin[1] < cell_y0 or pmax[0] > cell_x1 or pmax[1] > cell_y1:
+            failures.append(
+                Failure(
+                    check="fitout_containment",
+                    message=(
+                        f"fit-out prop {p.piece_id} footprint extends outside "
+                        f"cell {cell} bounds"
+                    ),
+                    world_xyz=_centre(pmin, pmax),
+                    piece_id=p.piece_id,
+                    critical=True,
+                )
+            )
+    return failures
 
 
 def _check_floor_coverage(assembly: Assembly) -> List[Failure]:
