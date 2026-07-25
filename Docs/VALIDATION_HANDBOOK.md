@@ -105,15 +105,22 @@ these, or the PR is incomplete:
 - [ ] `Docs/PRIMITIVE_MEASUREMENTS.md` — regenerated
 
 **Exemptions are code, not conventions.** If your kind is legitimately exempt from a check
-(site surfaces are not part of the building; a boundary fence is *meant* to stand alone),
+(site surfaces are not part of the building; a boundary fence is *meant* to stand alone;
+`light_anchor` markers are position-only UE spawn hints with no structural role),
 add it to the named exemption set with a comment giving the reason:
 
 ```python
-ISLAND_EXEMPT_KINDS = frozenset({"surface"})
-ISLAND_EXEMPT_TAGS = frozenset({"site", "boundary"})
+# light_anchor: position-only UE spawn markers — not structural envelope pieces.
+ISLAND_EXEMPT_KINDS = frozenset({"surface", "light_anchor"})
+ISLAND_EXEMPT_TAGS = frozenset({"site", "boundary", "light_anchor", "marker"})
 ```
 
 An exemption that is not written down becomes a bug the next person has to rediscover.
+
+**Worked example — `light_anchor` (S-068…S-070) is fully registered:**
+`pae/primitives/anchors.py` + catalog `all_anchors` / `build_mesh` dispatch + measure
+sub-bay branch + island exempt above + `blender_build` KIND colour + manifest
+`NoCollision` stub and top-level `light_anchors` block + `Docs/PRIMITIVE_MEASUREMENTS.md`.
 
 ---
 

@@ -33,6 +33,9 @@ from pae.report import Failure, Report
 # S-130 / roadmap 2.1 m standing clearance above walkable surfaces (not CHEST_HEIGHT_CM).
 HEADROOM_CLEARANCE_CM = 210.0
 
+# Roadmap §1.4 — vertically stacked openings must share a plan centre line.
+APERTURE_ALIGNMENT_TOL_CM = TOL_CM
+
 
 def validate(assembly: Assembly) -> Tuple[Assembly, Report]:
     """Validate an assembly. Returns (assembly, report)."""
@@ -51,12 +54,14 @@ def validate(assembly: Assembly) -> Tuple[Assembly, Report]:
     failures.extend(_check_run_fit(assembly))
     failures.extend(_check_aperture_sanity(assembly))
     failures.extend(_check_no_bare_aperture_holes(assembly))
+    failures.extend(_check_aperture_alignment(assembly))
     failures.extend(_check_structural_islands(assembly))
     failures.extend(_check_canopy_attachment(assembly))
     failures.extend(_check_roof_penetration(assembly))
     failures.extend(_check_band_attachment(assembly))
     failures.extend(_check_aperture_reachability(assembly))
     failures.extend(_check_storey_egress(assembly))
+    failures.extend(_check_stair_landing_clearance(assembly))
     failures.extend(_check_headroom(assembly))
     failures.extend(_check_watertight_envelope(assembly))
     failures = _sort_failures(failures)
@@ -2038,6 +2043,80 @@ def _check_watertight_envelope(assembly: Assembly) -> List[Failure]:
     ]
 
 
+# --- 7.18 stair landing clearance -------------------------------------------
+
+# How far in front of a stair end must be clear, as a fraction of a module.
+STAIR_LANDING_CLEAR_FRAC = 0.5
+
+
+def _check_stair_landing_clearance(assembly: Assembly) -> List[Failure]:
+    """A stair must not start or finish against a wall.
+
+    WHY: stair_exit_clearance asks whether the hole ABOVE a stair is open. It says nothing
+    about the two ends. A flight can therefore have a clear void overhead and still run
+    straight into masonry at the bottom tread or the top landing, which is what shipped -
+    stairs beginning and ending in walls.
+
+    Rule: the cell immediately beyond each end of the run must not be occupied by a wall.
+    Checked at the level the stair starts on for the bottom, and the level above for the
+    top, because that is where a person actually arrives.
+    """
+    from pae.trim import covered_cells
+
+    stairs = [p for p in assembly.placements if p.kind == "stair"]
+    if not stairs:
+        return []
+
+    walls_by_level: Dict[int, set] = {}
+    for p in assembly.placements:
+        if p.kind == "wall":
+            walls_by_level.setdefault(p.level, set()).update(covered_cells(p))
+
+    failures: List[Failure] = []
+    for st in stairs:
+        cells = sorted(covered_cells(st))
+        if len(cells) < 2:
+            continue
+        xs = {c[0] for c in cells}
+        ys = {c[1] for c in cells}
+        # Run direction is the axis the stair is longer on.
+        if len(xs) >= len(ys):
+            axis, other = 0, 1
+        else:
+            axis, other = 1, 0
+        lo = min(c[axis] for c in cells)
+        hi = max(c[axis] for c in cells)
+        cross = sorted({c[other] for c in cells})[0]
+
+        def cell_at(v):
+            return (v, cross) if axis == 0 else (cross, v)
+
+        ends = (
+            ("bottom", cell_at(lo - 1), st.level),
+            ("top", cell_at(hi + 1), st.level + 1),
+        )
+        for name, target, level in ends:
+            blocked = target in walls_by_level.get(level, set())
+            if not blocked:
+                continue
+            bb_min, bb_max = _placement_aabb(st)
+            failures.append(
+                Failure(
+                    check="stair_landing_clearance",
+                    message=(
+                        f"stair {st.piece_id} ({st.asset_id}) runs into a wall at its "
+                        f"{name} end - cell {target} on level {level} is solid"
+                    ),
+                    world_xyz=_centre(bb_min, bb_max),
+                    piece_id=st.piece_id,
+                    # Warning for one milestone: the milestone fixtures contain this
+                    # defect and promoting it now would break other lanes. Roadmap 0.5.
+                    critical=False,
+                )
+            )
+    return failures
+
+
 def _check_run_fit(assembly: Assembly) -> List[Failure]:
     failures: List[Failure] = []
     for run in assembly.wall_runs:
@@ -2197,11 +2276,107 @@ def _check_door_walkable(
     return failures
 
 
+# --- §7.9b aperture alignment (roadmap §1.4) ---------------------------------
+
+
+_WALL_FACE_BY_YAW: Dict[int, str] = {0: "west", 180: "east", 270: "south", 90: "north"}
+
+
+def _aperture_facade_column(
+    interior_cell: Tuple[int, int],
+    exterior_cell: Tuple[int, int],
+) -> Tuple[Tuple[int, int], Tuple[int, int]]:
+    return (interior_cell, exterior_cell)
+
+
+def _wall_facade_column(p: SolidPlacement) -> Tuple[Tuple[int, int], Tuple[int, int]]:
+    face = _WALL_FACE_BY_YAW.get(p.yaw, "south")
+    x, y = p.cell
+    if face == "west":
+        return (x + 1, y), (x, y)
+    if face == "east":
+        return (x - 1, y), (x, y)
+    if face == "south":
+        return (x, y + 1), (x, y)
+    return (x, y - 1), (x, y)
+
+
+def _is_opening_wall(p: SolidPlacement) -> bool:
+    if p.kind != "wall":
+        return False
+    aid = p.asset_id
+    return "door" in aid or "gate" in aid or "window" in aid
+
+
+def _opening_samples(assembly: Assembly) -> List[Tuple[str, int, float, float, Tuple[Tuple[int, int], Tuple[int, int]]]]:
+    """(piece_id, level, plan_x, plan_y, facade_column) for each tracked opening."""
+    hosted: Set[str] = {ap.wall_piece_id for ap in assembly.apertures}
+    samples: List[Tuple[str, int, float, float, Tuple[Tuple[int, int], Tuple[int, int]]]] = []
+    for ap in assembly.apertures:
+        column = _aperture_facade_column(ap.interior_cell, ap.exterior_cell)
+        samples.append((ap.piece_id, ap.level, ap.world_xyz[0], ap.world_xyz[1], column))
+    for p in assembly.placements:
+        if not _is_opening_wall(p) or p.piece_id in hosted:
+            continue
+        bb_min, bb_max = _placement_aabb(p)
+        centre = _centre(bb_min, bb_max)
+        column = _wall_facade_column(p)
+        samples.append((p.piece_id, p.level, centre[0], centre[1], column))
+    return samples
+
+
+def _check_aperture_alignment(assembly: Assembly) -> List[Failure]:
+    """Stacked openings on the same façade column share a plan centre line (roadmap §1.4).
+
+    A ground entrance with a balcony door directly above must read as one vertical
+  stack — not two openings offset along the wall run.
+    """
+    samples = _opening_samples(assembly)
+    if len(samples) < 2:
+        return []
+
+    tol = APERTURE_ALIGNMENT_TOL_CM
+    by_column: Dict[Tuple[Tuple[int, int], Tuple[int, int]], List[Tuple[str, int, float, float]]] = {}
+    for piece_id, level, px, py, column in samples:
+        by_column.setdefault(column, []).append((piece_id, level, px, py))
+
+    failures: List[Failure] = []
+    for column, group in by_column.items():
+        levels = {level for _pid, level, _px, _py in group}
+        if len(levels) < 2:
+            continue
+        ref_piece, ref_level, ref_x, ref_y = min(group, key=lambda g: (g[1], g[0]))
+        for piece_id, level, px, py in group:
+            if level == ref_level and piece_id == ref_piece:
+                continue
+            dx = abs(px - ref_x)
+            dy = abs(py - ref_y)
+            if dx <= tol and dy <= tol:
+                continue
+            failures.append(
+                Failure(
+                    check="aperture_alignment",
+                    message=(
+                        f"opening {piece_id} at level {level} is offset "
+                        f"({dx:.1f}, {dy:.1f}) cm from stacked column "
+                        f"{column} reference {ref_piece} at level {ref_level} "
+                        f"(tolerance {tol} cm)"
+                    ),
+                    world_xyz=(px, py, ref_level * STOREY_CM),
+                    piece_id=piece_id,
+                    critical=False,
+                )
+            )
+    return failures
+
+
 __all__ = [
     "validate",
     "HEADROOM_CLEARANCE_CM",
+    "APERTURE_ALIGNMENT_TOL_CM",
     "placement_footprint_cells",
     "_check_stair_exit_clearance",
     "_check_headroom",
     "_check_no_bare_aperture_holes",
+    "_check_aperture_alignment",
 ]

@@ -86,6 +86,7 @@ Severity: **S1** shipped and visible · **S2** caught in review/CI · **S3** nea
 | E-2 | S2 | Two stair variants with indistinguishable material tints | New asset added without a distinct colour | Material colour is part of registration |
 | E-3 | S2 | `light_anchor` placements empty / measure unknown-kind; school sconces missing in suite | Half-registered kind (catalog/measure/build_mesh/island exempt/manifest collision) + chandelier only scanned `INTERIOR` (missed `DOUBLE_VOID` halls) | Register `light_anchor` end-to-end; chandelier roles include `DOUBLE_VOID`; NoCollision stub |
 | E-4 | S2 | StylePack unknown-key / inheritance-cycle tests flake green | Cycle path returned silent `None` instead of raising; schema failures must stay critical | `resolve_style_pack` raises on cycle; `load_style_pack` always emits `style_schema` / `style_extends` critical |
+| E-5 | S3 | `magic_number_grep` fails on `test_entrances.py` bare-aperture fixture | Hard-coded `(60.0, 400.0, 300.0)` instead of contract module constants | Use `(WALL_T_CM, MODULE_CM, STOREY_CM)` |
 
 ## F. Blender / mesh
 

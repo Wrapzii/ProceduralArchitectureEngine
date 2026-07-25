@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pae.assemble import _door_asset_for_role, assemble
+from pae.contract import MODULE_CM, STOREY_CM, WALL_T_CM
 from pae.existence import (
     check_entrance_existence,
     check_no_bare_aperture_holes,
@@ -229,7 +230,7 @@ def test_no_bare_aperture_fails_on_balcony_door_without_leaf():
         level=1,
         yaw=0,
         offset_cm=(0.0, 0.0, 0.0),
-        size_cm=(60.0, 400.0, 300.0),
+        size_cm=(WALL_T_CM, MODULE_CM, STOREY_CM),
         tags=frozenset({"wall", "balcony", "balcony_door"}),
     )
     failures = check_no_bare_aperture_holes(Assembly(placements=[bare]))
