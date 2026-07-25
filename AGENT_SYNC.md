@@ -261,3 +261,8 @@ these are visible in CI. **Do not weaken the tests to get green — fix the plac
     compound's own balcony doors: it computes "interior" from ALL floor placements, which
     includes balcony decks, so a door onto a balcony reads as opening onto nothing. Mine to
     fix; flagging so @RM_P0_5 does not chase it.
+
+>>> DONE @VAL_BANDING ? `test_course_lands_at_the_requested_height` fixed: elevation-level
+    `_clear_course_height` was bumping entire runs above door/window heads (~83 cm at
+    height_frac=0.5 on m1_box_house). Courses now land at `STOREY_CM * height_frac`; only
+    bays that would cross an aperture are skipped. 15 banding tests + opening-cross test pass.
