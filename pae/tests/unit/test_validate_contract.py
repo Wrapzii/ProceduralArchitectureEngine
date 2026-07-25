@@ -35,10 +35,15 @@ def test_floor_and_ground_z():
 
 
 def test_rotate_local_xy_table():
+    """Pure yaw about min-corner — compensation lives in rotation_offset_cm."""
     sx, sy = WALL_T_CM, MODULE_CM
     assert rotate_local_xy(0, 0, 0, sx, sy) == (0.0, 0.0)
-    assert rotate_local_xy(0, 0, 90, sx, sy) == (sy, 0.0)
-    assert rotate_local_xy(sx, sy, 180, sx, sy) == (0.0, 0.0)
+    assert rotate_local_xy(0, 0, 90, sx, sy) == (0.0, 0.0)
+    assert rotate_local_xy(sx, 0, 90, sx, sy) == (0.0, sx)
+    assert rotate_local_xy(0, sy, 90, sx, sy) == (-sy, 0.0)
+    assert rotate_local_xy(sx, sy, 180, sx, sy) == (-sx, -sy)
+    # Placement origin + offset must bring yaw-90 back into the cell.
+    assert rotation_offset_cm(90, sx, sy) == (sy, 0.0)
 
 
 def test_aabb_overlap_requires_all_axes():
