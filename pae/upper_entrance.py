@@ -61,13 +61,24 @@ def door_opens_onto_exterior_landing(
 
     Matches ``validate._check_aperture_reachability``: balcony / upper_landing
     tagged deck still counts when it shares a bay with interior floor.
+
+    ``tower_entry`` doors are hall↔drum passages: the walkable side is the
+    interior hall floor at that landing (not an exterior balcony).
     """
+    from pae.existence import TOWER_ENTRY_TAG
+
     deck = walkable.get(door.level, set())
     inside = interior.get(door.level, set())
     landing = balcony_deck.get(door.level, set())
+    tower_entry = TOWER_ENTRY_TAG in door.tags
     for c in covered_cells(door):
         for dx, dy in ((0, 1), (0, -1), (1, 0), (-1, 0)):
             n = (c[0] + dx, c[1] + dy)
+            if tower_entry:
+                # Landing outside the drum door = hall floor (interior).
+                if n in inside or n in deck:
+                    return True
+                continue
             if n in deck and (n not in inside or n in landing):
                 return True
     return False

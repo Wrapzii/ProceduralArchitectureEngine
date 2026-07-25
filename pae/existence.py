@@ -7,11 +7,15 @@ from __future__ import annotations
 
 from typing import List, Sequence
 
-from pae.assembly_types import Assembly
+from pae.assembly_types import Assembly, SolidPlacement
 from pae.report import Failure
 from pae.spec import EntranceSpec
 
 _ENTRANCE_ROLE_TAG_PREFIX = "entrance_role_"
+
+# Hall ↔ spiral/tower stairwell passage (Handbook §2 Q7 Existence).
+TOWER_ENTRY_TAG = "tower_entry"
+CHECK_TOWER_ENTRY_DOOR = "tower_entry_door"
 
 
 def entrance_role_tag(role: str) -> str:
@@ -64,6 +68,73 @@ def check_entrance_existence(
     return failures
 
 
+def assembly_requires_tower_entry(assembly: Assembly) -> bool:
+    """True when a spiral stair or a stair inside a tower drum is present.
+
+    Critical existence for ``tower_entry`` doors — hall must open into the
+    stairwell (ground, and preferably each landing storey).
+    """
+    has_spiral = any(
+        p.asset_id == "stair_spiral_quarter" for p in assembly.placements
+    )
+    if has_spiral:
+        return True
+    tower_cells = {
+        p.cell for p in assembly.placements if p.kind == "tower_arc"
+    }
+    if not tower_cells:
+        return False
+    return any(
+        p.kind == "stair" and p.cell in tower_cells for p in assembly.placements
+    )
+
+
+def placed_tower_entry_doors(assembly: Assembly) -> List[SolidPlacement]:
+    """Door/gate placements tagged ``tower_entry``."""
+    return [
+        p
+        for p in assembly.placements
+        if TOWER_ENTRY_TAG in p.tags and is_door_or_gate_asset(p.asset_id)
+    ]
+
+
+def check_tower_entry_door(assembly: Assembly) -> List[Failure]:
+    """Spiral / tower-stair assemblies must place a hall→drum doorway.
+
+    Handbook §2 Q7 Existence + Q6 Use. Critical when ``stair_kind=spiral`` or a
+    stair shares a tower drum cell. At least one ground-level ``tower_entry``
+    door is required; landings are preferred but not existence-gated here.
+    """
+    if not assembly_requires_tower_entry(assembly):
+        return []
+    entries = placed_tower_entry_doors(assembly)
+    if not entries:
+        return [
+            Failure(
+                check=CHECK_TOWER_ENTRY_DOOR,
+                message=(
+                    "spiral/tower stair has no hall→drum doorway "
+                    f"(expected a door tagged {TOWER_ENTRY_TAG!r})"
+                ),
+                world_xyz=None,
+                critical=True,
+            )
+        ]
+    if not any(p.level == 0 for p in entries):
+        return [
+            Failure(
+                check=CHECK_TOWER_ENTRY_DOOR,
+                message=(
+                    "tower stairwell has no ground-level tower_entry door — "
+                    "hall cannot enter the drum at grade"
+                ),
+                world_xyz=None,
+                critical=True,
+            )
+        ]
+    return []
+
+
 # Re-export ensemble existence for callers that already import from existence.
 def check_entrance_ensemble_existence(
     entrances: Sequence[EntranceSpec],
@@ -83,6 +154,7 @@ def check_no_bare_aperture_holes(assembly: Assembly) -> List[Failure]:
       * every ``kind=="door"`` aperture's host wall piece
       * every placement tagged ``balcony_door`` (compound balcony access)
       * every placement tagged ``entrance_role_*`` (declarative EntranceSpec)
+      * every placement tagged ``tower_entry`` (hall↔tower stairwell)
 
     Critical: a hole you can walk through with no leaf is a shippable defect.
     """
@@ -122,8 +194,10 @@ def check_no_bare_aperture_holes(assembly: Assembly) -> List[Failure]:
             )
 
     for placement in assembly.placements:
-        tagged_passage = "balcony_door" in placement.tags or any(
-            t.startswith(_ENTRANCE_ROLE_TAG_PREFIX) for t in placement.tags
+        tagged_passage = (
+            "balcony_door" in placement.tags
+            or TOWER_ENTRY_TAG in placement.tags
+            or any(t.startswith(_ENTRANCE_ROLE_TAG_PREFIX) for t in placement.tags)
         )
         if not tagged_passage:
             continue
@@ -135,7 +209,7 @@ def check_no_bare_aperture_holes(assembly: Assembly) -> List[Failure]:
                 message=(
                     f"passage-tagged wall {placement.piece_id} uses "
                     f"{placement.asset_id!r} — door/gate leaf required "
-                    f"(balcony_door / entrance_role)"
+                    f"(balcony_door / entrance_role / tower_entry)"
                 ),
                 world_xyz=None,
                 piece_id=placement.piece_id,

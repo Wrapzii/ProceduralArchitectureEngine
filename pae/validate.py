@@ -1597,6 +1597,9 @@ def _solid_blocks_headroom(
     # full-drum AABB, so a rim wall false-positives as plugging interior headroom.
     if "drum_window" in solid.tags or solid.piece_id.startswith("tower_win_"):
         return False
+    # Hall→drum doorway is a passage leaf on the attach rim — walk-through, not a plug.
+    if "tower_entry" in solid.tags or solid.piece_id.startswith("tower_entry_"):
+        return False
     if solid.kind not in ("wall", "roof", "floor"):
         return False
     # Spanning floors are opened at holes by mesh contract; AABB still covers
