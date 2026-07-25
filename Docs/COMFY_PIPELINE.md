@@ -50,3 +50,18 @@ See `pae.comfy.materials.DEFAULT_MATERIAL_POLICY`.
 This module calls into `pae.assets` (`MeasuredAABB`, `normalize_to_min_corner`,
 `import_asset_measured`, `propose_sockets`, `module_count`, `height_storeys`,
 `AssetDB`) — it does not fork import / fit / DB logic.
+
+## M5 — Generator uses DB without code change
+
+Once a decorative asset is **human-confirmed** and written to `assets.db`, the
+generator picks it up by tag:
+
+| API | Role |
+|---|---|
+| `pae.assets.list_decorative_for_generator(db, tags=…)` | Query confirmed decorative rows |
+| `pae.decorate.decorate(assembly, db, seed=…, tags=…)` | Sparse interior-cell prop placement |
+| `pae.pipeline.run_through_decorate(spec, asset_db=db)` | assemble → decorate |
+
+Structural `snap_fit` reject (e.g. 1.76 m pillars) is **unchanged** — Comfy /
+decorate never weaken the structural import path. Decorative sizes may be
+off-grid; precision is irrelevant for props.

@@ -32,8 +32,6 @@ Project root: `C:\Users\WhiteWidow\Documents\GitHub\ProceduralArchitectureEngine
 2026-07-24 — Master: M1 roof-tuck + south gap closed; launching Wave E (M4/M5/M6/polish).
 >>> DONE @M5 — Dynamic assets: decorate queries AssetDB by tag (confirmed decorative → sparse interior props); assets.query helpers; run_through_decorate; test_m5_dynamic_assets (accept fake measured brazier id in output); snap_fit 1.76m pillar reject intact; 150 unit passed.
 >>> DONE @M6 — UE manifest harden (contract block, LOD placeholders, collision stubs, validation.failures); Docs/UE_MANIFEST_CONSUMER.md; bind_to_terrain integration test (2×2 flatten_pad); tools/export_m1_manifest.py → Saved/exports/m1_manifest.json (39 placements, 6 assets); 12 export+integration tests pass.
-```
-
 2026-07-24 — Launching Wave A+B: WP-1 (Composer), WP-9 (Grok), WP-2 (Composer), WP-3 (Grok), WP-4 (Grok).
 >>> DONE @WP-2 — Asset DB (SQLite), sockets, import/fit, min-corner origin, rotates_about_center; 32 tests pass.
 >>> DONE @WP-1 — Full §7 validator (9 checks), contract AABB helpers, assembly_types.py, broken_all_defects fixture; 21 WP-1 tests pass (61/62 repo; magic-number grep still flags WP-2/3/9 literals).

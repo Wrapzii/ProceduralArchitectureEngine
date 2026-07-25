@@ -1,4 +1,4 @@
-"""Thin end-to-end pipeline helpers (M1 gate)."""
+"""Thin end-to-end pipeline helpers (M1 / M5 gates)."""
 
 from __future__ import annotations
 
@@ -35,3 +35,32 @@ def run_through_assemble(
         return massing, floor_plan, assembly, areport
 
     return massing, floor_plan, assembly, Report.from_failures([])
+
+
+def run_through_decorate(
+    spec,
+    *,
+    asset_db=None,
+    seed: int | None = None,
+    tags=None,
+) -> Tuple[Massing, FloorPlan, Assembly, Report]:
+    """spec → assemble → decorate (M5 dynamic props from AssetDB tags)."""
+    from pae.decorate import decorate
+
+    massing, floor_plan, assembly, report = run_through_assemble(
+        spec, asset_db=asset_db
+    )
+    if not report.ok:
+        return massing, floor_plan, assembly, report
+
+    decor_seed = int(seed if seed is not None else getattr(spec, "seed", 0))
+    decorated, dreport = decorate(
+        assembly,
+        asset_db,
+        seed=decor_seed,
+        tags=tags,
+    )
+    if not dreport.ok:
+        return massing, floor_plan, decorated, dreport
+    # Non-critical decorate warnings (empty DB) still return ok assembly.
+    return massing, floor_plan, decorated, dreport
