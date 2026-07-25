@@ -43,6 +43,7 @@ def validate(assembly: Assembly) -> Tuple[Assembly, Report]:
     failures.extend(_check_end_connectivity(assembly))
     failures.extend(_check_vertical_support(assembly))
     failures.extend(_check_collinear_gaps(assembly))
+    failures.extend(_check_tower_hall_kiss(assembly))
     failures.extend(_check_interpenetration(assembly))
     failures.extend(_check_enclosure(assembly))
     failures.extend(_check_floor_coverage(assembly))
@@ -64,6 +65,7 @@ def validate(assembly: Assembly) -> Tuple[Assembly, Report]:
     failures.extend(_check_roof_valley_join(assembly))
     failures.extend(_check_band_attachment(assembly))
     failures.extend(_check_aperture_reachability(assembly))
+    failures.extend(_check_tower_entry_door(assembly))
     failures.extend(_check_upper_entrance_landing(assembly))
     failures.extend(_check_storey_egress(assembly))
     failures.extend(_check_stair_landing_clearance(assembly))
@@ -172,6 +174,35 @@ def _wall_end_faces(
 
 # --- §7.1 end connectivity ---------------------------------------------------
 
+# A wall end must meet *structure*, not a stray prop or marker. Counting any AABB
+# as a joint was a false negative: a dangling run "connected" to a brazier still
+# left a hole in the façade. Floors/ground remain valid abutments (partition ends
+# often meet the deck at a free tip); props/bands/markers do not.
+_END_CONNECT_KINDS = frozenset(
+    {
+        "wall",
+        "tower_arc",
+        "tower_crown",
+        "tower_cap",
+        "battlement",
+        "column",
+        "stair",
+        "floor",
+        "roof",
+        "ground",
+    }
+)
+
+
+def _counts_for_end_connectivity(other: SolidPlacement) -> bool:
+    if other.kind in _END_CONNECT_KINDS:
+        return True
+    if other.kind == "barrier" and (
+        "parapet" in other.tags or "battlement" in other.tags
+    ):
+        return True
+    return False
+
 
 def _check_end_connectivity(assembly: Assembly) -> List[Failure]:
     failures: List[Failure] = []
@@ -190,6 +221,8 @@ def _check_end_connectivity(assembly: Assembly) -> List[Failure]:
             for other in solids:
                 if other.piece_id == wall.piece_id:
                     continue
+                if not _counts_for_end_connectivity(other):
+                    continue
                 omin, omax = _placement_aabb(other)
                 if aabb_intersects(pmin, pmax, omin, omax):
                     hit = True
@@ -200,7 +233,7 @@ def _check_end_connectivity(assembly: Assembly) -> List[Failure]:
                         check="end_connectivity",
                         message=(
                             f"dangling wall end {end_name} on {wall.piece_id} "
-                            f"({wall.asset_id}) — no geometry within {TOL_CM} cm"
+                            f"({wall.asset_id}) — no structure within {TOL_CM} cm"
                         ),
                         world_xyz=world_xyz,
                         piece_id=wall.piece_id,
@@ -211,6 +244,52 @@ def _check_end_connectivity(assembly: Assembly) -> List[Failure]:
 
 
 # --- §7.2 vertical support ---------------------------------------------------
+
+# Parapet / battlement must bear on a wall head (or designed bearer), not merely
+# rest on posts/props. Primary roof decks use the dedicated ``roof_bears_on_wall``
+# check (@VAL_ROOF_CONNECT) — do not double-fail roofs here.
+_WALL_HEAD_BORNE = frozenset({"battlement"})
+
+
+def _needs_wall_head_bearing(p: SolidPlacement) -> bool:
+    if p.kind in _WALL_HEAD_BORNE:
+        return True
+    return p.kind == "barrier" and "parapet" in p.tags
+
+
+def _is_wall_head_bearer(other: SolidPlacement) -> bool:
+    """Pieces whose top may legitimately carry a parapet or battlement."""
+    if other.kind in ("wall", "tower_arc", "battlement", "roof"):
+        return True
+    if other.kind == "barrier" and "parapet" in other.tags:
+        return True
+    if other.kind in ("floor", "ground"):
+        return True
+    return False
+
+
+def _piece_supports_at(
+    supported: SolidPlacement,
+    supporter: SolidPlacement,
+    *,
+    bb_min: Tuple[float, float, float],
+    bb_max: Tuple[float, float, float],
+    bottom_z: float,
+    tol: float,
+) -> bool:
+    if supporter.piece_id == supported.piece_id:
+        return False
+    omin, omax = _placement_aabb(supporter)
+    if abs(omin[2] - bottom_z) > tol and abs(omax[2] - bottom_z) > tol:
+        if not (omin[2] < bottom_z <= omax[2] + tol):
+            return False
+    else:
+        top = omax[2]
+        if abs(top - bottom_z) > tol:
+            return False
+    return _xy_footprint_overlap(
+        bb_min, bb_max, omin, omax, _support_overlap_tol(bb_min, bb_max, tol)
+    )
 
 
 def _check_vertical_support(assembly: Assembly) -> List[Failure]:
@@ -229,30 +308,37 @@ def _check_vertical_support(assembly: Assembly) -> List[Failure]:
         bottom_z = bb_min[2]
         if bottom_z <= tol:
             continue
-        supported = False
-        for other in assembly.placements:
-            if other.piece_id == p.piece_id:
-                continue
-            omin, omax = _placement_aabb(other)
-            if abs(omin[2] - bottom_z) > tol and abs(omax[2] - bottom_z) > tol:
-                if not (omin[2] < bottom_z <= omax[2] + tol):
-                    continue
-            else:
-                top = omax[2]
-                if abs(top - bottom_z) > tol:
-                    continue
-            if _xy_footprint_overlap(
-                bb_min, bb_max, omin, omax, _support_overlap_tol(bb_min, bb_max, tol)
-            ):
-                supported = True
-                break
-        if not supported:
+        supporters = [
+            other
+            for other in assembly.placements
+            if _piece_supports_at(
+                p, other, bb_min=bb_min, bb_max=bb_max, bottom_z=bottom_z, tol=tol
+            )
+        ]
+        if not supporters:
             failures.append(
                 Failure(
                     check="vertical_support",
                     message=(
                         f"floating piece {p.piece_id} ({p.asset_id}) — "
                         f"no support within {tol} cm below z={bottom_z:.1f}"
+                    ),
+                    world_xyz=_centre(bb_min, bb_max),
+                    piece_id=p.piece_id,
+                    critical=True,
+                )
+            )
+            continue
+        if _needs_wall_head_bearing(p) and not any(
+            _is_wall_head_bearer(s) for s in supporters
+        ):
+            failures.append(
+                Failure(
+                    check="vertical_support",
+                    message=(
+                        f"wall-head bearing missing for {p.piece_id} ({p.asset_id}) — "
+                        f"parapet/battlement must rest on a wall (or designed bearer), "
+                        f"not posts alone"
                     ),
                     world_xyz=_centre(bb_min, bb_max),
                     piece_id=p.piece_id,
@@ -297,53 +383,102 @@ def _xy_footprint_overlap(
 # --- §7.3 collinear gaps -----------------------------------------------------
 
 
+def _cluster_spans_by_plane(
+    items: List[Tuple[float, str, float, float]],
+    *,
+    tol: float = TOL_CM,
+) -> List[Tuple[float, List[Tuple[str, float, float]]]]:
+    """Cluster collinear spans whose planes lie within a diameter of *tol*.
+
+    Exact ``round(plane, 3)`` bucketing missed gaps when two segments of the same
+    face differed by a few centimetres (still within ``TOL_CM``) — a false negative
+    for wall-run continuity. Diameter ≤ tol keeps opposite faces (WALL_T apart)
+    in separate clusters.
+    """
+    if not items:
+        return []
+    ordered = sorted(items, key=lambda t: (t[0], t[2], t[1]))
+    clusters: List[List[Tuple[float, str, float, float]]] = [[ordered[0]]]
+    for item in ordered[1:]:
+        cluster = clusters[-1]
+        plane_min = cluster[0][0]
+        if item[0] - plane_min <= tol:
+            cluster.append(item)
+        else:
+            clusters.append([item])
+    out: List[Tuple[float, List[Tuple[str, float, float]]]] = []
+    for cluster in clusters:
+        plane = sum(c[0] for c in cluster) / len(cluster)
+        spans = [(pid, a, b) for _, pid, a, b in cluster]
+        out.append((plane, spans))
+    return out
+
+
+def _emit_collinear_span_gaps(
+    *,
+    level: int,
+    axis: str,
+    plane: float,
+    spans: List[Tuple[str, float, float]],
+    run_id: str = "",
+) -> List[Failure]:
+    failures: List[Failure] = []
+    spans = sorted(spans, key=lambda s: s[1])
+    for i in range(len(spans) - 1):
+        id_a, _, end_a = spans[i]
+        id_b, start_b, _ = spans[i + 1]
+        gap = start_b - end_a
+        if gap > TOL_CM:
+            mid = (end_a + start_b) * 0.5
+            if axis == "y":
+                xyz = (plane, mid, level * STOREY_CM + STOREY_CM * 0.5)
+            else:
+                xyz = (mid, plane, level * STOREY_CM + STOREY_CM * 0.5)
+            where = f"in run {run_id}" if run_id else f"on level {level}"
+            failures.append(
+                Failure(
+                    check="collinear_gap",
+                    message=(
+                        f"collinear gap {gap:.1f} cm between {id_a} and {id_b} {where}"
+                    ),
+                    world_xyz=xyz,
+                    piece_id=id_a,
+                    critical=False,
+                )
+            )
+    return failures
+
+
 def _check_collinear_gaps(assembly: Assembly) -> List[Failure]:
     failures: List[Failure] = []
     pieces = _piece_map(assembly)
 
-    # Derive gaps from wall placements (authoritative geometry).
-    buckets: Dict[Tuple[int, str, float, str], List[Tuple[str, float, float]]] = {}
+    groups: Dict[Tuple[int, str], List[Tuple[float, str, float, float]]] = {}
     for wall in assembly.placements:
         if not _is_wall(wall):
+            continue
+        if "drum_window" in wall.tags or wall.piece_id.startswith("tower_win_"):
             continue
         bb_min, bb_max = _placement_aabb(wall)
         axis = _wall_long_axis(wall)
         if axis == "y":
-            key = (wall.level, "y", round(bb_min[0], 3), "x")
-            span = (bb_min[1], bb_max[1])
             plane = bb_min[0]
+            span = (bb_min[1], bb_max[1])
         else:
-            key = (wall.level, "x", round(bb_min[1], 3), "y")
-            span = (bb_min[0], bb_max[0])
             plane = bb_min[1]
-        buckets.setdefault(key, []).append((wall.piece_id, span[0], span[1]))
+            span = (bb_min[0], bb_max[0])
+        groups.setdefault((wall.level, axis), []).append(
+            (plane, wall.piece_id, span[0], span[1])
+        )
 
-    for (level, axis, plane, _), spans in buckets.items():
-        spans.sort(key=lambda s: s[1])
-        for i in range(len(spans) - 1):
-            id_a, _, end_a = spans[i]
-            id_b, start_b, _ = spans[i + 1]
-            gap = start_b - end_a
-            if gap > TOL_CM:
-                mid = (end_a + start_b) * 0.5
-                if axis == "y":
-                    xyz = (plane, mid, level * STOREY_CM + STOREY_CM * 0.5)
-                else:
-                    xyz = (mid, plane, level * STOREY_CM + STOREY_CM * 0.5)
-                failures.append(
-                    Failure(
-                        check="collinear_gap",
-                        message=(
-                            f"collinear gap {gap:.1f} cm between {id_a} and {id_b} "
-                            f"on level {level}"
-                        ),
-                        world_xyz=xyz,
-                        piece_id=id_a,
-                        critical=False,
-                    )
+    for (level, axis), items in groups.items():
+        for plane, spans in _cluster_spans_by_plane(items):
+            failures.extend(
+                _emit_collinear_span_gaps(
+                    level=level, axis=axis, plane=plane, spans=spans
                 )
+            )
 
-    # Also honour explicit runs when they list multiple pieces (assembly metadata).
     if assembly.wall_runs:
         for run in assembly.wall_runs:
             if len(run.piece_ids) > 1:
@@ -352,7 +487,6 @@ def _check_collinear_gaps(assembly: Assembly) -> List[Failure]:
 
 
 def _gaps_along_run(run: WallRun, pieces: Dict[str, SolidPlacement]) -> List[Failure]:
-    failures: List[Failure] = []
     spans: List[Tuple[str, float, float]] = []
     for pid in run.piece_ids:
         p = pieces.get(pid)
@@ -363,29 +497,62 @@ def _gaps_along_run(run: WallRun, pieces: Dict[str, SolidPlacement]) -> List[Fai
             spans.append((pid, bb_min[1], bb_max[1]))
         else:
             spans.append((pid, bb_min[0], bb_max[0]))
-    spans.sort(key=lambda s: s[1])
-    for i in range(len(spans) - 1):
-        id_a, _, end_a = spans[i]
-        id_b, start_b, _ = spans[i + 1]
-        gap = start_b - end_a
-        if gap > TOL_CM:
-            mid = (end_a + start_b) * 0.5
-            if run.axis == "y":
-                xyz = (run.plane_cm, mid, run.level * STOREY_CM + STOREY_CM * 0.5)
-            else:
-                xyz = (mid, run.plane_cm, run.level * STOREY_CM + STOREY_CM * 0.5)
-            failures.append(
-                Failure(
-                    check="collinear_gap",
-                    message=(
-                        f"collinear gap {gap:.1f} cm between {id_a} and {id_b} "
-                        f"in run {run.run_id}"
-                    ),
-                    world_xyz=xyz,
-                    piece_id=id_a,
-                    critical=False,
-                )
+    return _emit_collinear_span_gaps(
+        level=run.level,
+        axis=run.axis,
+        plane=run.plane_cm,
+        spans=spans,
+        run_id=run.run_id,
+    )
+
+
+# --- §7.3b tower ↔ hall kiss -------------------------------------------------
+
+
+def _is_hall_envelope_wall(p: SolidPlacement) -> bool:
+    """Hall / range wall — not a tower drum overlay or tower-tagged shell piece."""
+    if p.kind != "wall":
+        return False
+    if "drum_window" in p.tags or p.piece_id.startswith("tower_win_"):
+        return False
+    if "tower" in p.tags:
+        return False
+    return True
+
+
+def _check_tower_hall_kiss(assembly: Assembly) -> List[Failure]:
+    """Every tower drum arc must AABB-kiss a hall wall within ``TOL_CM``.
+
+    WHY: Ledger C-5 shipped a fully detached tower. ``freestanding`` catches islands,
+    but a drum that sits near the hall with an air gap can still join the touch graph
+    via stairs/floors. Engineering continuity requires the attach *kiss* itself.
+    Freestanding drums fail; wall-attached drums (M3) pass.
+    """
+    arcs = [p for p in assembly.placements if p.kind == "tower_arc"]
+    if not arcs:
+        return []
+    hall_walls = [p for p in assembly.placements if _is_hall_envelope_wall(p)]
+    if not hall_walls:
+        return []
+
+    hall_boxes = [_placement_aabb(w) for w in hall_walls]
+    failures: List[Failure] = []
+    for arc in arcs:
+        amin, amax = _placement_aabb(arc)
+        if any(aabb_intersects(amin, amax, h[0], h[1]) for h in hall_boxes):
+            continue
+        failures.append(
+            Failure(
+                check="tower_hall_kiss",
+                message=(
+                    f"tower drum {arc.piece_id} ({arc.asset_id}) does not kiss a "
+                    f"hall wall within {TOL_CM} cm — freestanding or air-gapped attach"
+                ),
+                world_xyz=_centre(amin, amax),
+                piece_id=arc.piece_id,
+                critical=True,
             )
+        )
     return failures
 
 
@@ -2089,6 +2256,9 @@ def _check_aperture_reachability(assembly: Assembly) -> List[Failure]:
 
     Phase 9.2: exterior porch landings tagged ``upper_landing`` count the same as
     balcony deck (see ``pae.upper_entrance``).
+
+    ``tower_entry`` doors open onto the interior hall floor at that landing —
+    that is the designed walkable side (see ``door_opens_onto_exterior_landing``).
     """
     from pae.upper_entrance import (
         door_opens_onto_exterior_landing,
@@ -2125,6 +2295,13 @@ def _check_aperture_reachability(assembly: Assembly) -> List[Failure]:
                 )
             )
     return failures
+
+
+def _check_tower_entry_door(assembly: Assembly) -> List[Failure]:
+    """Existence: spiral / tower-stair drums need a hall→drum doorway."""
+    from pae.existence import check_tower_entry_door
+
+    return check_tower_entry_door(assembly)
 
 
 def _check_upper_entrance_landing(assembly: Assembly) -> List[Failure]:
@@ -2237,6 +2414,10 @@ def _is_walkable_surface(p: SolidPlacement) -> bool:
     if p.kind == "stair":
         return True
     if p.kind == "floor" and "hole" not in p.asset_id:
+        # Outdoor tower crown / wall-walk (Phase 4.7) — open sky by design; hall eaves
+        # that graze the drum cell must not false-positive indoor headroom.
+        if "tower_deck" in p.tags or "tower_top" in p.tags:
+            return False
         return True
     return False
 

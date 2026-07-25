@@ -1087,6 +1087,18 @@ def _place_stairs(
                         tags=spiral_def.tags,
                     )
                 )
+            # Central newel on the spiral axis (@VAL_SPIRAL_SHELL). Drum quarters
+            # come from _place_tower_arcs; door bay ownership stays @VAL_TOWER_DOOR.
+            from pae.spiral_shell import place_spiral_newels
+
+            place_spiral_newels(
+                placements=placements,
+                counters=counters,
+                cell=cell,
+                levels=(level,),
+                xy_offset=xy_offset,
+                next_piece_id=_next_piece_id,
+            )
         return
 
     if len(run_cells) < 2:
@@ -1855,6 +1867,23 @@ def _place_tower_arcs(
             apertures=apertures,
             counters=counters,
         )
+        # @VAL_TOWER_DOOR — hall↔drum doorway on attach face (owned module).
+        from pae.tower_entry import place_tower_entry_doors
+
+        place_tower_entry_doors(
+            vol=vol,
+            cell=cell,
+            drum_xy=drum_xy,
+            skip_yaw=skip_yaw,
+            body=_tower_attached_body(vol, bodies),
+            door_asset_id=_style_door_asset(style),
+            door_tags=catalog.get(_style_door_asset(style)).tags,
+            aperture_world=_aperture_world,
+            next_piece_id=_next_piece_id,
+            placements=placements,
+            apertures=apertures,
+            counters=counters,
+        )
         top = vol.storeys - 1
         junction_z = STOREY_CM
         crown_z = junction_z + junction.size_cm[2] + _TOWER_STACK_GAP_CM
@@ -1879,6 +1908,88 @@ def _place_tower_arcs(
                     tags=piece.tags,
                 )
             )
+        # Phase 4.7 (@VAL_TOWER_RAMPART) — walkable deck + rampart tags + crenels.
+        from pae.tower_rampart import place_tower_rampart_crown
+
+        floor_piece = catalog.get("floor")
+        wall_win = catalog.get(_style_window_asset(style))
+        if not (
+            "window" in wall_win.asset_id
+            or "arrowslit" in wall_win.asset_id
+            or "arcade" in wall_win.asset_id
+        ):
+            wall_win = catalog.get("wall_window")
+
+        def _rampart_pid(prefix: str, c: Tuple[int, int], lvl: int) -> str:
+            return _next_piece_id(counters, prefix, c, lvl)
+
+        place_tower_rampart_crown(
+            cell=cell,
+            level=top,
+            drum_xy=drum_xy,
+            junction_z=junction_z,
+            crown_z=crown_z,
+            skip_yaw=skip_yaw,
+            floor_piece=floor_piece,
+            wall_window_asset_id=wall_win.asset_id,
+            wall_window_tags=wall_win.tags,
+            next_piece_id=_rampart_pid,
+            placements=placements,
+            apertures=apertures,
+        )
+
+
+def _ensure_spiral_drum_enclosure(
+    *,
+    floor_plan: FloorPlan,
+    catalog: _PieceCatalog,
+    placements: List[SolidPlacement],
+    counters: Dict[str, int],
+) -> None:
+    """Fill any missing ``tower_arc`` quarters around spiral climbs (@VAL_SPIRAL_SHELL).
+
+    Idempotent on top of ``_place_tower_arcs``. Designed door bays (tagged
+    ``tower_entry`` / ``tower_door`` / ``spiral_door_bay``) are left open for
+    @VAL_TOWER_DOOR.
+    """
+    if floor_plan.massing is None:
+        return
+    kind = str(getattr(floor_plan.massing, "stair_kind", "") or "").lower()
+    if kind != "spiral":
+        return
+    from pae.spiral_shell import DESIGNED_DOOR_BAY_TAGS, ensure_spiral_drum_quarters
+
+    solid = catalog.get("tower_arc_quarter")
+    bodies = [v for v in floor_plan.massing.volumes if v.role in WING_ROLES]
+    for cell in floor_plan.stair_cells:
+        levels = {
+            p.level
+            for p in placements
+            if p.asset_id == "stair_spiral_quarter" and p.cell == cell
+        }
+        if not levels:
+            continue
+        xy_offset = (0.0, 0.0)
+        for vol in floor_plan.massing.volumes:
+            if vol.role == "tower" and (vol.x0, vol.y0) == cell:
+                xy_offset = _tower_drum_xy_offset_cm(vol, bodies)
+                break
+        door_exempt = {
+            int(p.yaw) % 360
+            for p in placements
+            if p.cell == cell and (DESIGNED_DOOR_BAY_TAGS & set(p.tags))
+        }
+        ensure_spiral_drum_quarters(
+            placements=placements,
+            counters=counters,
+            cell=cell,
+            levels=levels,
+            xy_offset=xy_offset,
+            solid_arc_size_cm=solid.size_cm,
+            solid_arc_tags=solid.tags,
+            next_piece_id=_next_piece_id,
+            door_exempt_yaws=door_exempt,
+        )
 
 
 def assemble(
@@ -2124,6 +2235,15 @@ def assemble(
         style=style,
         placements=placements,
         apertures=apertures,
+        counters=counters,
+    )
+
+    # Spiral shell: guarantee continuous tower_arc drum around helical climbs.
+    # Door bay gaps are exempted by tag (@VAL_TOWER_DOOR); ramparts @VAL_TOWER_RAMPART.
+    _ensure_spiral_drum_enclosure(
+        floor_plan=floor_plan,
+        catalog=catalog,
+        placements=placements,
         counters=counters,
     )
 
