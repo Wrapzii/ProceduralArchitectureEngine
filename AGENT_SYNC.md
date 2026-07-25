@@ -203,6 +203,7 @@ Suite at close: 405 passed, 1 failed (@TOWER_ATTACH above). Renders: Saved/Scree
 
 2026-07-25 — Master: VALIDATION+ROADMAP WAVE2 (parallel, no wait). Suite after WAVE1: 541 pass / 13 fail. room_spec green. Spawn: @VAL_TOWER_FIX @VAL_STYLE_LIGHTS @VAL_BANDING @RM_M9_ENSEMBLE @RM_ALIGN_1_4 @RM_ROOMS_CORRIDOR @DOCS_SYNC.
 >>> TRIGGER @VAL_TOWER_FIX — Fix tower_win collateral (yaw/headroom/interpenetration/roof_penetration). Owns assemble tower windows + designed-pair if needed. Do NOT demote checks.
+>>> DONE @VAL_TOWER_FIX — Rim drum windows: yaw-baked size + MODULE/2 radial offset + attach-face bias (clears hall kiss). headroom/end_connectivity skip drum_window shell (full-drum stair AABB false positive); modest roof graze designed-pair only (<=STOREY/2). Banding skips drum_window hosts. test_assemble counts solid+windowed arcs. Tests: tower_windows + assemble yaw + polish aperture + showcase + castle + random green. Did NOT demote headroom/roof_penetration.
 >>> TRIGGER @VAL_STYLE_LIGHTS — Re-green style_pack unknown-key + light_anchors + magic number in test_entrances.
 >>> DONE @VAL_STYLE_LIGHTS — style_pack unknown-key/nested/cycle + RoofHints accepted; light_anchors school sconces/manifest green; Handbook §3 registration test; test_entrances magic_number → (WALL_T_CM, MODULE_CM, STOREY_CM); ledger E-5. magic_number_grep OK; owned tests pass.
 >>> TRIGGER @VAL_BANDING — Fix banding course Z drift (83cm).

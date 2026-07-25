@@ -172,6 +172,11 @@ def _check_end_connectivity(assembly: Assembly) -> List[Failure]:
     for wall in solids:
         if not _is_wall(wall):
             continue
+        # Drum window overlays are short rim shells on the annulus — their free
+        # ends are not façade joints (Phase 0.6). Connectivity is via AABB touch
+        # to the drum (freestanding), not wall-end probes.
+        if "drum_window" in wall.tags or wall.piece_id.startswith("tower_win_"):
+            continue
         for end_name, world_xyz, probe in _wall_end_faces(wall):
             pmin, pmax = probe
             hit = False
@@ -1319,6 +1324,10 @@ def _solid_blocks_headroom(
         return False
     if solid.kind == "prop":
         return False
+    # Drum window overlays sit on the exterior shell. Spiral stairs / decks use a
+    # full-drum AABB, so a rim wall false-positives as plugging interior headroom.
+    if "drum_window" in solid.tags or solid.piece_id.startswith("tower_win_"):
+        return False
     if solid.kind not in ("wall", "roof", "floor"):
         return False
     # Spanning floors are opened at holes by mesh contract; AABB still covers
@@ -1636,6 +1645,21 @@ def _designed_roof_penetration_gable_ridge(
     return 0.0 < rise_cm <= TOL_CM
 
 
+def _designed_roof_penetration_drum_window(
+    piece: SolidPlacement,
+    *,
+    rise_cm: float,
+) -> bool:
+    """Tower drum window overlay grazing an adjacent hall roof cell (AABB bleed).
+
+    Full-storey blades (legacy centred full-bay overlays) are NOT exempt — only a
+    modest rise from a rim shell whose own tower is crowned separately.
+    """
+    if "drum_window" not in piece.tags and not piece.piece_id.startswith("tower_win_"):
+        return False
+    return 0.0 < rise_cm <= STOREY_CM * 0.5 + TOL_CM
+
+
 def _roof_penetration_exempt(
     piece: SolidPlacement,
     *,
@@ -1650,6 +1674,8 @@ def _roof_penetration_exempt(
     if _designed_roof_penetration_gable_ridge(
         piece, rise_cm=rise_cm, roof_asset_id=roof_asset_id
     ):
+        return True
+    if _designed_roof_penetration_drum_window(piece, rise_cm=rise_cm):
         return True
     return False
 

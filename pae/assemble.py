@@ -28,6 +28,14 @@ from pae.solver import Volume
 # Soft separation between stacked tower roof pieces (visual only; junction owns the joint).
 _TOWER_STACK_GAP_CM = 0.5
 _TOWER_QUARTER_YAWS = (0, 90, 180, 270)
+# Drum-rim window overlays (Phase 0.6). ``placement_world_aabb`` with
+# ``rotates_about_center=True`` does **not** rotate the XY box — thin/long axes
+# must be baked per yaw. Outer drum half-extent is ``MODULE/2`` (arc size MODULE).
+# Push to the rim and bias away from the attach kiss so overlays do not slice the
+# hall wall (interpenetration / headroom / roof_penetration).
+_TOWER_WIN_THICK_CM = 60.0
+_TOWER_WIN_CHORD_CM = MODULE_CM * 0.45
+_TOWER_WIN_HEIGHT_CM = 160.0  # under storey / roof; aperture sill stays on the piece
 from pae.plan import CellRole, FloorPlan, StoreyGrid
 from pae.solver import WING_ROLES
 from pae.primitives.catalog import catalog_by_id, get as get_primitive
@@ -1635,12 +1643,48 @@ def _tower_window_slots(
     return [(qi, yaw) for qi, yaw in slots if yaw != skip_yaw]
 
 
-def _tower_window_wall_offset_cm(
+def _tower_window_shell_pose(
     drum_xy: Tuple[float, float],
+    yaw: int,
+    *,
     z_off: float,
-) -> Tuple[float, float, float]:
-    """Drum-centred offset; placement uses rotates_about_center for AABB touch."""
-    return (drum_xy[0], drum_xy[1], z_off)
+    height_cm: float,
+    chord_cm: float,
+    skip_yaw: Optional[int],
+) -> Tuple[Tuple[float, float, float], Tuple[float, float, float]]:
+    """Size + offset for a drum-rim window overlay.
+
+    Pushes the piece to the outer shell (half-extent ``MODULE/2``) along the face
+    normal. Thin/long axes are baked into ``size_cm`` because centred AABBs do
+    not follow yaw. When the face is perpendicular to the attach axis, the chord
+    is biased toward the free hemisphere so it clears the hall kiss wall.
+    """
+    thick = _TOWER_WIN_THICK_CM
+    half = MODULE_CM * 0.5
+    radial = half - thick * 0.5
+    dx, dy = drum_xy
+    # Tangential bias: flush the chord to the exterior side of the drum.
+    shift = max(0.0, half - chord_cm * 0.5)
+    bias_x = 0.0
+    bias_y = 0.0
+    if skip_yaw in (0, 180) and yaw in (90, 270):
+        bias_x = shift if skip_yaw == 0 else -shift
+    elif skip_yaw in (90, 270) and yaw in (0, 180):
+        bias_y = shift if skip_yaw == 270 else -shift
+
+    if yaw == 0:  # west face — thin in X
+        size = (thick, chord_cm, height_cm)
+        ox, oy = dx - radial + bias_x, dy + bias_y
+    elif yaw == 180:  # east face
+        size = (thick, chord_cm, height_cm)
+        ox, oy = dx + radial + bias_x, dy + bias_y
+    elif yaw == 90:  # north face — thin in Y
+        size = (chord_cm, thick, height_cm)
+        ox, oy = dx + bias_x, dy + radial + bias_y
+    else:  # 270 south face
+        size = (chord_cm, thick, height_cm)
+        ox, oy = dx + bias_x, dy - radial + bias_y
+    return size, (ox, oy, z_off)
 
 
 def _tower_exterior_cell(cell: Tuple[int, int], yaw: int) -> Tuple[int, int]:
@@ -1672,7 +1716,7 @@ def _place_tower_windows(
 
     Windowed arc quarters carry the opening contract; matching wall pieces
     (kind=wall) satisfy ``storey_egress`` VOLUME and stay attached via same-cell
-    AABB touch with the drum.
+    AABB touch with the drum rim (not a full-bay slab through the drum centre).
     """
     win_arc = catalog.get("tower_arc_quarter_window")
     solid_arc = catalog.get("tower_arc_quarter")
@@ -1719,13 +1763,23 @@ def _place_tower_windows(
         for qi, yaw in _tower_window_slots(
             level=level, helical=helical, skip_yaw=skip_yaw
         ):
-            z_off = float(qi * quarter_rise) if helical else 0.0
             if helical:
-                sx, sy, _ = wall_win.size_cm
-                size = (sx, sy * 0.55, min(quarter_rise * 0.9, STOREY_CM * 0.4))
+                z_off = float(qi * quarter_rise)
+                height = min(quarter_rise * 0.9, STOREY_CM * 0.4)
+                chord = min(_TOWER_WIN_CHORD_CM, wall_win.size_cm[1] * 0.55)
             else:
-                size = wall_win.size_cm
-            offset = _tower_window_wall_offset_cm(drum_xy, z_off)
+                # z=0 keeps wall_window aperture sill (~98 cm) inside [80, 120].
+                z_off = 0.0
+                height = _TOWER_WIN_HEIGHT_CM
+                chord = _TOWER_WIN_CHORD_CM
+            size, offset = _tower_window_shell_pose(
+                drum_xy,
+                yaw,
+                z_off=z_off,
+                height_cm=height,
+                chord_cm=chord,
+                skip_yaw=skip_yaw,
+            )
             wpid = _next_piece_id(counters, f"tower_win_{yaw}", cell, level)
             tags = wall_win.tags | frozenset({"tower", "drum_window"})
             sp = SolidPlacement(
@@ -1737,7 +1791,7 @@ def _place_tower_windows(
                 yaw=yaw,
                 offset_cm=offset,
                 size_cm=size,
-                # Centred AABB so freestanding joins the drum (same-cell touch).
+                # Centred AABB on the rim so freestanding joins the drum.
                 rotates_about_center=True,
                 tags=tags,
             )

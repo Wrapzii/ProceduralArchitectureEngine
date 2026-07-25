@@ -454,22 +454,30 @@ def _on_hall_exterior(
 
 
 def test_m3_tower_arcs_same_cell():
-    """M3 — 4× tower_arc_quarter share one cell; rotates_about_center; shared XY offset.
+    """M3 — 4× tower arc quarters share one cell; rotates_about_center; shared XY offset.
 
     Historical bug: quarters offset to four cells → no curved wall.
+
+    Phase 0.6: windowed quarters use ``tower_arc_quarter_window`` on selected
+    yaws (solid ``tower_arc_quarter`` on the rest). Attach-face yaw is skipped
+    for *window overlays* only — all four arc yaws remain present every storey.
     """
     assembly, _, massing = _assembly_from_spec(m3_keep_tower_spec())
     towers = [v for v in massing.volumes if v.role == "tower"]
     assert len(towers) == 1
     tower_cell = (towers[0].x0, towers[0].y0)
-    arcs = [p for p in assembly.placements if p.asset_id == "tower_arc_quarter"]
-    assert arcs, "no tower_arc_quarter placements"
+    arcs = [
+        p
+        for p in assembly.placements
+        if p.asset_id in ("tower_arc_quarter", "tower_arc_quarter_window")
+    ]
+    assert arcs, "no tower arc quarter placements"
     # All quarters at the SAME cell (no 4-cell scatter).
     assert {p.cell for p in arcs} == {tower_cell}
     assert all(p.rotates_about_center is True for p in arcs)
     offsets = {(p.offset_cm[0], p.offset_cm[1]) for p in arcs}
     assert len(offsets) == 1, "all quarters share one drum-centre offset"
-    # Four yaws per tower storey.
+    # Four yaws per tower storey (solid + windowed assets combined).
     for level in range(towers[0].storeys):
         level_arcs = [p for p in arcs if p.level == level]
         assert {p.yaw for p in level_arcs} == {0, 90, 180, 270}

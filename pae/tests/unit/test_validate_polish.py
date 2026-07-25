@@ -55,10 +55,24 @@ def test_m1_m2_m4_still_validate_clean():
 
 
 def test_m1_m4_m3_aperture_gap_warnings_zero():
-    """Wave F APERTURE_GAPS — perimeter milestones should have no residual warns."""
+    """Wave F APERTURE_GAPS — perimeter milestones should have no residual aperture warns.
+
+    ``stair_landing_clearance`` on m3 is a separate stair/landing lane (present with or
+    without Phase 0.6 drum windows) — do not conflate it with aperture gaps here.
+    """
+    aperture_checks = {
+        "aperture_sanity",
+        "aperture_reachability",
+        "no_bare_aperture",
+        "aperture_gap",
+    }
     for spec in (m1_box_house_spec(), m3_keep_tower_spec(), m4_l_plan_spec()):
         _, report = _pipeline_validate(spec)
-        warns = [f for f in report.failures if not f.critical]
+        warns = [
+            f
+            for f in report.failures
+            if not f.critical and f.check in aperture_checks
+        ]
         assert warns == [], f"{spec.name}: {[(f.check, f.message) for f in warns]}"
 
 

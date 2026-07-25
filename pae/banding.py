@@ -127,6 +127,10 @@ def band_faces_of(assembly: Assembly) -> Dict[str, Face]:
     for p in assembly.placements:
         if p.kind != "wall":
             continue
+        # Drum window overlays are aperture shells on the tower annulus — not
+        # façade runs to dress with plinth/jetty courses.
+        if "drum_window" in p.tags or p.piece_id.startswith("tower_win_"):
+            continue
         mn, mx = _aabb(p)
         cx0, cy0 = p.cell[0] * MODULE_CM, p.cell[1] * MODULE_CM
         near = MODULE_CM * 0.5

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pae.contract import STOREY_CM
+from pae.contract import MODULE_CM, STOREY_CM
 from pae.pipeline import run_through_assemble, run_through_validate_trim
 from pae.primitives.catalog import get as get_primitive
 from pae.spec import m3_keep_tower_spec, m_spiral_tower_spec
@@ -57,6 +57,35 @@ def test_m3_tower_has_perimeter_windows_and_apertures():
     assert len(tower_aps) == len(drum_wins)
     # One windowed quarter per storey (non-helical), attach face skipped.
     assert len(drum_wins) >= 2
+    # Rim overlays: short chord under storey — not a full-bay slab through drum.
+    for p in drum_wins:
+        assert p.size_cm[2] <= STOREY_CM * 0.55
+        assert max(p.size_cm[0], p.size_cm[1]) < MODULE_CM
+    # m3 west tower: west-face window must clear the hall west wall in X.
+    from pae.validate import _placement_aabb
+
+    west_wins = [p for p in drum_wins if p.yaw == 0]
+    assert west_wins, "expected a west-face perimeter window on m3"
+    wmin, wmax = _placement_aabb(west_wins[0])
+    assert wmax[0] <= -400.0 + 1.0, "west rim window must not enter hall wall"
+
+
+def test_tower_windows_clear_hall_validation():
+    """Rim placement must not interpenetrate attach walls or plug headroom/roof."""
+    for spec in (m3_keep_tower_spec(), m_spiral_tower_spec()):
+        _, _, assembly, _ = run_through_assemble(spec)
+        _, vreport = validate(assembly)
+        bad = [
+            f
+            for f in vreport.critical
+            if f.check in ("interpenetration", "headroom", "roof_penetration")
+            and (
+                (f.piece_id or "").startswith("tower_win_")
+                or "tower_win_" in f.message
+                or "drum_window" in f.message
+            )
+        ]
+        assert bad == [], [f.message for f in bad]
 
 
 def test_spiral_tower_helical_windows_at_tread_heights():
