@@ -60,7 +60,7 @@ Severity: **S1** shipped and visible · **S2** caught in review/CI · **S3** nea
 | D-3 | S1 | Railing planted in the stairwell void | "Deck beside the hole" was true because the spanning deck covers the hole cells too | Subtract hole cells from the deck set before testing |
 | D-4 | S2 | Gallery roof floating a storey above the balustrade | Posts stopped at the deck when `under_roof` was on | Posts continue to the roof |
 | D-5 | S2 | Stair top plugged / unclear | `stair_exit_clearance` matches holes by `h.cell` — violates Rule 5.1 | **FIXED (M7)** — hole/stair/plug matching uses `covered_cells` |
-| D-6 | S2 | Gallery canopy only partially met range roof | Per-cell gallery `roof_flat` without eaves vs spanning range roofs | **FIXED (M7)** — one spanning canopy per range with court-face eaves |
+| D-16 | S2 | Gallery canopy only partially met range roof | Per-cell gallery `roof_flat` without eaves vs spanning range roofs | **FIXED (M7)** — one spanning canopy per range with court-face eaves |
 
 ## D2. Apertures and variation (user-reported from renders)
 
