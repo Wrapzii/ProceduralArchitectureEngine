@@ -9,13 +9,16 @@ Tolerance: **6.0 cm**. All dimensions from `pae/contract.py`.
 | `wall_arrowslit` | wall | 1x1 | 60.0x400.0x350.0 | (0.0,0.0,0.0) | min_corner | False | yes |
 | `wall_door` | wall | 1x1 | 60.0x400.0x350.0 | (0.0,0.0,0.0) | min_corner | False | yes |
 | `wall_arcade` | wall | 1x1 | 60.0x400.0x350.0 | (0.0,0.0,0.0) | min_corner | False | yes |
+| `wall_gate_arch` | wall | 1x1 | 60.0x400.0x350.0 | (0.0,0.0,0.0) | min_corner | False | yes |
+| `wall_gate_arch_grand` | wall | 1x1 | 60.0x400.0x350.0 | (0.0,0.0,0.0) | min_corner | False | yes |
+| `wall_arcade_monumental` | wall | 1x1 | 60.0x400.0x350.0 | (0.0,0.0,0.0) | min_corner | False | yes |
 | `wall_arcade_gothic` | wall | 1x1 | 60.0x400.0x350.0 | (0.0,0.0,0.0) | min_corner | False | yes |
 | `wall_arcade_round` | wall | 1x1 | 60.0x400.0x350.0 | (0.0,0.0,0.0) | min_corner | False | yes |
 | `wall_door_arched` | wall | 1x1 | 60.0x400.0x350.0 | (0.0,0.0,0.0) | min_corner | False | yes |
 | `wall_door_double` | wall | 1x1 | 60.0x400.0x350.0 | (0.0,0.0,0.0) | min_corner | False | yes |
 | `wall_door_gothic` | wall | 1x1 | 60.0x400.0x350.0 | (0.0,0.0,0.0) | min_corner | False | yes |
 | `wall_door_plain` | wall | 1x1 | 60.0x400.0x350.0 | (0.0,0.0,0.0) | min_corner | False | yes |
-| `wall_gate_arch` | wall | 1x1 | 60.0x400.0x350.0 | (0.0,0.0,0.0) | min_corner | False | yes |
+| `wall_gate_arch_pointed` | wall | 1x1 | 60.0x400.0x350.0 | (0.0,0.0,0.0) | min_corner | False | yes |
 | `wall_window_bay_wide` | wall | 1x1 | 60.0x400.0x350.0 | (0.0,0.0,0.0) | min_corner | False | yes |
 | `wall_window_clerestory` | wall | 1x1 | 60.0x400.0x350.0 | (0.0,0.0,0.0) | min_corner | False | yes |
 | `wall_window_gothic_traceried` | wall | 1x1 | 60.0x400.0x350.0 | (0.0,0.0,0.0) | min_corner | False | yes |

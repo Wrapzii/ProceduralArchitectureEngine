@@ -31,6 +31,16 @@ fix each time was a check, not a patch.
 | ~~0.5~~ | ~~`aperture_reachability`, `storey_egress` GROUND/VOLUME are WARNINGS~~ | **DONE** — checks are **critical**. Fixtures/generators fixed: assemble south-face upper glazing (no doorway-to-nothing stack; VOLUME on empty `windows_per_bay`), variation keeps gallery doors via balcony landing set, compound only punches balcony doors onto deck-adjacent bays, property factory glazes multi-storey. Tests: ``test_aperture_reachability_critical.py``. | |
 | ~~0.6~~ | ~~Circular towers have no windows and a poor roof junction~~ | **DONE** — helical / perimeter drum windows (`tower_arc_quarter_window` + wall overlays); `tower_junction` ring under crown/cap. Tests: `test_tower_windows.py`. | Phase 4.7 |
 | ~~0.4~~ | ~~Gallery roof partial edge attachment~~ | **DONE (M7)** — one spanning gallery roof per range with court-face eaves (`EAVE_OVERHANG_CM`). | |
+| 0.7 | Stacked flights share a footprint and face the same way | `_monumental_flight_pads` gated to `switchback`/`wide`; `straight` gets `pads=None` (`assemble.py:1125`). Measured 1/1 same-yaw stacked pairs on `fortress_gatehouse_spec` | Ledger D3-3 → Phase 10.4 |
+| 0.8 | Roof edge carries parapet **and** crenellation, overlapping | Two producers, no mutual exclusion (`trim.py:712`, `tower_rampart.py:295`, `compound.py:834`) | Ledger D3-4 → Phase 10.5 |
+| 0.9 | Exterior approach flights too tall to enter the gate | `approach_stairs.py` is **already correct**; `repair_approach_stairs` is called only from `compound.py:1415`, so other build paths never get it | Ledger D3-5 — fix the call site |
+| 0.10 | Tower drum: wall through it, windows into it, no entry, helix short | One cell claimed by two enclosures | `Docs/DESIGN_TOWER_DRUM.md`, lane `@DRUM_ENCLOSURE`. Ledger D3-6 |
+| ~~0.11~~ | ~~Buttresses face the wrong way, oversized~~ | **DONE** — `5de4b0d`. `buttress()` mates with its BACK (+X is the wall side); `outward_offset_cm` is for pieces whose +X points away. Use `trim._pier_pose` | Ledger D3-7 |
+
+> **Not a defect, recorded because it was asked:** stairs are **auto-allocated**. `solver.py:827`
+> — `storeys > 1` with no `stair_cells` calls `_default_stair_cells`. A building with no stairs
+> is single-storey in its spec, or the solver raised `stair_serves_upper` (`solver.py:838`),
+> which is critical and appears in the report. Agents do not hand-place stairs. Ledger D3-8.
 
 ---
 
@@ -144,14 +154,16 @@ range. (Perimeter attach + drum offset fixed in M7 / defect 0.1; curtain integra
 open.)
 **4.4 Moat, bridge, drawbridge.** Needs terrain interaction.
 **4.5 Keep** — a tall multi-storey block with its own internal program.
-**4.7 Habitable towers and spires.** Drum windows + `tower_junction` ring landed (defect
-0.6 / `test_tower_windows.py`). **Partial (@VAL_SPIRAL_SHELL):** central `spiral_newel`
-pillar + continuous `tower_arc` drum enclosure checks (`spiral_newel_exists`,
-`spiral_drum_enclosure`; door-bay exempt hook for @VAL_TOWER_DOOR). Still open: spires
-large enough to contain rooms; walkable top platform with a **circular** railing
-following the drum (@VAL_TOWER_RAMPART); hall→tower door (@VAL_TOWER_DOOR).
-*Verified by:* stair reachability to the top platform; every drum window at a tread height;
-railing continuity around a curve; headroom on the spiral; newel+drum shell checks.
+**4.7 Habitable towers and spires.** **DONE (@TOWER_KEEP_HABITABLE) for fortress/castle
+keep drums:** `TowerSpec.stair_kind=spiral` places helix + newel inside each multi-storey
+drum (hall may keep switchback); outward `tower_arc_quarter_window` / rim windows; hall↔drum
+`tower_entry` at ground + landings; inner plain walls / fitout / parapets skipped in the
+drum; post-merge strip of helix quarters blocked by neighbour roofs. Tests:
+`test_tower_keep_habitable.py`. Crown rampart + newel/drum shell already landed
+(@VAL_TOWER_RAMPART / @VAL_SPIRAL_SHELL). Still open: spires large enough to contain rooms;
+true circular railing continuity; hatch onto crown pad (T-D5 — pad is unopenable by design).
+*Verified by:* fortress keep assemble spiral+windows+entry; no plain-wall junk on drum
+anchors; `tower_entry` aperture_reachability; shell checks.
 
 **4.6 Baileys** — inner and outer wards, i.e. nested compounds. `site.py` merges buildings;
 it does not yet nest enclosures.
@@ -356,3 +368,120 @@ Both checks need a role-aware exemption, written in code, before T-023 can pass.
 
 Related existing gap: `wall_gate_arch` and `arch_freestanding` exist as pieces, but nothing
 places them to span a route — they are currently facade decoration only.
+
+---
+
+## Phase 10 — One building out of many masses, and the grid assumptions behind it
+
+Raised by the user 2026-07-25 from a fortress render. Defects in `DEFECT_LEDGER.md` §D3.
+
+The unifying problem: **the engine can place buildings next to each other, but it has no
+idea when they are meant to be the same building.** Everything in 10.1–10.3 falls out of
+that one gap. 10.4 and 10.5 are independent and can proceed in parallel.
+
+### 10.1 Structure identity — declared, never inferred
+
+A `structure` group on a building instance. Instances sharing it are **one building**, and
+that changes what is legal: one stair core instead of one per mass, a continuous roof plane,
+floors that run through.
+
+**This must be declared in the spec, not detected from adjacency.** A terrace of townhouses
+is adjacent *and* separate; a courtyard range is adjacent *and* joined. There is no geometric
+test that separates those two cases, and guessing wrong silently welds a street into one
+building and then deletes two of its three staircases. If authoring convenience is wanted,
+the right shape is a prompt or a lint ("these three masses touch — same structure?"), never a
+silent merge.
+
+| # | Objective | Check owed |
+|---|---|---|
+| T-101 | `structure` group on `BuildingInstance`; pieces tagged `structure:<name>` | a structure group is contiguous — no member isolated from the rest **[V]** |
+| T-102 | `freestanding` partitions on **structure**, not on `building:` | *(see caution below)* |
+| T-103 | One stair core per structure, not per mass; solver allocates against the merged footprint | every storey of the structure reachable **[V]** |
+
+> **Caution on T-102.** `freestanding` currently partitions on the `building:` tag, and that
+> was deliberate — without it a street of six houses reported five freestanding groups. Once
+> structures exist, the partition key must become the structure, or previously-clean builds
+> will start failing and the natural reaction will be to weaken the check. Change the key in
+> the same commit as T-101.
+
+### 10.2 Party walls — where two masses of one structure meet
+
+Once membership is declared, a shared boundary is an **interior** wall and must carry a way
+through: an opening, an arch, or a door. Today it is two exterior walls back to back.
+
+**Ranges and drums are the same problem — one mechanism covers both.** The user's framing was
+"extrude the inside and cut away"; the equivalent in a grid engine is that the shared cells
+stop hosting an exterior wall and start hosting a connection piece. Do not build a separate
+system for round towers.
+
+| # | Objective | Check owed |
+|---|---|---|
+| T-104 | Detect shared boundaries between masses of one structure | |
+| T-105 | Replace the doubled exterior wall with one party wall carrying an opening | no back-to-back exterior walls inside a structure **[V]** |
+| T-106 | Same rule where a drum meets a range | every mass of a structure reachable from every other **[V]** |
+
+### 10.3 Sequencing — do 10.1 before 10.2
+
+The opening rule needs to know which walls are interior, and that is only knowable once
+membership is declared. In the other order the opening logic gets written twice.
+
+### 10.4 Stacked flights — extend the pads mechanism to straight runs
+
+`_monumental_flight_pads` already does the right thing (two 2×2 pads shifted by the stair
+width, alternating anchor **and** yaw) and is gated to `switchback`/`wide`. Straight runs get
+`pads=None` and stack in the same cells.
+
+**This is solver work, not assembler work** — a straight run needs a well allocated 2 bays
+wide before the assembler has anywhere to put the second pad. A 180° yaw flip alone is not the
+fix: it was tried, and it corrects direction while leaving the flights on top of each other.
+
+| # | Objective | Check owed |
+|---|---|---|
+| T-107 | Solver allocates a 2-bay-wide well for multi-storey straight runs | |
+| T-108 | Extend pad alternation to `kind="straight"` | no two flights of one core share a footprint on consecutive levels **[V]** |
+
+### 10.5 Roof edging — one style per edge, declared
+
+Solid parapet and crenellation are placed by producers that do not consult each other, so an
+edge can carry both, overlapping.
+
+| # | Objective | Check owed |
+|---|---|---|
+| T-109 | One `edging` choice on the roofline spec: `parapet` \| `crenellated` \| `none` | no roof edge carries two edging styles **[V]** |
+| T-110 | Single producer honouring it; `tower_rampart` and `compound` defer to it | |
+
+### 10.6 Variable storey datum — the half that is missing
+
+**Already works:** `RoomSpec.height_storeys` is `Optional[float]`, and
+`contract.resolve_height_storeys` returns a float. A room with a **1.5-storey ceiling** is
+expressible today; `double_height=True` is just shorthand for `height_storeys=2`.
+
+**Does not work:** the storey *datum* is rigid. `contract.floor_placement_z_cm(level)` is
+`level * STOREY_CM - FLOOR_T_CM`, and `level * STOREY_CM` is hardcoded in ~26 places across
+`assemble.py` and `validate.py`. So a floor cannot *start* at 1.5 storeys.
+
+Consequence: a grand hall with a raised ceiling is fine. A **mezzanine**, or a wing whose
+floors sit half a storey off its neighbour, is not — and that second case is exactly what
+Phase 9 (sloped ground, stepped buildings) needs. Scope this as **variable storey datum**, not
+as "taller ceilings"; the ceiling half is done.
+
+| # | Objective | Check owed |
+|---|---|---|
+| T-111 | Per-volume storey datum: a level's z comes from its volume, not `level * STOREY_CM` | headroom and stair rise measured against the volume's own datum **[V]** |
+| T-112 | Stairs spanning two volumes with different datums | run fits the real rise, not the nominal one **[V]** |
+| T-113 | Mezzanine — a half-level deck inside a taller volume | reachable, and railed at its open edges **[V]** |
+
+> **Caution.** T-111 touches every hardcoded `level * STOREY_CM`. Route all of them through a
+> single accessor first, in its own commit, with no behaviour change — then make the accessor
+> volume-aware. Doing both at once makes the diff unreviewable.
+
+### 10.7 The wiring gap
+
+D3-3, D3-4 and D3-5 share a root cause worth naming: **a capability was built correctly and
+then not connected.** Pads exist but are gated to two stair kinds; approach-stair repair
+exists but is reached only from `compound.py`; the two edging producers never consult each
+other. No check asks *"is this feature reachable from the build the user actually runs?"*
+
+Cheapest useful answer: for each showcase/street/fortress build, assert that the features its
+spec asks for actually appear in the output. That is a smoke test, not a validator, and it
+would have caught all three before a render did.

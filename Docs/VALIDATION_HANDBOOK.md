@@ -36,15 +36,15 @@ list and ask which of these it can now violate. That is your check list.
 
 | # | Class | The question | Existing checks |
 |---|---|---|---|
-| 1 | **Existence** | Did the thing that was asked for actually get placed? | `spiral_newel_exists`, entrance/ensemble existence, `fortress_tower_capped`, `fortress_gate_exists`, `fortress_grand_approach` *(see §11b)* |
-| 2 | **Dimension** | Does the piece match the grid contract? | `footprint_contract_errors` |
+| 1 | **Existence** | Did the thing that was asked for actually get placed? | `spiral_newel_exists`, entrance/ensemble existence, `building_doorway_exists`, `fortress_tower_capped`, `fortress_gate_exists`, `fortress_grand_approach` *(see §11b)* |
+| 2 | **Dimension** | Does the piece match the grid contract? | `footprint_contract_errors`, `wall_height_span`, `gate_clear_height` |
 | 3 | **Placement** | Is it in the cell/orientation it was meant to be? | `run_fit`, `buttress_outward` |
-| 4 | **Connection** | Does it touch what it must touch? | `end_connectivity`, `collinear_gap`, `canopy_attachment`, `tower_hall_kiss`, `roof_valley_join`, `spire_freestanding`, `curtain_battlement_continuity` |
+| 4 | **Connection** | Does it touch what it must touch? | `end_connectivity`, `collinear_gap`, `canopy_attachment`, `tower_hall_kiss`, `roof_valley_join`, `spire_freestanding`, `curtain_battlement_continuity`, `compound_range_doors` |
 | 5 | **Support** | Is something underneath it? | `vertical_support` (parapet wall-head), `roof_bears_on_wall` |
-| 6 | **Coherence** | Is it part of one building, or its own island? | `freestanding`, `spire_freestanding` |
+| 6 | **Coherence** | Is it part of one building, or its own island? | `freestanding`, `spire_freestanding`, `compound_not_partitioned_as_buildings`, `building_in_building`, `footprint_overlap` |
 | 7 | **Exclusion** | Does it avoid what it must avoid? | `interpenetration`, `roof_penetration` |
 | 8 | **Containment** | Is the envelope sealed, floored, covered? | `enclosure`, `floor_coverage`, `roof_covers_enclosed`, `spiral_drum_enclosure` |
-| 9 | **Use** | Can a person reach it, enter it, walk it, leave it? | `stair_reachability`, `stair_exit_clearance`, `stair_flight_stack`, `stair_typology_match`, `classroom_corridor`, `aperture_sanity` |
+| 9 | **Use** | Can a person reach it, enter it, walk it, leave it? | `stair_reachability`, `stair_exit_clearance`, `stair_run_floor_clear`, `stair_landing_clear`, `stair_flight_stack`, `stair_typology_match`, `classroom_corridor`, `aperture_sanity`, `gate_passage_clear`, `approach_stair_height_mate`, `approach_stair_aligned_to_gate` |
 
 A tenth class — **proportion** ("does it look right") — is *not* mechanically checkable and
 must not be faked. See §9.
@@ -127,8 +127,16 @@ the check. Indoor slabs stay fully covered. Deck presence is owned by
 
 **`tower_entry` hall↔drum doors:** aperture cells must resolve to a walkable hall
 bay (not the naive WALL_LINE neighbour) and a passable drum/stairwell cell.
-`aperture_sanity` checks both sides as a through-passage for `tower_entry` only —
-ordinary exterior doors still require EXTERIOR/COURTYARD on the outside.
+Keep attach cells are often planned as `WALL_LINE` — that role is drum-passable for
+`tower_entry` placement (the round shell owns the cell). `aperture_sanity` checks both
+sides as a through-passage for `tower_entry` only — ordinary exterior doors still
+require EXTERIOR/COURTYARD on the outside.
+
+**Habitable keep drums (`TowerSpec.stair_kind=spiral`):** assemble places a helix +
+newel in each such tower even when the hall `CirculationSpec` is switchback/straight.
+Glazing and climb stop at hall-overlapping storeys; the outdoor `tower_deck` crown pad
+is not an exit target (unopenable 1×1). After compound merge, helix quarters under a
+neighbour roof AABB are stripped (headroom) rather than demoting the check.
 
 **Worked example — `light_anchor` (S-068…S-070) is fully registered:**
 `pae/primitives/anchors.py` + catalog `all_anchors` / `build_mesh` dispatch + measure
@@ -200,7 +208,48 @@ cell bounds.
 `stair_wide` on level N+1 must be shifted by one stair width from level N. A 180° yaw
 flip in the same 2×2 well is **not** a stair — it is a solid on the previous treads.
 Multi-storey wells are 4×2 / 2×4; `stair_flight_stack` is **critical** (cells or AABB).
-See Defect Ledger D-23.
+Exterior `steps_grand` / `steps_external` at L0 also fail when two approach pieces share
+the same cell or XY AABB (causeway grid spam / double trim). See Defect Ledger D-23, D-29.
+
+**5.7 Stairwell mesh punch must clear the full run.** Spanning upper decks keep a solid
+AABB and open VOIDs in Blender via `slab_with_rect_holes`. Punch rectangles must be built
+from every `covered_cells` bay of each `floor_hole` (merged into one opening per well) —
+never from `h.cell` alone. Origin-only punch left stairs buried under half a floor slab
+while `stair_exit_clearance` still passed (placements were correct). Gate:
+`stair_run_floor_clear` (critical). See Defect Ledger D-24 / F-7.
+
+**5.8 Stair landings must not be walled shut.** Solid walls (no door/gate/window/arcade)
+must not block the top or bottom landing of a linear stair. Use `covered_cells` of the
+stair plus the landing-pad cell beyond each end (Rule 5.1). Perimeter envelope walls past
+the footprint are not landing blockers; interior exit edges with floor on the pad are.
+Check: `stair_landing_clear` (**critical**, fail-closed — no warning demotion, no suppress
+tags). Autofix in assemble/compound: strip blocking skins (open bay). Ledger D-18 / D-27.
+
+**5.9 Connected compound ranges are one circulation graph.** Touching ranges on one
+compound/site must not be sealed by back-to-back exterior skins with no doorway. Detect
+with `compound_not_partitioned_as_buildings` + `compound_range_doors` + `footprint_overlap`
+(critical). **Connection policy** on each `RangeStyle` / `CompoundConnections` pair:
+
+| Policy | Behaviour |
+|--------|-----------|
+| `separate` | Distinct buildings; sealed interfaces fail until a doorway is authored |
+| `connect` | Strip back-to-back duplicate skins; punch ≥1 walkable link per interface |
+| `merge` | Single inhabited mass — retag to shared `building:{campus_id}`, strip party walls |
+
+Fortress bailey defaults: south curtain chain (`west_curtain` \| `gatehouse` \| `east_curtain`)
+= **merge**; cloister ↔ curtain/keep = **connect**. Autofix
+(`pae/compound_unify.unify_compound_assembly(assembly, connections=…)`): apply policies,
+punch `compound_link` doors where needed. Building-in-building footprints →
+`building_in_building` (critical) + tag merge. Every inhabited `building:*` needs ≥1 doorway
+(`building_doorway_exists`). Ledger D-28.
+
+**5.10 Declared height is not capped at two storeys.** Rooms / envelopes declare height via
+`height_storeys` (float/int) or `HeightDecl` (`storeys` preferred; `height_cm` is a
+Python override — BuildingSpec JSON still forbids `*_cm`). Convert with
+`height_cm_from_storeys` / `STOREY_CM`. Monumental gate/arch leaves **span** the declared
+envelope (`size_cm.z`, tag `wall_height_span`) rather than stacking one-MODULE stubs;
+clear opening must be ≥ one storey (`gate_clear_height`). Checks: `wall_height_span`,
+`gate_clear_height` (critical).
 
 ---
 
@@ -389,18 +438,41 @@ Tests: `pae/tests/unit/test_fortress_validate.py` (broken fixtures first).
 | `buttress_outward` | **critical** | Placement | Any buttress present | Bears on a wall; `covered_cells` stay outside interior decks |
 | `spire_freestanding` | **critical** | Connection | Any spire/finial | Meets tower_cap/crown/roof or attached spire chain |
 | `fortress_grand_approach` | **critical** | Existence | Tag `grand_approach` | Exterior `steps_grand` / `steps_external` / ensemble steps at L0 |
+| `gate_passage_clear` | **critical** | Use | Any gate leaf + approach steps | Step AABB must not plug the gate opening / exterior probe |
+| `gate_opening_size` | **critical** | Dimension | Any gate leaf | Clear width/height ≥ 0.80 MODULE × 0.85 STOREY (`wall_gate_arch*`) |
+| `approach_stair_height_mate` | **critical** | Dimension / Use | Exterior `steps_grand` / `steps_external` at L0 | Top tread Z ≤ gate sill / L0 floor top + TOL — never fixed 175 cm catalog rise |
+| `approach_stair_aligned_to_gate` | **critical** | Placement | Gate + approach steps | One flanking pair per arch bay centre — no causeway grid spam |
 
 ### Fortress detection
 
 An assembly is a fortress compound when **any** of:
 
 - tag `fortress_compound` / `fortress:*` / `building:fortress*`
+  (`build_fortress_compound` stamps `fortress_compound` on every piece via
+  `_stamp_fortress_validate_tags`; approach steps also carry `grand_approach`)
 - tag `fortress` on a **non-roofline** piece (kit `spire_conical` carries style tag
   `fortress` — that alone must **not** promote a keep)
 - interim curtain compound: `west_curtain` **and** `east_curtain`
 - massing: `north_curtain` + `gatehouse`
 
 Ordinary houses / M3 keeps without those markers are untouched.
+
+---
+
+## 11c. Arcade / cloister / gallery checks (@ARCH_ARCADE_GALLERY)
+
+Cloister walks and upper galleries overlooking an open court.
+Implemented in `pae/arcade_validate.py`, registered by `validate._check_arcade_gallery`.
+Tests: `pae/tests/unit/test_arch_arcade_gallery.py` (broken fixtures first).
+
+| Check | Sev | Class | Fires when | Question answered |
+|---|---|---|---|---|
+| `arcade_pier_bearing` | **critical** | Support | Arcade/cloister trim at L0 | Arch or pier has floor/wall/deck under its footprint |
+| `arcade_continuity` | **critical** | Connection | Court-facing arcade run | Adjacent bays touch or share a corner pier |
+| `gallery_court_railing` | **critical** | Existence | Upper deck + open court edge | Balustrade on the court drop |
+
+Fires only when the assembly carries `cloister` / `arcade` / `gallery` / `fortress_compound`
+language or trim-tagged arcade pieces.
 
 ### Config
 
@@ -424,3 +496,42 @@ Ordinary houses / M3 keeps without those markers are untouched.
 `curtain_battlement_continuity` is a **warning** stub (coverage fraction + max gap in
 bays). Full wall-walk circuit / moat-scale enclosure remains roadmap 4.1 open work —
 promote to critical after triage against live fortress massing.
+
+---
+
+## 11d. Structure, stacked flights and roof edging (@STRUCTURE_MERGE, Roadmap 10)
+
+Checks owed by Roadmap Phase 10. Defects in `DEFECT_LEDGER.md` §D3. Each needs the usual
+`# WHY` comment naming the defect, and a poison test proving it can fire (§6).
+
+| check | rule | defect it prevents |
+|---|---|---|
+| `structure_contiguous` | every mass tagged into a structure touches at least one other member, transitively | a declared structure whose parts do not actually meet |
+| `structure_party_wall_open` | no two exterior walls stand back to back inside one structure | D3-2 — walls between rooms of what should be one building |
+| `structure_masses_reachable` | every mass of a structure is walkable from every other | a "connected" building you cannot cross |
+| `structure_single_stair_core` | a structure does not carry one stair core per mass | D3-1 — three staircases in one building |
+| `flight_footprint_distinct` | no two flights of one core share a footprint on consecutive levels | D3-3 — flights stacked directly on top of each other |
+| `roof_edging_exclusive` | no roof edge carries two edging styles | D3-4 — parapet and crenellation overlapping |
+| `storey_datum_consistent` | headroom and stair rise measured against the **volume's own** datum, not `level * STOREY_CM` | Roadmap 10.6 — silently wrong once datums vary |
+
+### The partition-key trap — read before touching `freestanding`
+
+`_check_structural_islands` partitions on the `building:` tag. That was deliberate: without
+it, a street of six houses reported five freestanding groups and the check became noise.
+
+When structures land (T-101), **the partition key must change to the structure in the same
+commit**. Otherwise every previously-clean multi-mass build starts failing, and the natural
+reaction — weakening or exempting the check — destroys the one thing that catches detached
+geometry. Changing the key is a one-line change; recovering from a weakened check is not.
+
+### The reachability gap this exposes
+
+D3-3, D3-4 and D3-5 were all **correct code that never ran**: a mechanism gated to the wrong
+stair kinds, a repair reached from one call site, two producers unaware of each other. Every
+check in this handbook asks *"is the output right?"* — none asks *"did this feature run at
+all?"*
+
+That is a genuine hole in the method, and it is not fixed by adding more validators. The
+cheapest cover is a **feature smoke test** per showcase build: assert that what the spec asked
+for appears in the output at all. It is not validation and does not belong in `validate.py` —
+put it beside the showcase tests. See Roadmap 10.7.

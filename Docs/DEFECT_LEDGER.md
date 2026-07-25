@@ -82,12 +82,18 @@ Severity: **S1** shipped and visible · **S2** caught in review/CI · **S3** nea
 | D-15 | S1 | Diagonal braces read as a staircase of rectangles | Brace built from stacked axis-aligned boxes | Real rotated parallelogram prism along the diagonal |
 
 | D-17 | S1 | Banding appeared as random strips, not at edges or connections | Courses placed per BAY and skipped bays with openings, leaving disconnected fragments | Group by ELEVATION; one continuous run at a height that clears every opening; verticals at corners/junctions |
-| D-18 | S1 | Stairs starting or ending inside a wall (29 across all builds) | `stair_exit_clearance` only checked the void ABOVE a flight; first landing check treated any wall-tagged neighbor as solid | **TRIAGED (@VAL_STAIR)** — false positives: perimeter bays are wall+floor (walkable); spiral AABB span ≠ linear run. `stair_landing_clearance` now flags wall-**without**-floor only; skips `stair_spiral_quarter`. Can-fire uses hand-built solid-wall poison. Still WARNING. |
+| D-18 | S1 | Stairs starting or ending inside a wall (29 across all builds) | `stair_exit_clearance` only checked the void ABOVE a flight; first landing check treated any wall-tagged neighbor as solid | **FIXED (@STAIR_LANDING_WALL_BLOCK)** — critical `stair_landing_clear` (covered_cells + interior landing-edge / solid-pad); autofix strips blockers; spiral skipped. See D-27. |
 | D-19 | S1 | Four spiral stair quarters at yaw 0/90/180/270 share covered_cells | Quarters *are* one Z-stacked helix on the tower anchor; integrity test treated shared cells as competing stairs | **FIXED (@VAL_STAIR)** — `spiral_cooccupancy_allowed` / `is_spiral_quarter_helix_stack` in `pae/stair_occupancy.py`; integrity allows complementary-yaw stack on same `p.cell` |
 | D-20 | S2 | `light_anchor` pieces validated by nothing | Kind added to the catalog with no `measure.py` branch — falls to "unknown kind" | Handbook §3 completeness checklist |
 | D-21 | S1 | Spiral tower helix with no central newel / open drum bay | Assemble emitted quarters only; no existence/containment check for the shell | **FIXED (@VAL_SPIRAL_SHELL)** — `spiral_newel` + `spiral_newel_exists` / `spiral_drum_enclosure` (door-bay exempt hook for @VAL_TOWER_DOOR) |
 | D-22 | S2 | House got monumental `stair_wide`; industrial kept undersized `stair_straight` when a 2×2 well fit; buttress trim confused with stairs | No `building_class` / stair allow-list; variation could pick any `stair_kind` | **FIXED (@VAL_STAIR_TYPOLOGY)** — `STAIR_TYPOLOGY_POLICY` + `derive_building_class`; `vary_spec` picks continuity-safe kinds; `stair_typology_match` (critical house/buttress, warning undersized institutional) |
 | D-23 | S1 | Multi-storey monumental stairs stacked in the same XY (upper flight on lower treads; 180° flip only) — unwalkable | Assemble placed every storey's `stair_switchback`/`stair_wide` in one 2×2 well | **FIXED (@VAL_STAIR_OFFSET)** — solver expands to 4×2/2×4 when storeys≥3; alternate flights shift by stair width; critical `stair_flight_stack` (cells **or** AABB); assemble fails closed on undersized well; property factory passes `storeys=`; Handbook §5.6. Tests: `test_stair_flight_offset.py` |
+| D-24 | S1 | Floor gaps under stairs only ~half the run (stairs buried under solid upper deck) | Assemble emitted correct spanning `floor_hole` (`size_cm` 1×2 / 2×1); Blender `spanning_floor_hole_rects_cm` punched only `h.cell` (one bay) | **FIXED (@STAIR_FLOOR_HOLE_SPAN)** — punch uses `covered_cells` + merged rects; critical `stair_run_floor_clear`; Rule 5.7. See also F-7. |
+| D-25 | S1 | Gatehouse twin towers with tiny one-block arches; exterior approach steps block walking through the gate; gatehouse too small vs reference castle | Causeway / trim placed steps in gate-leaf columns flush with the opening; fortress gatehouse stayed 4×3 / 2-storey with ordinary `wall_gate_arch` | **FIXED (@GATEHOUSE_MONUMENTAL)** — 6×4 / 3-storey gatehouse + taller drums; `wall_gate_arch_grand`; approach clearance + flanking; critical `gate_passage_clear` / `gate_opening_size`. Handbook §11b. |
+| D-26 | S1 | Fortress/castle keep towers: no stair inside, no windows, junk walls/fitout in the drum, no hall connection, no floor-to-floor entry | Hall `stair_kind=switchback` left drums empty; compound `_strip_trim_tower_helixes` deleted trim helixes; tower cells stayed `WALL_LINE` so `tower_entry` skipped; inner `wall_plain` + spanning floors/roofs cut through outboard drums | **FIXED (@TOWER_KEEP_HABITABLE)** — `TowerSpec.stair_kind=spiral`; assemble helix+newel+helical windows+entry; skip inner walls/fitout/parapets in drums; exclude towers from flat roof + upper deck AABB; post-merge headroom strip. Tests: `test_tower_keep_habitable.py`. |
+| D-27 | S1 | 1–2 solid walls on stair top landing block exit onto the floor | Landing check was WARNING / wall-without-floor only; missed interior edge blockers on floored pads | **FIXED (@STAIR_LANDING_WALL_BLOCK)** — critical `stair_landing_clear`; assemble/compound `repair_stair_landing_walls` strips blockers (open bay). Tests: `test_stair_landing_wall_block.py`. Fail-closed — not demotable. |
+| D-28 | S1 | Linear hall/fortress placed as 3 sealed buildings — party walls, stairs cannot reach next flight | Each range assembled as its own exterior envelope; merge kept back-to-back solid skins with no doorway | **FIXED (@STAIR_LANDING_WALL_BLOCK)** — `compound_not_partitioned_as_buildings` + `compound_range_doors` + `building_doorway_exists` + `building_in_building` (all critical); `unify_compound_assembly` punches link doors / strips dup skins / merges nests. Handbook §5.8–5.9. |
+| D-29 | S1 | Fortress gatehouse: 9–12 scattered `steps_grand` (3×N causeway grid), misaligned with twin arches; step tops at 175 cm while L0 floor / gate sill is z≈0 | `_add_approach_causeway` stamped a rectangular apron (`approach_rows`×`width_bays`) with fixed catalog height; trim flanking logic not shared | **FIXED (@APPROACH_STAIR_MATE)** — `pae/approach_stairs.py` per-gate flanking + `mated_step_pose`; critical `approach_stair_height_mate` + `approach_stair_aligned_to_gate`; `stair_flight_stack` extended for exterior duplicate XY; `repair_approach_stairs` autofix. Tests: `test_approach_stair_mate.py`. |
 
 ## E. Kind registration
 
@@ -109,6 +115,7 @@ Severity: **S1** shipped and visible · **S2** caught in review/CI · **S3** nea
 | F-4 | S1 | A 40-segment circle reads as a faceted prism | Flat shading + too few segments | ≥96 segments per full circle; smooth-shade curved faces only |
 | F-5 | S2 | Object bounds read 28× too large right after instancing | Depsgraph not updated; matrices stale | `bpy.context.view_layer.update()` + `evaluated_get(dg)` before measuring |
 | F-6 | S1 | Long vertical smears on every wall | Single XY world projection | Triplanar |
+| F-7 | S1 | Stairwell floor gap only half the flight in live Blender (placements OK) | Mesh punch used `h.cell` origin, ignored spanning `floor_hole.size_cm` / `covered_cells` | `hole_rects_merged_for_deck_cm` + Rule 5.7; `stair_run_floor_clear` |
 
 ## G. Unreal / pipeline (predecessor project)
 
@@ -120,6 +127,33 @@ Severity: **S1** shipped and visible · **S2** caught in review/CI · **S3** nea
 | G-4 | S1 | Landscape flattened to −256 m | RT sanity gate threw and was bypassed | Gates are unconditional; a gate that can be skipped is not a gate |
 | G-5 | S1 | Constant-height test passed while 8-bit bug was live | Test used 50.0 m — low byte exactly 0, hiding the truncation | Test values must exercise the low byte (50.5) |
 
+## D3. Structure, circulation and roofline — user-reported from renders, 2026-07-25
+
+Reported by the user against a fortress/compound render. Every row here was **measured**
+before being written down; the "Evidence" column names the command or the count so the
+next person does not have to re-derive it. Open items carry the lane that owns them.
+
+| ID | Sev | Symptom (as observed) | Root cause | Evidence | Fix / rule |
+|---|---|---|---|---|---|
+| D3-1 | S1 | Three guardhouses in a row render as three separate buildings — walls between them on the roof, and a separate staircase in each | The engine has **no concept of one building assembled from several placed masses**. `site.place_buildings` merges assemblies but deliberately tags each piece `building:<name>` and keeps them distinct | Visual; `site.py:141` | OPEN — Roadmap 10.1. Must be **declared**, not inferred: adjacency is ambiguous (a terrace is adjacent *and* separate). Auto-merging on touch would silently weld a street row into one building |
+| D3-2 | S1 | Connected ranges keep full walls between them where they meet; connected drums likewise | Follows from D3-1 — with no structure identity, a shared boundary is still two exterior walls, never an interior party wall | Visual | OPEN — Roadmap 10.2. **Same fix covers ranges and drums**; do not build two mechanisms |
+| D3-3 | S1 | Stacked flights face the same way, directly on top of each other — "you couldn't walk up this if you wanted to" | The correct mechanism EXISTS (`_monumental_flight_pads`, two 2×2 pads shifted by stair width, alternating anchor **and** yaw) but is gated to `kind in ("switchback","wide")`. `straight` gets `pads=None` and falls back to reusing the same cells | `assemble.py:1125`; measured 1/1 stacked pairs same-yaw on `fortress_gatehouse_spec` | OPEN — Roadmap 10.4. Extend pad allocation to straight runs. **Solver work** — the well must be allocated 2 bays wide. A 180° yaw flip alone is NOT the fix (tried; corrects direction, leaves them stacked) |
+| D3-4 | S1 | Roof carries two edging styles at once — solid parapet and crenellation overlapping on the same edge | Two independent producers with no knowledge of each other: `trim._roofline` places `parapet_solid`; `tower_rampart` / `compound._add_curtain_battlements` place crenels. Nothing asks whether the edge is already claimed | Visual; `trim.py:712`, `tower_rampart.py:295`, `compound.py:834` | OPEN — Roadmap 10.5. One declared `edging` choice, one producer. Check owed: **no roof edge carries two edging styles** |
+| D3-5 | S1 | Grid of exterior flights in front of a gate, each far too tall to climb into the threshold | Approach stairs mated to grade, not to the gate sill | `approach_stairs.py` header | **Module already written and correct** (one flanking pair per gate, top tread ≤ sill). `repair_approach_stairs` is called **only from `compound.py:1415`** — any build not on that path never gets repaired. Fix is the call site, not the module |
+| D3-6 | S1 | Tower drum: perimeter wall runs through it, windows open into its interior, no entry, helix stops two storeys short | A tower cell is claimed by **two enclosures at once** — the drum arcs and the body's rectangular wall run | `scratchpad/diag3.py`: 15 walls + 2 floors interpenetrating; helix at levels 0–1 of 0–3; 6 windows | OPEN — `Docs/DESIGN_TOWER_DRUM.md`, lane `@DRUM_ENCLOSURE`. **The trap is in that doc**: the one-line fix breaks 7 tests because inboard towers still need their perimeter wall |
+| D3-7 | S1 | Buttresses "not even facing the buildings", oversized stepped blocks | `buttress()` mates to the wall with its **back** (socket at `pos_cm=(depth,..)`, `+X` normal), so its local +X **is** the wall side. `outward_offset_cm` is for pieces whose +X points **away** — every buttress was yawed 180° wrong | Visual + `diag3.py` | **DONE** — commit `5de4b0d`. `trim._pier_pose` for pieces that BEAR on a face; `outward_offset_cm` only for pieces that project away. **Do not merge the two back together** |
+| D3-8 | S3 | "Is it not spawning stairs? Does the agent have to place them?" | Not a defect — the solver auto-allocates. `solver.py:827`: `storeys > 1` and no `stair_cells` → `_default_stair_cells`. `assemble._place_stairs` returns early only if that list is empty | `solver.py:827`, `assemble.py:1176` | No action. A building with no stairs is either **single-storey in its spec**, or the solver raised `stair_serves_upper` ("storeys > 1 but no stair cells could be placed", `solver.py:838`) — that is critical and will be in the report |
+
+### What D3 says about our coverage
+
+D3-3, D3-4 and D3-5 are all the same failure of *method*: *a capability was built correctly
+and then not connected*. Pads exist but are gated; approach-stair repair exists but is called
+from one path; edging producers exist but do not consult each other. None of these is hard
+engineering — all three are **wiring**, and no check asks "is this feature reachable from the
+build the user actually runs?"
+
+That is a gap worth a check of its own, and it is a different gap from the one in the Coverage
+confession below. It is not that the check was missing; it is that the code was unreachable.
 ---
 
 ## Patterns — what keeps happening
@@ -131,6 +165,7 @@ Four root causes account for most of the S1 entries. Check these first:
 3. **A tolerance borrowed from a different purpose or axis** (B-1, A-6).
 4. **A check that asks an adjacent, easier question than the real one** (A-5's origin-on-grid
    check; C-2's transitive connectivity) — the check passes, the building is wrong.
+5. **A capability built, then left unwired** (D3-3, D3-4, D3-5) — the code is correct and simply never runs on the path the user builds.
 
 ## Coverage confession
 

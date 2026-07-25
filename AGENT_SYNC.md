@@ -36,8 +36,8 @@ never reason from `p.cell` (use `covered_cells`); never hand-roll a placement of
 2. **Wave B:** WP-2 + WP-3 + WP-4
 3. **Wave C:** WP-5
 4. **Wave D:** WP-6 + WP-7 + WP-8
-5. **Wave E:** M4 courtyard/L/U · M5 dynamic assets · M6 UE manifest polish · random-spec un-xfail · gable mesh real ??? **DONE** (187 passed / 0 xfailed)
-6. **Wave F (now):** TOWER_AABB (annulus exempt) · M6_DRYRUN (UE spawn simulator) · GALLERY (Blender M1???M4 shots) · WARN_POLISH (wall/roof allowed pairs)
+5. **Wave E:** M4 courtyard/L/U ? M5 dynamic assets ? M6 UE manifest polish ? random-spec un-xfail ? gable mesh real ??? **DONE** (187 passed / 0 xfailed)
+6. **Wave F (now):** TOWER_AABB (annulus exempt) ? M6_DRYRUN (UE spawn simulator) ? GALLERY (Blender M1???M4 shots) ? WARN_POLISH (wall/roof allowed pairs)
 
 ## Log
 
@@ -53,26 +53,26 @@ never reason from `p.cell` (use `covered_cells`); never hand-roll a placement of
 >>> DONE @M6 ??? UE manifest harden (contract block, LOD placeholders, collision stubs, validation.failures); Docs/UE_MANIFEST_CONSUMER.md; bind_to_terrain integration test (2??2 flatten_pad); tools/export_m1_manifest.py ??? Saved/exports/m1_manifest.json (39 placements, 6 assets); 12 export+integration tests pass.
 2026-07-24 ??? Launching Wave A+B: WP-1 (Composer), WP-9 (Grok), WP-2 (Composer), WP-3 (Grok), WP-4 (Grok).
 >>> DONE @WP-2 ??? Asset DB (SQLite), sockets, import/fit, min-corner origin, rotates_about_center; 32 tests pass.
->>> DONE @WP-1 ??? Full §7 validator (9 checks), contract AABB helpers, assembly_types.py, broken_all_defects fixture; 21 WP-1 tests pass (61/62 repo; magic-number grep still flags WP-2/3/9 literals).
+>>> DONE @WP-1 ??? Full ?7 validator (9 checks), contract AABB helpers, assembly_types.py, broken_all_defects fixture; 21 WP-1 tests pass (61/62 repo; magic-number grep still flags WP-2/3/9 literals).
 >>> DONE @WP-4 ??? BuildingSpec loader (rejects world/cm), greedy Massing solver, FloorPlan + stair graph, M1 factory; 13 unit tests pass.
 >>> DONE @WP-3 ??? Parametric primitive library (15 kit pieces), dual descriptor/bpy path, Docs/PRIMITIVE_MEASUREMENTS.md; 14 primitive unit tests pass without Blender.
 >>> DONE @WP-9 ??? Determinism hash, golden harness (2% pixel thresh, stub PNG), property scaffolding (xfail until assemble), magic_number_grep + hardened ci.yml; python tools/ci_local.py green (90 passed, 2 xfailed).
->>> DONE @WP-5 ??? assemble.py (§2.2???2.5 boundary walls, floors, ground, flat roof), decorate pass-through, M1 validate ok=True; 5 assemble unit tests; 118 passed / 2 xfailed repo-wide.
+>>> DONE @WP-5 ??? assemble.py (?2.2???2.5 boundary walls, floors, ground, flat roof), decorate pass-through, M1 validate ok=True; 5 assemble unit tests; 118 passed / 2 xfailed repo-wide.
 >>> DONE @WP-8 ??? Comfy decorative ingest (kind gate, normalise???measure???socket???human confirm???DB); materials policy; 23 unit tests; Docs/COMFY_PIPELINE.md.
->>> DONE @WP-7 ??? Blender add-on UI (§10): Validate click-to-frame, Spec/Assets/Generate/Export panels, pure helpers + 12 unit tests; install `pae/addon/README.md`.
+>>> DONE @WP-7 ??? Blender add-on UI (?10): Validate click-to-frame, Spec/Assets/Generate/Export panels, pure helpers + 12 unit tests; install `pae/addon/README.md`.
 >>> DONE @WP-6 ??? Export gate (refuses critical), pae.manifest/1 (contract dims), FBX/blend stubs + linked-dupe plan, bind_to_terrain heightmap modes; 10 export unit tests.
 2026-07-24 ??? Master: wired WP-7 export operators to WP-6 APIs (blend/fbx/manifest). M1 proof: validate ok=True, 29 placements, pae.manifest/1 written. Suite: 140 passed, 2 xfailed. ALL WP-1..WP-9 DONE.
 >>> DONE @CORNERS_ROOF ??? roof_flat catalog + span helper; wall corner ownership (west owns SW); ground z ???2??FLOOR_T (top at ???FLOOR_T); floor/ground interpenetration exempt; 152 passed / 2 xfailed.
->>> DONE @M2 ??? Two-storey 4??3 rect + straight stair (2 modules, 1 rise), VOID above stair, floor_hole + spanning upper deck, stair_straight in assemble; m2_two_storey_stair_spec(); validate ok=True critical=[]; 8 M2 tests; 152 passed / 2 xfailed repo-wide; M1 + §2.3 east/north boundary regression clean.
+>>> DONE @M2 ??? Two-storey 4??3 rect + straight stair (2 modules, 1 rise), VOID above stair, floor_hole + spanning upper deck, stair_straight in assemble; m2_two_storey_stair_spec(); validate ok=True critical=[]; 8 M2 tests; 152 passed / 2 xfailed repo-wide; M1 + ?2.3 east/north boundary regression clean.
 >>> DONE @BPY52 ??? Blender 5.2 mesh harden: bpy_util FLOAT/EXACT/MANIFOLD (never FAST), safe select_set, scene.collection link; pae/blender_build.py M1+M2 assemble???validate???catalog.build_mesh/framed fallback???cm???m 0.01???Saved/Screenshots/m1_live.png + reload_pae; tools/pae_build_in_blender.py; unit tests green without bpy.
->>> DONE @CI_M1 ??? Un-xfail M1 property validate; M1 determinism hash (2-run); golden baselines (placement meta hash + 64² stub PNG); random multi-wing remains xfail. magic_number_grep OK; pytest 161 passed / 1 xfailed.
+>>> DONE @CI_M1 ??? Un-xfail M1 property validate; M1 determinism hash (2-run); golden baselines (placement meta hash + 64? stub PNG); random multi-wing remains xfail. magic_number_grep OK; pytest 161 passed / 1 xfailed.
 >>> DONE @M3 ??? Pitched roof (`roof_pitched_gable` spanning deck + gable tags), tower arcs ??4 same-cell `rotates_about_center=True` (no 4-cell scatter) + crown/cap, `m3_keep_tower_spec()` (wall-attached, M1/M2 untouched). Tests: pitched emits gable pieces; tower same-cell. M3 validate ok=True (critical=0; ~52 warnings mostly tower-quarter AABB interpenetration). Gaps: pitched is span AABB proxy (not per-bay gable mesh); tower AABB overlap warnings expected until true annulus collision; corner-tower still breaks 4-connect circulation (factory uses wall attach). Suite: 161 passed / 1 xfailed.
->>> DONE @GABLES ??? Pitched roof split: `roof_gable_infill` (triangular prism per gable-end bay) + `roof_pitched_slope` (row/column-spanning wedge decks); real bpy meshes (not AABB span proxy). Assemble places gables on end rows/cols + interior slope spans for §7.2 wall support. Tests: m3_pitched emits ???8 gable infill + slope rows; validate critical=[]; m3_keep_tower ok. `blender_build` includes m3 + optional `Saved/Screenshots/m3_pitched.png`. Removed `roof_pitched_gable`. Suite: 184 passed / 1 xfailed (pre-existing magic-number hit in m5 test).
+>>> DONE @GABLES ??? Pitched roof split: `roof_gable_infill` (triangular prism per gable-end bay) + `roof_pitched_slope` (row/column-spanning wedge decks); real bpy meshes (not AABB span proxy). Assemble places gables on end rows/cols + interior slope spans for ?7.2 wall support. Tests: m3_pitched emits ???8 gable infill + slope rows; validate critical=[]; m3_keep_tower ok. `blender_build` includes m3 + optional `Saved/Screenshots/m3_pitched.png`. Removed `roof_pitched_gable`. Suite: 184 passed / 1 xfailed (pre-existing magic-number hit in m5 test).
 >>> DONE @M4 ??? Courtyard/L/U multi-wing: solver non-overlapping wings + courtyard role outside envelope; plan COURTYARD cells; assemble inner inhabited walls on courtyard/re-entrant faces + per-wing roofs (no deck over courtyard). Factories `m4_l_plan_spec()`, `m4_u_plan_spec()`, `m4_courtyard_spec()`. Validate ok=True critical=[] for L, U, courtyard. 12 M4 tests; M1 south-gap + E/N roof-tuck regression clean. Suite: 183 passed / 1 xfailed (2 unrelated fails: M3 pitched floater test + M5 magic grep from parallel lane).
 >>> DONE @PROPERTY ??? Un-xfail `test_random_specs_validate_ok`: solver local-repair now nudges *overlapping* interior towers to exterior wall/corner (was skipped via `_tower_touches`); random factory emits exterior attach cells + south-bar stairs. M5 test uses `STOREY_CM` (magic_number_grep). Suite: 187 passed / 0 xfailed; 500 random seeds green.
 >>> DONE @GALLERY ??? `build_gallery(milestones=None)` ??? `PAE_Gallery` / `PAE_M1`???`PAE_M4_L` side-by-side (+X footprint+2m gap); `write_gallery_screenshot` ??? `Saved/Screenshots/gallery_m1_m4.png` + per-milestone `gallery_{label}.png`; factories from `pae.spec`; `reload_pae` preserved; `build_live` M1 path unchanged; `tools/pae_build_in_blender.py --gallery`; unit tests in `test_blender_build.py`.
 >>> DONE @GALLERY_CAM ??? Per-milestone gallery shots frame only that collection's instances (`_meshes_in_collection_tree` + `mesh_world_bounds_m`); deterministic SE-elevated ortho via `camera_pose_from_bounds_m`; overview still `PAE_Gallery` row; `reload_pae` + cm???m preserved; 10 unit tests in `test_blender_build.py`.
->>> DONE @VALIDATE_POLISH ??? `pae/validate.py` §7.4 designed-pair exemptions: same-cell tower_arc/crown/cap annulus, WALL_T corner overlaps, wall???roof deck eave tuck, storey slab above wall/stair/tower, floor_hole deck, stair openings. m3 interpenetration warns 88???1 (remaining: south+inner_north T-junction at tower); m1/m2/m4 ok=True critical=[]. `test_validate_polish.py` + broken_all_defects regression intact. Suite: 213 passed.
+>>> DONE @VALIDATE_POLISH ??? `pae/validate.py` ?7.4 designed-pair exemptions: same-cell tower_arc/crown/cap annulus, WALL_T corner overlaps, wall???roof deck eave tuck, storey slab above wall/stair/tower, floor_hole deck, stair openings. m3 interpenetration warns 88???1 (remaining: south+inner_north T-junction at tower); m1/m2/m4 ok=True critical=[]. `test_validate_polish.py` + broken_all_defects regression intact. Suite: 213 passed.
 >>> DONE @APERTURE_GAPS ??? m1 warns 3???0, m2 7???0, m3 9???0 (incl. interpenetration 1???0), m4_l 3???0; critical=[] all milestones. Root fixes: `assemble.py` perimeter wall_runs classify by piece_id face (not cell bucket ??? killed 340 cm false collinear_gap); skip redundant inner walls on perpendicular perimeter corners (tower T-junction); BFS door interior/exterior cell resolve through WALL_LINE corners + tower attach. `validate.py` exterior door side accepts EXTERIOR/COURTYARD/out-of-grid/DOOR threshold. `broken_all_defects` door_bad_exit exterior???interior cell (still aperture_sanity). Tests: `test_m1_m4_m3_aperture_gap_warnings_zero`, `test_m3_interpenetration_zero`. Suite: 241 passed.
 >>> DONE @EXPORT_ALL ??? `tools/export_manifest.py` (`--milestone m1|m2|m3|m4_l|m4_u|m4_c` ??? `Saved/exports/{milestone}_manifest.json`, fail-closed on critical); `export_m1_manifest.py` thin wrapper; `ue_manifest_dry_run.py` `--milestone` + generalized auto-export; `test_export_manifest_cli.py` (per-milestone export + m1/m3 dry-run integration); full pytest green.
 ```
@@ -147,7 +147,7 @@ never reason from `p.cell` (use `covered_cells`); never hand-roll a placement of
 >>> BLOCKED @TOWER_ATTACH ??? `test_random_specs_validate_ok` RED: 26-piece detached tower. TRUE POSITIVE in solver local-repair (nudges overlapping towers toward a wall, never asserts contact). Ledger C-5, roadmap defect 0.1. Owns pae/solver.py ??? NOT claimed by me.
 >>> BLOCKED @STAIR_CELLS ??? `_check_stair_exit_clearance` matches holes by `h.cell`; violates Handbook rule 5.1 and can miss a plugged stair top under a spanning deck. Ledger D-5, roadmap defect 0.2.
 Suite at close: 405 passed, 1 failed (@TOWER_ATTACH above). Renders: Saved/Screenshots/verify_compound_{aerial,quad,balcony,roofflush}.png
->>> DONE @BANDING ??? Coping/facade articulation placeable anywhere (bands.py + banding.py). New kind "band", 5 pieces (course, jettied course w/ joist ends, pilaster, diagonal brace, coping cap). BandingSpec: courses at any storey fraction, verticals every N bays, braces, coping, face/level filters. band_attachment check defines attachment as FOUR conditions (HOST/COVERAGE/FLUSH/PROUD), not "not freestanding". Bands exempt from vertical_support with documented reason. Test-first per Handbook §6. Kit 55 -> 64 pieces.
+>>> DONE @BANDING ??? Coping/facade articulation placeable anywhere (bands.py + banding.py). New kind "band", 5 pieces (course, jettied course w/ joist ends, pilaster, diagonal brace, coping cap). BandingSpec: courses at any storey fraction, verticals every N bays, braces, coping, face/level filters. band_attachment check defines attachment as FOUR conditions (HOST/COVERAGE/FLUSH/PROUD), not "not freestanding". Bands exempt from vertical_support with documented reason. Test-first per Handbook ?6. Kit 55 -> 64 pieces.
 >>> DONE @STYLE_ROADMAP ??? Docs/STYLE_AND_DETAIL_ROADMAP.md: 135 objectives (S-001..S-135) for wizarding-school/medieval style. Cross-referenced from CASTLE_SCHOOL_ROADMAP.md. NOTE: angled roofs already work (roof_pitched_slope + roof_gable_infill, used by M3); the compound reads flat because its ranges specify RoofSpec(kind="flat").
 
 2026-07-25 ??? Master: M7 Phase 0 (roadmap defects). Docs verified unchanged (CASTLE/STYLE/HANDBOOK/LEDGER/PROTOCOL hashes).
@@ -413,6 +413,7 @@ New critical/warn checks: spiral_newel_exists, spiral_drum_enclosure, tower_entr
 
 2026-07-25 ? @CASTLE_FORTRESS_BLENDER
 >>> TRIGGER @CASTLE_FORTRESS_BLENDER ? Live Blender fortress: build_fortress_live + gallery fortress milestone + tools/pae_build_in_blender.py --fortress. Owns: pae/blender_build.py, tools/pae_build_in_blender.py, pae/tests/unit/test_blender_build.py, pae/addon/operators/generate_ops.py, pae/addon/panels.py (thin). Interim compound: build_castle_curtain_compound until build_fortress_compound ships.
+>>> DONE @CASTLE_FORTRESS_BLENDER ? `build_fortress_live()` ? `build_fortress_compound()` (6-range bailey, ~1584 instances, 64 buttresses, critical=[]); `clear_pae_scene()` + `prepare_fortress_live_scene()` wipe all `PAE_*` collections/objects/materials before build; `PAE_Fortress` only + `Saved/Screenshots/fortress_live.png` (live confirmed); slate-blue roof/spire tints; gallery uses `prepare_gallery_scene()`; `tools/pae_build_in_blender.py --fortress`; add-on `pae.build_fortress`; headless tests incl. clear-before-build spy (44 pass).
 
 2026-07-25 ? @VAL_STAIR_OFFSET: User bug ? monumental stairs stacked same XY with 180? flip; cannot walk. Owns: pae/solver.py stair well, pae/assemble.py _place_stairs/_stair_occupied_cells, pae/validate.py stair_flight_stack check, tests. Do NOT demote headroom.
 >>> TRIGGER @VAL_STAIR_OFFSET ? Shift multi-storey switchback/wide flights by stair width (4?2 well).
@@ -430,17 +431,17 @@ New critical/warn checks: spiral_newel_exists, spiral_drum_enclosure, tower_entr
 >>> TRIGGER @CASTLE_FORTRESS_VALIDATE ? Fortress validate checks + broken fixtures first.
 <<< ACK @MASTER
 
->>> DONE @CASTLE_FORTRESS_VALIDATE — Fortress fail-closed checks in pae/fortress_validate.py wired via validate._check_fortress_compound. Checks: fortress_tower_capped (crit), fortress_gate_exists (crit), curtain_battlement_continuity (warn stub), buttress_outward (crit), spire_freestanding (crit), fortress_grand_approach (crit when grand_approach tagged). Tests: test_fortress_validate.py 14 pass (broken fixtures first + curtain green). Handbook §1 table + §11b. Did not demote aperture_reachability / stair_flight_stack. Gaps: curtain continuity is warning stub (promote after fortress massing triage); FortressBaileySpec knobs via tags for now (fortress_min_towers:N); restored one-line def _placement( in trim.py (kit sibling syntax wipe). Suite slice: 32 pass (fortress+curtain+eng_continuity).
+>>> DONE @CASTLE_FORTRESS_VALIDATE ? Fortress fail-closed checks in pae/fortress_validate.py wired via validate._check_fortress_compound. Checks: fortress_tower_capped (crit), fortress_gate_exists (crit), curtain_battlement_continuity (warn stub), buttress_outward (crit), spire_freestanding (crit), fortress_grand_approach (crit when grand_approach tagged). Tests: test_fortress_validate.py 14 pass (broken fixtures first + curtain green). Handbook ?1 table + ?11b. Did not demote aperture_reachability / stair_flight_stack. Gaps: curtain continuity is warning stub (promote after fortress massing triage); FortressBaileySpec knobs via tags for now (fortress_min_towers:N); restored one-line def _placement( in trim.py (kit sibling syntax wipe). Suite slice: 32 pass (fortress+curtain+eng_continuity).
 
-2026-07-25 â€” Claude: two designs handed off for implementation. Foundations landed;
+2026-07-25 ? Claude: two designs handed off for implementation. Foundations landed;
 the actual building is yours. Full specs in Docs/, summarised here.
 
->>> NOTE @DRUM_ENCLOSURE â€” Docs/DESIGN_TOWER_DRUM.md. The tower drum is claimed by TWO
+>>> NOTE @DRUM_ENCLOSURE ? Docs/DESIGN_TOWER_DRUM.md. The tower drum is claimed by TWO
     enclosures at once: the drum's own arcs AND the body's rectangular perimeter wall.
-    One cause, five symptoms â€” wall through the tower, windows opening into it, no
+    One cause, five symptoms ? wall through the tower, windows opening into it, no
     entry, helix stopping two storeys short, no hatch to the top deck.
     THE TRAP, read before starting: the one-line fix ("skip walls on tower cells") was
-    tried and REVERTED â€” it broke test_school_academy x2, test_export_manifest_cli x3
+    tried and REVERTED ? it broke test_school_academy x2, test_export_manifest_cli x3
     and test_validate_polish x2, because inboard towers still need their perimeter wall
     as the outer skin. Always use drum.outboard_drum_cells(), never drum.drum_cells().
     Foundations: pae/drum.py + pae/tests/unit/test_drum.py (8 passing) lock exactly
@@ -448,24 +449,123 @@ the actual building is yours. Full specs in Docs/, summarised here.
     Closes the live failure test_showcase[library_tower] (T-D2, the entry door).
     Acceptance numbers are in the doc; measure with scratchpad/diag3.py.
 
->>> NOTE @ARCADE â€” Docs/DESIGN_COURTYARD_ARCADE.md. A walkable arched gallery along
+>>> NOTE @ARCADE ? Docs/DESIGN_COURTYARD_ARCADE.md. A walkable arched gallery along
     courtyard-facing ranges (user reference: the school corridor with arches). NOTHING
     of this exists yet. Key framing: an arcade is a ROOM whose courtyard-side wall is a
-    run of arches â€” not decoration. It is NOT `_colonnade` (no floor, no roof, not
+    run of arches ? not decoration. It is NOT `_colonnade` (no floor, no roof, not
     walkable), NOT `wall_arcade` (that is the boundary, not the space).
     Reuse site._courtyard_cells and banding.band_faces_of; do not re-derive faces from
-    cell neighbours. Decide the corner case before coding â€” the doc argues for a solid
+    cell neighbours. Decide the corner case before coding ? the doc argues for a solid
     corner pier, the only option giving a continuous walkable loop.
     Six checks owed, listed in the doc, each needing a poison test.
 
->>> NOTE @BUTTRESS_ORIENTATION â€” done, commit 5de4b0d, recorded so it is not undone.
+>>> NOTE @BUTTRESS_ORIENTATION ? done, commit 5de4b0d, recorded so it is not undone.
     buttress() mates to the wall with its BACK (socket at pos_cm=(depth,..), +X normal),
     so its local +X IS the wall side. outward_offset_cm is for pieces whose +X points
     AWAY. Every buttress in the project was therefore yawed 180 degrees wrong. Use
     trim._pier_pose for any piece that BEARS on a wall face; use outward_offset_cm only
     for pieces that project away from one. Do not "simplify" the two back together.
 
->>> NOTE @TEST_ORDER_LEAK â€” test_roof_connect, test_export_manifest_cli,
+>>> NOTE @TEST_ORDER_LEAK ? test_roof_connect, test_export_manifest_cli,
     test_validate_polish fail in a FULL run and pass in isolation. Order-dependent
     shared state, not real defects. Worth someone's time: it makes the suite untrustworthy
     as a gate, and it cost real diagnosis time this session.
+
+>>> DONE @CASTLE_FORTRESS_MASSING ? Fortress bailey campus preset: fortress_bailey_compound_spec() + build_fortress_compound() (keep pitched+dormers+multi-height towers/spires, twin-arch gatehouse, W/E cloister arcade, south curtains+battlements, approach steps_external causeway, FORTRESS_BAILEY_SITE). Factories in pae/spec.py; builder/arcade/causeway/helix-strip in pae/compound.py; site FORTRESS_BAILEY_SITE; showcase fortress_keep; tests test_fortress_compound.py 8 passed critical=[]. Gaps for siblings: trim buttress_outward on curtains; trim helix interiors stripped (spiral shell/entry); balcony galleries off (roof_bears_on_wall); no true conical drum roof mesh yet.
+
+>>> DONE @CASTLE_FORTRESS_VALIDATE (follow-up) ? Real `build_fortress_compound` exercised. Minimal massing tag wiring: `_stamp_fortress_validate_tags` + `grand_approach` on causeway. Tests prove gate/tower_capped/spire_freestanding/buttress_outward (poison) + green path on live fortress. pytest validate+compound: 29 passed (1 skip when buttresses absent). Criticals not demoted.
+
+>>> NOTE @CASTLE_FORTRESS_MASSING ? Follow-up: FORTRESS_CURTAIN_TRIM / KEEP / GATEHOUSE now buttresses=True + parapets=True (emit live). fortress_compound + grand_approach stamps kept. Assembly has 52 buttress placements. validate still fires buttress_outward (14) ? kit sibling owns orientation; check NOT demoted. test_fortress_compound allows only that critical from kit WIP.
+
+>>> DONE @CASTLE_FORTRESS_MASSING (buttress follow-up) ? FORTRESS_CURTAIN/KEEP/GATEHOUSE TrimOptions buttresses=True + parapets=True; post-merge apply_buttresses + tag safety net; fortress_compound + grand_approach stamps kept. Assembly emits 64 buttress placements; buttress_outward=0; validate critical=[]. test_fortress_compound.py 8 passed. Check not demoted.
+
+>>> TRIGGER @STAIR_FLOOR_HOLE_SPAN ? Floor gaps under stairs only half-punched in Blender. Owns: pae/primitives/floors.py, pae/blender_build.py (spanning_floor_hole_rects), pae/validate.py (stair_run_floor_clear), pae/tests/unit/test_stair_floor_mesh.py + test_stair_exit_clearance.py, Docs/DEFECT_LEDGER.md, Docs/VALIDATION_HANDBOOK.md, AGENT_SYNC. Merge with fortress WIP in validate/trim ? do not wipe. Do NOT demote criticals.
+
+>>> DONE @CASTLE_FORTRESS_VALIDATE (buttress unskip) ? Live buttress test requires =1 pier + buttress_outward empty; no skip. pytest validate+compound: 29 passed / 0 skipped.
+
+>>> TRIGGER @TOWER_KEEP_HABITABLE ? Fortress/castle keep drums: spiral inside, windows out, clear junk, multi-level tower_entry; aperture_reachability must pass. Owns: pae/assemble.py (tower keep path), pae/tower_entry.py, pae/spiral_shell.py if needed, pae/compound.py/_strip helix + fortress keep tags, pae/spec.py TowerSpec.stair_kind + fortress factories, pae/trim.py/fitout.py drum junk skip, tests/test_tower_keep_habitable.py, handbook/ledger/AGENT_SYNC. Merge with @STAIR_FLOOR_HOLE_SPAN (covered_cells wells). Do NOT demote criticals.
+<<< ACK @MASTER
+
+
+>>> DONE @STAIR_FLOOR_HOLE_SPAN ? Root cause: Blender spanning_floor_hole_rects_cm punched only h.cell (1 bay) while assemble emitted correct spanning floor_hole size_cm (1x2/2x1). Fix: covered_cells + hole_rects_merged_for_deck_cm; critical stair_run_floor_clear; Handbook 5.7; Ledger D-24/F-7. M2 punch now ~0.95x1.95 modules (was 0.95x0.95). Tests: stair_floor_mesh + stair_exit_clearance + stair_integrity + assemble + fortress_validate/compound = 88 passed; blender fortress tests pass in isolation (order flake pre-existing). Gaps: live m2_stair_proof.png needs Blender rebuild to show full well.
+
+>>> TRIGGER @ROOF_HIP_FOUR_PLATE ? True four-slope hip mesh + fortress keep/cloister hip roofs; kill triple gable stack on pitched slope mesh. Owns: pae/primitives/roofs.py, assemble hip path, test_hip_roof.py / test_roof_four_plate.py, handbook/measurements, AGENT_SYNC. Merge don't wipe.
+<<< ACK @MASTER
+
+>>> DONE @ROOF_HIP_FOUR_PLATE ? Four-slope hip mesh (`hip_roof_verts_faces` + slope-face count); pitched slope mesh no longer bakes gable caps (fixes triple extruded-triangle stack). Fortress keep/cloister specs + keep style `kind_default=hip`. `roof_valley_join` scoped per `building:*` tag for compounds. Tests: test_roof_four_plate.py (7), test_hip_roof + fortress_compound updated. Blue `roof_hip` tint unchanged. Gaps: S-020 ridge edge geom, S-021 watertight merge.
+
+2026-07-25 ? @GATEHOUSE_MONUMENTAL
+>>> TRIGGER @GATEHOUSE_MONUMENTAL ? Scale fortress gatehouse + walkable gate passage. Owns: pae/spec.py fortress_gatehouse factory, pae/compound.py gate/approach causeway, pae/trim.py exterior_steps near gates, pae/assemble.py gate asset map (thin), pae/primitives apertures/walls gate_arch_grand, pae/fortress_validate.py gate_passage_clear + undersized, tests, handbook/ledger, AGENT_SYNC. Coordinate height with @BUILDING_HEIGHT_FLEX, arches with @ARCH_ARCADE_GALLERY. Merge additive with massing. Do NOT demote fortress checks.
+<<< ACK @MASTER
+
+>>> DONE @ARCH_ARCADE_GALLERY ? Monumental `gate_arch` / `arcade_monumental` + `wall_gate_arch` / `wall_arcade_monumental`; tall smooth `arch_freestanding` (24-band, low spring); trim default `wall_arcade` + wall-cell corner piers + `_gallery_court_railings`; fortress `_add_cloister_arcade` wall-embedded; `pae/arcade_validate.py` (bearing/continuity/gallery railing); handbook ?11c; `test_arch_arcade_gallery.py` 10 pass. Gaps: DESIGN_COURTYARD_ARCADE walkable room; hip-roof = @ROOF_HIP_FOUR_PLATE sibling.
+
+
+>>> DONE @TOWER_KEEP_HABITABLE ??? Fortress/castle keep drums habitable: TowerSpec.stair_kind=spiral ??? assemble helix+newel per drum (hall keeps switchback); outward drum windows; tower_entry at ground+landings (WALL_LINE drum-passable); skip inner wall_plain/fitout/parapets in drums; exclude towers from flat roof + upper floor_deck AABB; post-merge strip helix under neighbour roofs. Tests: test_tower_keep_habitable.py + tower_entry/windows/spiral_shell/spiral_stairs = 40 passed. Handbook/ledger/roadmap 4.7. Gaps: crown hatch (T-D5 pad), circular railing continuity, gatehouse tower_hall_kiss (massing sibling), cloister balcony reachability (arcade lane).
+
+
+2026-07-25 ? @BUILDING_HEIGHT_FLEX
+>>> TRIGGER @BUILDING_HEIGHT_FLEX ? Spec/contract height API (storeys|cm); assemble wall/gate span; fortress curtain/gate heights; validate wall_height_span + gate_clear_height; test_building_height_flex.py; handbook 5.8. Merge dirty assemble/validate/compound. Do NOT demote criticals.
+<<< ACK @MASTER
+
+>>> DONE @BUILDING_HEIGHT_FLEX ? Height API: `HeightDecl` / `RoomSpec.height_storeys` / `BuildingSpec.wall_height_storeys` + contract `height_cm_from_storeys` / `resolve_height_*` / `gate_clear_min_cm` (prefer storeys; cm is Python override). Assemble: monumental gate/grand leaves span declared envelope (`size_cm.z`, tag `wall_height_span`); upper stub walls skipped. Fortress: gatehouse wall_height=3, curtain_storeys=3. Validate: critical `wall_height_span` + `gate_clear_height` (broken short-gate fixture). Handbook 5.8. Tests: test_building_height_flex.py 10 passed; castle/rooms/contract green. Gap: `test_fortress_compound_validates_critical_empty` still red on cloister L1 `aperture_reachability` (balcony galleries off ? sibling massing/arcade, not demoted).
+
+2026-07-25 ? @STAIR_LANDING_WALL_BLOCK
+>>> TRIGGER @STAIR_LANDING_WALL_BLOCK ? Critical stair_landing_clear + compound unification (sealed ranges / building-in-building). Owns: pae/stair_occupancy.py, pae/compound_unify.py (new), validate append, assemble/compound autofix, test_stair_landing_wall_block.py, handbook/ledger, AGENT_SYNC. Merge don't wipe fortress/height/arcade. Do NOT demote aperture_reachability / stair_run_floor_clear / fortress checks.
+<<< ACK @MASTER
+>>> DONE @STAIR_LANDING_WALL_BLOCK ? Checks (all CRITICAL fail-closed): `stair_landing_clear`, `compound_not_partitioned_as_buildings`, `compound_range_doors`, `building_doorway_exists`, `building_in_building`. Autofix: `repair_stair_landing_walls` strips landing blockers (open bay); `unify_compound_assembly` punches compound_link doors / strips dup party walls / merges nests / ensures per-building doorways. Wired in assemble + build_compound/castle/fortress. Broken fixtures first (top landing 1?2 walls; three sealed blue rooms; building-in-building). Tests: test_stair_landing_wall_block.py + integrity/fortress critical empty. Handbook ?5.8?5.9; Ledger D-18/D-27/D-28. Did not demote aperture_reachability / stair_run_floor_clear / fortress checks.
+
+>>> DONE @GATEHOUSE_MONUMENTAL ? Monumental walkable fortress gatehouse: 6x3 / 3-storey + hall+1 spiral drums (spirals kept); wall_gate_arch_grand; approach steps_grand with clearance + flanking (no leaf-column plug); critical gate_passage_clear + gate_opening_size; stair_landing_clear doors count as through-passages for aperture_reachability. Hip roofs on keep/cloister untouched. Tests: test_fortress_compound + test_gate_passage 17 pass; fortress_validate/entrances/tower_keep_habitable green. Gaps: live Blender fortress rebuild for visual proof.
+
+2026-07-25 ? @FORTRESS_LIVE_VALIDATE_GREEN
+>>> DONE @FORTRESS_LIVE_VALIDATE_GREEN ? Fortress `validate` critical=[] (roof_penetration cleared: drum-window tangential clamp keeps rim shells in tower cell; roof_valley_join already per-building from hip lane; hall_kiss Z-scoped for tall drums; floor_deck from real floor cells). Preserved spiral/hip/height/unify. pytest fortress_compound+validate+roof_connect+tower_windows+tower_keep_habitable: 64 passed. `python tools/pae_build_in_blender.py --fortress` ? `Saved/Screenshots/fortress_live.png` (652636 bytes). No demotions.
+
+2026-07-25 ? @APPROACH_STAIR_MATE
+>>> DONE @APPROACH_STAIR_MATE ? User: 9 scattered misaligned `steps_grand`; tops 175 cm above z?0 threshold. Root: `_add_approach_causeway` 3?N apron grid + fixed catalog rise (not mated). Fix: `pae/approach_stairs.py` per-gate flanking + `mated_step_pose`; trim/compound share planner; critical `approach_stair_height_mate` + `approach_stair_aligned_to_gate`; `stair_flight_stack` for exterior duplicate XY; `repair_approach_stairs` autofix; fixed `fortress_connections` typo ? default end unify. Tests: `test_approach_stair_mate.py` 8 pass; gate_passage/fortress_compound green. Handbook ?11b. Gap: `test_fortress_compound_validates_critical_empty` still red on branch `footprint_overlap` (compound_unify sibling, not demoted).
+
+2026-07-25 ? @COMPOUND_CONNECT_MERGE
+>>> DONE @COMPOUND_CONNECT_MERGE ? ConnectionPolicy (`merge`|`connect`|`separate`) + CompoundConnections / fortress_compound_connections / school_compound_connections. Fixed range detection (instance names only); floor-only footprint_overlap (merge exempt); merge strip zone + floor dedupe; connect strips L-corner redundant solids; build_fortress_compound passes fortress_connections on both unify passes. test_fortress_compound 8/8 + test_stair_landing_wall_block 14/14; validate critical=[]; one ground graph. Handbook 5.9. Did not touch approach_stairs.py.
+
+
+2026-07-25 â€” Claude: user-reported defects from the fortress render written up. NO new
+markdown files â€” everything went into the three docs that already own this material.
+
+>>> NOTE @DOCS_D3 â€” Docs/DEFECT_LEDGER.md Â§D3 (D3-1..D3-8), Roadmap Phase 0 rows 0.7-0.11
+    and new Phase 10, Handbook Â§11d. Read the ledger first: each row names the file:line
+    and the measured count, so nobody re-derives them.
+
+    THREE OF THESE ARE WIRING, NOT ENGINEERING â€” the code is already correct:
+      * D3-3 stacked flights: _monumental_flight_pads already alternates anchor AND yaw.
+        Gated to switchback/wide; straight gets pads=None (assemble.py:1125). A 180 deg
+        yaw flip is NOT the fix â€” tried, corrects direction, leaves them stacked. Needs
+        SOLVER work: allocate a 2-bay-wide well first.
+      * D3-5 approach stairs: approach_stairs.py is already correct (one flanking pair
+        per gate, top tread <= sill). repair_approach_stairs is called ONLY from
+        compound.py:1415. Fix the call site, do not rewrite the module.
+      * D3-4 roof edging: trim._roofline and tower_rampart/compound both claim the same
+        edge with no mutual exclusion. One declared choice, one producer.
+
+    D3-8 is NOT a defect and is recorded to stop it being re-asked: stairs are
+    auto-allocated by solver.py:827. No agent hand-places them.
+
+>>> NOTE @STRUCTURE_MERGE â€” Roadmap Phase 10.1-10.3. The big one: the engine cannot
+    express "these masses are ONE building", which is why three guardhouses render as
+    three buildings with three staircases. MUST BE DECLARED, NOT INFERRED â€” adjacency is
+    ambiguous (a terrace is adjacent and separate; a courtyard range is adjacent and
+    joined). No geometric test separates them.
+    TRAP: _check_structural_islands partitions on the `building:` tag today, deliberately.
+    When structures land the key must change to the structure IN THE SAME COMMIT, or every
+    clean multi-mass build starts failing and someone weakens the check. Handbook Â§11d.
+    Ranges and drums are the SAME party-wall problem â€” one mechanism, not two.
+
+>>> NOTE @STOREY_DATUM â€” Roadmap 10.6. Half of this already works: RoomSpec.height_storeys
+    is Optional[float], so a 1.5-storey CEILING is expressible now. What does not work is
+    the storey DATUM â€” floor_placement_z_cm is level*STOREY_CM, hardcoded in ~26 places, so
+    a floor cannot START at 1.5 storeys. That blocks mezzanines and Phase 9 stepped
+    buildings. Route every hardcoded level*STOREY_CM through one accessor in its own
+    commit with NO behaviour change before making it volume-aware.
+
+>>> NOTE @FEATURE_SMOKE â€” Roadmap 10.7 / Handbook Â§11d. Every check we have asks "is the
+    output right?"; none asks "did this feature run at all?" That is how D3-3/4/5 shipped.
+    Suggested: per showcase build, assert the features its spec asks for actually appear.
+    It is a smoke test, not a validator â€” keep it out of validate.py.
