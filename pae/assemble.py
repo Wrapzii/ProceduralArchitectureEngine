@@ -157,6 +157,23 @@ _FACE_DELTA: Dict[str, Tuple[int, int]] = {
     "north": (0, 1),
 }
 
+_INWARD_DELTA: Dict[str, Tuple[int, int]] = {
+    "west": (1, 0),
+    "east": (-1, 0),
+    "south": (0, 1),
+    "north": (0, -1),
+}
+
+_OUTWARD_DELTA: Dict[str, Tuple[int, int]] = {
+    face: (-dx, -dy) for face, (dx, dy) in _INWARD_DELTA.items()
+}
+
+_PERIMETER_WALL_FACES = frozenset({"west", "east", "south", "north"})
+
+_WALKABLE_INTERIOR_ROLES = frozenset(
+    {CellRole.INTERIOR, CellRole.STAIR, CellRole.DOOR}
+)
+
 _YAW_FOR_VOID_FACE: Dict[str, int] = {
     "west": 0,
     "east": 180,
@@ -184,6 +201,15 @@ def _inner_wall_faces(
         if face == "south" and cy == y0:
             continue
         if face == "north" and cy == y1:
+            continue
+        # Perpendicular perimeter runs already close corner bands (§2.3).
+        if face == "north" and cy == y0:
+            continue
+        if face == "south" and cy == y1:
+            continue
+        if face == "east" and cx == x0:
+            continue
+        if face == "west" and cx == x1:
             continue
         faces.append(face)
     return faces
@@ -384,6 +410,90 @@ def _interior_exterior_cells(
     raise ValueError(f"unknown face {face!r}")
 
 
+def _perimeter_wall_face(piece_id: str) -> Optional[str]:
+    parts = piece_id.split("_")
+    if len(parts) >= 3 and parts[0] == "wall" and parts[1] in _PERIMETER_WALL_FACES:
+        return parts[1]
+    return None
+
+
+def _resolve_walkable_interior(
+    face: str,
+    cell: Tuple[int, int],
+    layer: FloorPlanLayer,
+) -> Tuple[int, int]:
+    """Step through WALL_LINE corners to the inhabited cell behind a door."""
+    inward = _INWARD_DELTA[face.lower()]
+    perp = (-inward[1], inward[0])
+    seeds = {
+        (cell[0] + inward[0], cell[1] + inward[1]),
+        (cell[0] + inward[0] + perp[0], cell[1] + inward[1] + perp[1]),
+        (cell[0] + inward[0] - perp[0], cell[1] + inward[1] - perp[1]),
+    }
+    for seed in seeds:
+        if layer.role_at(*seed) in _WALKABLE_INTERIOR_ROLES:
+            return seed
+    queue: List[Tuple[int, int]] = list(seeds)
+    seen = set(seeds)
+    while queue:
+        cx, cy = queue.pop(0)
+        if layer.role_at(cx, cy) in _WALKABLE_INTERIOR_ROLES:
+            return (cx, cy)
+        if layer.role_at(cx, cy) not in (
+            CellRole.WALL_LINE,
+            CellRole.DOOR,
+            CellRole.VOID,
+            CellRole.EXTERIOR,
+        ):
+            continue
+        for dx, dy in (inward, perp, (-perp[0], -perp[1])):
+            nxt = (cx + dx, cy + dy)
+            if nxt not in seen:
+                seen.add(nxt)
+                queue.append(nxt)
+    naive_int, _ = _interior_exterior_cells(face, cell)
+    return naive_int
+
+
+def _resolve_exterior_cell(
+    face: str,
+    cell: Tuple[int, int],
+    layer: FloorPlanLayer,
+) -> Tuple[int, int]:
+    """Step outward from a perimeter wall cell to EXTERIOR / outside the grid."""
+    outward = _OUTWARD_DELTA[face.lower()]
+    cx, cy = cell
+    cx += outward[0]
+    cy += outward[1]
+    for _ in range(16):
+        role = layer.role_at(cx, cy)
+        if role in (CellRole.EXTERIOR, CellRole.COURTYARD):
+            return (cx, cy)
+        if role is None:
+            return (cx, cy)
+        if role == CellRole.DOOR:
+            return (cx, cy)
+        if role in _WALKABLE_INTERIOR_ROLES:
+            return (cx, cy)
+        if role in (CellRole.WALL_LINE, CellRole.VOID):
+            cx += outward[0]
+            cy += outward[1]
+            continue
+        return (cx, cy)
+    return (cx, cy)
+
+
+def _resolved_aperture_cells(
+    face: str,
+    cell: Tuple[int, int],
+    layer: FloorPlanLayer,
+) -> Tuple[Tuple[int, int], Tuple[int, int]]:
+    return (
+        _resolve_walkable_interior(face, cell, layer),
+        _resolve_exterior_cell(face, cell, layer),
+    )
+
+
 def _aperture_world(
     piece: SolidPlacement,
     ap_kind: str,
@@ -458,7 +568,8 @@ def _place_wall_run(
         piece_ids.append(pid)
 
         if piece_def.asset_id == "wall_door":
-            interior, exterior = _interior_exterior_cells(face, cell)
+            layer = _layer_from_grid(next(g for g in fp.storeys if g.level == level))
+            interior, exterior = _resolved_aperture_cells(face, cell, layer)
             floor_z = level * STOREY_CM
             sill = _aperture_world(sp, "door")[2]
             apertures.append(
@@ -475,7 +586,8 @@ def _place_wall_run(
                 )
             )
         elif piece_def.asset_id == "wall_window":
-            interior, exterior = _interior_exterior_cells(face, cell)
+            layer = _layer_from_grid(next(g for g in fp.storeys if g.level == level))
+            interior, exterior = _resolved_aperture_cells(face, cell, layer)
             floor_z = level * STOREY_CM
             sill = _aperture_world(sp, "window")[2]
             apertures.append(
@@ -1053,15 +1165,9 @@ def assemble(
         for p in placements:
             if p.level != level or p.kind != "wall":
                 continue
-            cx, cy = p.cell
-            if cx == x0 and y0 <= cy <= y1:
-                ids_by_face["west"].append(p.piece_id)
-            elif cx == ex and y0 <= cy <= y1:
-                ids_by_face["east"].append(p.piece_id)
-            elif cy == y0 and x0 <= cx <= x1:
-                ids_by_face["south"].append(p.piece_id)
-            elif cy == ny and x0 <= cx <= x1:
-                ids_by_face["north"].append(p.piece_id)
+            face = _perimeter_wall_face(p.piece_id)
+            if face is not None:
+                ids_by_face[face].append(p.piece_id)
         wall_runs.extend(
             _build_wall_runs(
                 wx0=x0,

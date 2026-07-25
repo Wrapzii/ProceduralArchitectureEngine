@@ -54,6 +54,20 @@ def test_m1_m2_m4_still_validate_clean():
         assert report.critical == [], spec.name
 
 
+def test_m1_m4_m3_aperture_gap_warnings_zero():
+    """Wave F APERTURE_GAPS — perimeter milestones should have no residual warns."""
+    for spec in (m1_box_house_spec(), m3_keep_tower_spec(), m4_l_plan_spec()):
+        _, report = _pipeline_validate(spec)
+        warns = [f for f in report.failures if not f.critical]
+        assert warns == [], f"{spec.name}: {[(f.check, f.message) for f in warns]}"
+
+
+def test_m3_interpenetration_zero():
+    _, report = _pipeline_validate(m3_keep_tower_spec())
+    inter = [f for f in report.failures if f.check == "interpenetration"]
+    assert inter == []
+
+
 def test_broken_fixture_still_reports_interpenetration():
     assembly = make_broken_assembly()
     _, report = validate(assembly)

@@ -863,11 +863,21 @@ def _check_door_walkable(
     if layer is None:
         return failures
 
-    def walkable(cell: Tuple[int, int]) -> bool:
+    def interior_walkable(cell: Tuple[int, int]) -> bool:
         role = layer.role_at(cell[0], cell[1])
         return role in (CellRole.INTERIOR, CellRole.STAIR, CellRole.DOOR)
 
-    if not walkable(ap.interior_cell):
+    def exterior_walkable(cell: Tuple[int, int]) -> bool:
+        role = layer.role_at(cell[0], cell[1])
+        if role is None:
+            return True
+        return role in (
+            CellRole.EXTERIOR,
+            CellRole.COURTYARD,
+            CellRole.DOOR,
+        )
+
+    if not interior_walkable(ap.interior_cell):
         failures.append(
             Failure(
                 check="aperture_sanity",
@@ -880,7 +890,7 @@ def _check_door_walkable(
                 critical=False,
             )
         )
-    if not walkable(ap.exterior_cell):
+    if not exterior_walkable(ap.exterior_cell):
         failures.append(
             Failure(
                 check="aperture_sanity",

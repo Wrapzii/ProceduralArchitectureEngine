@@ -271,7 +271,7 @@ def make_broken_assembly() -> Assembly:
             exterior_cell=(0, 1),
             world_xyz=(MODULE_CM, MODULE_CM + MODULE_CM * 0.5, floor_z_l0),
         ),
-        # §7.9 — door opens to non-walkable exterior cell
+        # §7.9 — door opens to non-walkable exterior cell (interior courtyard)
         Aperture(
             piece_id="door_bad_exit",
             kind="door",
@@ -280,7 +280,7 @@ def make_broken_assembly() -> Assembly:
             sill_z_cm=floor_z_l0,
             floor_z_cm=floor_z_l0,
             interior_cell=(2, 1),
-            exterior_cell=(3, 0),
+            exterior_cell=(2, 1),
             world_xyz=(3 * MODULE_CM, MODULE_CM * 1.5, floor_z_l0),
         ),
     ]
