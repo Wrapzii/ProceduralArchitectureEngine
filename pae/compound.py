@@ -155,6 +155,24 @@ LODGING_TRIM = TrimOptions(
     chimney_piece="chimney_stack",
 )
 
+# Castle curtain + gatehouse (Phase 4.1–4.2 greybox).
+CURTAIN_TRIM = TrimOptions(
+    railings=False,
+    buttresses=False,
+    roofline=True,
+    colonnade=False,
+    parapets=True,
+    parapet_piece="parapet_solid",
+)
+
+GATEHOUSE_TRIM = TrimOptions(
+    railings=False,
+    buttresses=False,
+    roofline=False,
+    colonnade=False,
+    parapets=False,
+)
+
 
 def range_spec(name: str, bays_x: int, bays_y: int, *, storeys: int = 2, seed: int = 1):
     """A range: a long bar with a stair, sized in bays."""
@@ -598,3 +616,262 @@ def build_compound(
         return sited, layout, sreport
     layout.courtyard = site_layout.courtyard
     return sited, layout, Report.from_failures([])
+
+
+# ---------------------------------------------------------------------------
+# Castle curtain + gatehouse (Phase 4.1–4.2)
+# ---------------------------------------------------------------------------
+
+
+def castle_curtain_ranges(
+    bailey=None,
+) -> List[RangeStyle]:
+    """West + east curtain runs and a south gatehouse block."""
+    from pae.spec import (
+        CastleBaileySpec,
+        castle_bailey_spec,
+        castle_curtain_wall_spec,
+        castle_gatehouse_spec,
+    )
+
+    cfg = bailey if bailey is not None else castle_bailey_spec()
+    if not isinstance(cfg, CastleBaileySpec):
+        cfg = CastleBaileySpec()
+
+    length = cfg.curtain_length_bays
+    gh_width = castle_gatehouse_spec(seed=cfg.gatehouse_seed).footprint.bays_x
+    return [
+        RangeStyle(
+            "west_curtain",
+            (0, 0),
+            CURTAIN_TRIM,
+            "west curtain",
+            castle_curtain_wall_spec(
+                "west_curtain",
+                length,
+                storeys=cfg.curtain_storeys,
+                seed=cfg.west_curtain_seed,
+            ),
+            BalconySpec(enabled=False),
+        ),
+        RangeStyle(
+            "gatehouse",
+            (length, 0),
+            GATEHOUSE_TRIM,
+            "gatehouse",
+            castle_gatehouse_spec(seed=cfg.gatehouse_seed),
+            BalconySpec(enabled=False),
+        ),
+        RangeStyle(
+            "east_curtain",
+            (length + gh_width, 0),
+            CURTAIN_TRIM,
+            "east curtain",
+            castle_curtain_wall_spec(
+                "east_curtain",
+                length,
+                storeys=cfg.curtain_storeys,
+                seed=cfg.east_curtain_seed,
+            ),
+            BalconySpec(enabled=False),
+        ),
+    ]
+
+
+def _add_curtain_battlements(
+    assembly: Assembly,
+    range_names: Set[str],
+) -> Assembly:
+    """Crenellated caps along exterior wall-walks on curtain ranges."""
+    catalog = catalog_by_id()
+    if "battlement" not in catalog:
+        return assembly
+
+    batt_desc = catalog["battlement"]
+    walls = [
+        p
+        for p in assembly.placements
+        if p.kind == "wall"
+        and p.asset_id == "wall_plain"
+        and any(name in p.tags for name in range_names)
+    ]
+    if not walls:
+        return assembly
+
+    top_level = max(p.level for p in walls)
+    top_walls = [p for p in walls if p.level == top_level]
+    built: Set[Cell] = set()
+    for p in assembly.placements:
+        if any(name in p.tags for name in range_names) and p.kind in (
+            "wall",
+            "floor",
+            "plinth",
+            "ground",
+        ):
+            built |= covered_cells(p)
+
+    extra: List[SolidPlacement] = []
+    seen: Set[Tuple[Cell, str]] = set()
+    for wall in top_walls:
+        wall_top = wall.offset_cm[2] + wall.size_cm[2]
+        for cell in covered_cells(wall):
+            cx, cy = cell
+            for face, (dx, dy) in _NEIGHBOURS.items():
+                if (cx + dx, cy + dy) in built:
+                    continue
+                key = (cell, face)
+                if key in seen:
+                    continue
+                seen.add(key)
+                extra.append(
+                    SolidPlacement(
+                        piece_id=f"curtain_battlement_{top_level}_{cx}_{cy}_{face}",
+                        asset_id="battlement",
+                        kind=batt_desc.kind,
+                        cell=cell,
+                        level=top_level,
+                        yaw=FACE_YAW[face],
+                        offset_cm=boundary_offset_cm(
+                            face, batt_desc.size_cm, z_cm=wall_top
+                        ),
+                        size_cm=batt_desc.size_cm,
+                        rotates_about_center=batt_desc.rotates_about_center,
+                        tags=batt_desc.tags
+                        | frozenset({"trim", "curtain", "battlement"}),
+                    )
+                )
+
+    if not extra:
+        return assembly
+
+    extra.sort(key=lambda p: (p.level, p.cell, p.asset_id, p.piece_id))
+    return Assembly(
+        placements=list(assembly.placements) + extra,
+        floor_plan=assembly.floor_plan,
+        circulation=assembly.circulation,
+        wall_runs=assembly.wall_runs,
+        apertures=assembly.apertures,
+        storeys=assembly.storeys,
+        aperture_policy=assembly.aperture_policy,
+    )
+
+
+def _range_ground_footprint(assembly: Assembly, range_name: str) -> Set[Cell]:
+    """Level-0 built cells for one compound range tag."""
+    out: Set[Cell] = set()
+    for p in assembly.placements:
+        if range_name not in p.tags:
+            continue
+        if p.level == 0 and p.kind in ("wall", "floor", "plinth", "ground"):
+            out |= covered_cells(p)
+    return out
+
+
+def check_range_chain_connection(
+    assembly: Assembly,
+    range_names: Sequence[str],
+) -> List[Failure]:
+    """Adjacent compound ranges must meet at a 4-connected ground-cell edge."""
+    footprints = {name: _range_ground_footprint(assembly, name) for name in range_names}
+    failures: List[Failure] = []
+    deltas = ((0, 1), (0, -1), (1, 0), (-1, 0))
+    for left, right in zip(range_names, range_names[1:]):
+        fa, fb = footprints[left], footprints[right]
+        if not fa:
+            failures.append(
+                Failure(
+                    check="range_connection",
+                    message=f"range {left!r} has no level-0 footprint",
+                    world_xyz=None,
+                )
+            )
+            continue
+        if not fb:
+            failures.append(
+                Failure(
+                    check="range_connection",
+                    message=f"range {right!r} has no level-0 footprint",
+                    world_xyz=None,
+                )
+            )
+            continue
+        touches = any(
+            (cx + dx, cy + dy) in fb for cx, cy in fa for dx, dy in deltas
+        )
+        if not touches:
+            failures.append(
+                Failure(
+                    check="range_connection",
+                    message=(
+                        f"compound ranges {left!r} and {right!r} do not meet at any "
+                        f"4-connected ground cell (gap between curtain segments)"
+                    ),
+                    world_xyz=None,
+                )
+            )
+    return failures
+
+
+def check_castle_curtain_compound(assembly: Assembly) -> List[Failure]:
+    """Gate entrance role + west→gatehouse→east connectivity (Phase 4.1–4.2)."""
+    from pae.existence import check_entrance_existence
+    from pae.spec import castle_gatehouse_spec
+
+    failures = check_range_chain_connection(
+        assembly, ["west_curtain", "gatehouse", "east_curtain"]
+    )
+    failures.extend(check_entrance_existence(castle_gatehouse_spec().entrances, assembly))
+    return failures
+
+
+def build_castle_curtain_compound(
+    *,
+    bailey=None,
+    site_options: Optional[SiteOptions] = None,
+) -> Tuple[Assembly, CompoundLayout, Report]:
+    """Assemble west/east curtain runs and a twin-tower south gatehouse."""
+    from pae.pipeline import run_through_assemble
+    from pae.site import CASTLE_BAILEY_SITE
+
+    styles = castle_curtain_ranges(bailey)
+    curtain_names = {s.name for s in styles if s.name != "gatehouse"}
+
+    layout = CompoundLayout(ranges=[s.name for s in styles])
+    instances: List[BuildingInstance] = []
+    for style in styles:
+        _, _, assembled, report = run_through_assemble(style.spec)
+        if not report.ok:
+            return assembled, layout, report
+        trimmed, treport = trim(assembled, style.trim)
+        if not treport.ok:
+            return assembled, layout, treport
+        layout.per_range_trim[style.name] = sum(
+            1 for p in trimmed.placements if "trim" in p.tags
+        )
+        instances.append(BuildingInstance(trimmed, style.cell_offset, style.name))
+
+    merged, mreport = place_buildings(instances)
+    if not mreport.ok:
+        return merged, layout, mreport
+
+    compound_failures = check_castle_curtain_compound(merged)
+    if compound_failures:
+        return merged, layout, Report.from_failures(compound_failures)
+
+    merged = _add_curtain_battlements(merged, curtain_names)
+
+    opts = site_options if site_options is not None else CASTLE_BAILEY_SITE
+    sited, site_layout, sreport = build_site(merged, opts)
+    if not sreport.ok:
+        return sited, layout, sreport
+    layout.courtyard = site_layout.courtyard
+    return sited, layout, Report.from_failures([])
+
+
+def build_gatehouse_curtain(
+    *,
+    bailey=None,
+    site_options: Optional[SiteOptions] = None,
+) -> Tuple[Assembly, CompoundLayout, Report]:
+    """Alias for :func:`build_castle_curtain_compound`."""
+    return build_castle_curtain_compound(bailey=bailey, site_options=site_options)

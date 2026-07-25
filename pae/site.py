@@ -59,6 +59,14 @@ class SiteOptions:
     boundary_fence: bool = True
 
 
+# Castle bailey — cobbled approach walk, wider grounds margin, no interior courtyard paving.
+CASTLE_BAILEY_SITE = SiteOptions(
+    walk_piece="paving_cobble",
+    margin_bays=4,
+    pave_courtyards=False,
+)
+
+
 @dataclass
 class BuildingInstance:
     """One assembled building and where it sits on the site, in cells."""

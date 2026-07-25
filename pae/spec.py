@@ -26,8 +26,30 @@ _FORBIDDEN_KEY_RE = re.compile(
 
 _STYLES_DIR = Path(__file__).resolve().parent / "styles"
 
-# Auto-placed circulation kinds (spiral requires manual stair_cells + assemble support).
-SUPPORTED_STAIR_KINDS = frozenset({"straight", "switchback", "wide"})
+# Auto-placed circulation kinds. Spiral uses same-cell stacking (tower well).
+SUPPORTED_STAIR_KINDS = frozenset({"straight", "switchback", "wide", "spiral"})
+SUPPORTED_ROOF_KINDS = frozenset({"flat", "pitched", "hip"})
+ROOF_PITCH_MIN = 0.5
+ROOF_PITCH_MAX = 2.5
+STEEP_PITCH_MIN = 1.6  # S-011 anime-fantasy silhouette
+
+ROOM_KINDS = frozenset(
+    {"classroom", "hall", "chapel", "library", "dormitory", "kitchen", "store"}
+)
+
+ENTRANCE_ROLES = frozenset(
+    {
+        "grand",
+        "main",
+        "side",
+        "service",
+        "postern",
+        "gate",
+        "balcony",
+        "internal",
+    }
+)
+ENTRANCE_FACADES = frozenset({"south", "north", "east", "west"})
 
 
 @dataclass
@@ -50,13 +72,13 @@ class TowerSpec:
 
 @dataclass
 class RoofSpec:
-    kind: str = "flat"  # flat | pitched
+    kind: str = "flat"  # flat | pitched | hip
     pitch: float = 1.0
 
 
 @dataclass
 class CirculationSpec:
-    stair_kind: str = "straight"  # straight | switchback | wide (auto); spiral showcase-only
+    stair_kind: str = "straight"  # straight | switchback | wide | spiral (tower / 1-cell)
     stair_cells: List[Tuple[int, int]] = field(default_factory=list)
 
 
@@ -66,6 +88,28 @@ class OpeningPolicy:
     doors_ground: int = 1
     windows_ground: Optional[int] = None  # exact count override (e.g. M1 = 2)
     skip_ground_windows: bool = False
+
+
+EntranceRole = str  # grand | main | side | service | postern | gate | balcony | internal
+
+
+@dataclass
+class EntranceSpec:
+    """Declarative ground entrance — role drives piece choice; facade/bay place it."""
+
+    role: EntranceRole
+    facade: Optional[str] = None  # south | north | east | west
+    bay: Optional[int] = None  # 0-based index along the facade run
+
+
+@dataclass
+class RoomSpec:
+    """Programmed room intent — geometry resolved in plan/assemble."""
+
+    name: str
+    kind: str  # classroom | hall | chapel | library | dormitory | kitchen | store
+    area_bays: Optional[int] = None
+    double_height: bool = False
 
 
 @dataclass
@@ -79,9 +123,11 @@ class BuildingSpec:
     roof: RoofSpec = field(default_factory=RoofSpec)
     circulation: CirculationSpec = field(default_factory=CirculationSpec)
     openings: OpeningPolicy = field(default_factory=OpeningPolicy)
+    entrances: List[EntranceSpec] = field(default_factory=list)
     seed: int = 0
     # Intent only — geometry emitted by assemble (WP-5).
     ground_slab: bool = True
+    rooms: List[RoomSpec] = field(default_factory=list)
 
 
 def _scan_forbidden_keys(node: Any, path: str = "") -> List[str]:
@@ -183,10 +229,16 @@ def _parse_roof(raw: Any) -> RoofSpec:
         return RoofSpec()
     if not isinstance(raw, dict):
         raise ValueError("roof must be an object")
-    return RoofSpec(
-        kind=str(raw.get("kind", "flat")),
-        pitch=float(raw.get("pitch", 1.0)),
-    )
+    kind = str(raw.get("kind", "flat"))
+    pitch = float(raw.get("pitch", 1.0))
+    if kind not in SUPPORTED_ROOF_KINDS:
+        supported = ", ".join(sorted(SUPPORTED_ROOF_KINDS))
+        raise ValueError(f"unsupported roof kind '{kind}' — supported: {supported}")
+    if not (ROOF_PITCH_MIN <= pitch <= ROOF_PITCH_MAX):
+        raise ValueError(
+            f"roof pitch {pitch} out of range [{ROOF_PITCH_MIN}, {ROOF_PITCH_MAX}]"
+        )
+    return RoofSpec(kind=kind, pitch=pitch)
 
 
 def _parse_circulation(raw: Any) -> CirculationSpec:
@@ -208,6 +260,32 @@ def _parse_circulation(raw: Any) -> CirculationSpec:
     )
 
 
+def _parse_rooms(raw: Any) -> List[RoomSpec]:
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise ValueError("rooms must be a list")
+    out: List[RoomSpec] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            raise ValueError("room entries must be objects")
+        kind = str(item.get("kind", "")).lower()
+        if kind not in ROOM_KINDS:
+            kinds = ", ".join(sorted(ROOM_KINDS))
+            raise ValueError(f"room.kind must be one of {kinds}, got {kind!r}")
+        area_raw = item.get("area_bays")
+        area_bays = None if area_raw is None else int(area_raw)
+        out.append(
+            RoomSpec(
+                name=str(item.get("name", kind)),
+                kind=kind,
+                area_bays=area_bays,
+                double_height=bool(item.get("double_height", False)),
+            )
+        )
+    return out
+
+
 def _parse_openings(raw: Any) -> OpeningPolicy:
     if raw is None:
         return OpeningPolicy()
@@ -220,6 +298,34 @@ def _parse_openings(raw: Any) -> OpeningPolicy:
         windows_ground=None if windows_ground is None else int(windows_ground),
         skip_ground_windows=bool(raw.get("skip_ground_windows", False)),
     )
+
+
+def _parse_entrances(raw: Any) -> List[EntranceSpec]:
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise ValueError("entrances must be a list")
+    out: List[EntranceSpec] = []
+    for i, item in enumerate(raw):
+        if not isinstance(item, dict):
+            raise ValueError(f"entrances[{i}] must be an object")
+        role = str(item.get("role", "")).lower()
+        if role not in ENTRANCE_ROLES:
+            known = ", ".join(sorted(ENTRANCE_ROLES))
+            raise ValueError(f"entrances[{i}].role must be one of {known}, got {role!r}")
+        facade_raw = item.get("facade")
+        facade = None if facade_raw is None else str(facade_raw).lower()
+        if facade is not None and facade not in ENTRANCE_FACADES:
+            known = ", ".join(sorted(ENTRANCE_FACADES))
+            raise ValueError(
+                f"entrances[{i}].facade must be one of {known}, got {facade!r}"
+            )
+        bay_raw = item.get("bay")
+        bay = None if bay_raw is None else int(bay_raw)
+        if bay is not None and bay < 0:
+            raise ValueError(f"entrances[{i}].bay must be >= 0")
+        out.append(EntranceSpec(role=role, facade=facade, bay=bay))
+    return out
 
 
 def load_spec(data: dict) -> Tuple[Optional[BuildingSpec], Report]:
@@ -273,8 +379,10 @@ def load_spec(data: dict) -> Tuple[Optional[BuildingSpec], Report]:
             roof=_parse_roof(data.get("roof")),
             circulation=_parse_circulation(data.get("circulation")),
             openings=_parse_openings(data.get("openings")),
+            entrances=_parse_entrances(data.get("entrances")),
             seed=int(data.get("seed", 0)),
             ground_slab=bool(data.get("ground_slab", True)),
+            rooms=_parse_rooms(data.get("rooms")),
         )
     except (KeyError, TypeError, ValueError) as exc:
         failures.append(
@@ -307,41 +415,13 @@ def load_spec_json(text: str) -> Tuple[Optional[BuildingSpec], Report]:
 
 
 def load_style(style_id: str) -> Tuple[Optional[Dict[str, Any]], Report]:
-    """Load a style preset from pae/styles/<id>.json."""
-    path = _STYLES_DIR / f"{style_id}.json"
-    if not path.is_file():
-        return None, Report.from_failures(
-            [
-                Failure(
-                    check="style_missing",
-                    message=f"style preset not found: {style_id}",
-                    world_xyz=None,
-                )
-            ]
-        )
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        return None, Report.from_failures(
-            [
-                Failure(
-                    check="style_load",
-                    message=f"failed to load style {style_id}: {exc}",
-                    world_xyz=None,
-                )
-            ]
-        )
-    if not isinstance(data, dict) or data.get("id") != style_id:
-        return None, Report.from_failures(
-            [
-                Failure(
-                    check="style_id",
-                    message=f"style id mismatch in {path.name}",
-                    world_xyz=None,
-                )
-            ]
-        )
-    return data, Report.from_failures([])
+    """Load a style preset from pae/styles/<id>.json via StylePack bridge."""
+    from pae.style_pack import load_style_pack
+
+    pack, report = load_style_pack(style_id)
+    if pack is None:
+        return None, report
+    return pack.to_legacy_dict(), report
 
 
 def m1_box_house_spec(*, seed: int = 1) -> BuildingSpec:
@@ -526,6 +606,91 @@ def m3_keep_tower_dict(*, seed: int = 3) -> dict:
     }
 
 
+def m11_hip_roof_spec(*, seed: int = 11) -> BuildingSpec:
+    """Factory for Milestone 11 — 4×4 rect with four-slope hip roof (S-012)."""
+    return BuildingSpec(
+        name="m11_hip_roof",
+        style="townhouse",
+        footprint=FootprintSpec(kind="rect", bays_x=4, bays_y=4),
+        storeys=1,
+        storey_use=["hall"],
+        towers=[],
+        roof=RoofSpec(kind="hip", pitch=1.0),
+        circulation=CirculationSpec(stair_kind="straight", stair_cells=[]),
+        openings=OpeningPolicy(
+            windows_per_bay=1,
+            doors_ground=1,
+            windows_ground=2,
+            skip_ground_windows=False,
+        ),
+        seed=seed,
+        ground_slab=True,
+    )
+
+
+def m11_hip_roof_dict(*, seed: int = 11) -> dict:
+    """JSON-serialisable form of the M11 hip-roof factory."""
+    spec = m11_hip_roof_spec(seed=seed)
+    return {
+        "name": spec.name,
+        "style": spec.style,
+        "footprint": {
+            "kind": spec.footprint.kind,
+            "bays_x": spec.footprint.bays_x,
+            "bays_y": spec.footprint.bays_y,
+            "wing_depth": spec.footprint.wing_depth,
+            "courtyard": spec.footprint.courtyard,
+        },
+        "storeys": spec.storeys,
+        "storey_use": list(spec.storey_use),
+        "towers": [],
+        "roof": {"kind": spec.roof.kind, "pitch": spec.roof.pitch},
+        "circulation": {
+            "stair_kind": spec.circulation.stair_kind,
+            "stair_cells": [],
+        },
+        "openings": {
+            "windows_per_bay": spec.openings.windows_per_bay,
+            "doors_ground": spec.openings.doors_ground,
+            "windows_ground": spec.openings.windows_ground,
+            "skip_ground_windows": spec.openings.skip_ground_windows,
+        },
+        "seed": spec.seed,
+        "ground_slab": spec.ground_slab,
+    }
+
+
+def m_spiral_tower_spec(*, seed: int = 31) -> BuildingSpec:
+    """Milestone 3.1 — keep + wall tower with helical spiral in the drum.
+
+    Solver auto-places a single tower cell; assemble emits 4×
+    ``stair_spiral_quarter`` per storey climb (yaw 0/90/180/270).
+    """
+    spec = m3_keep_tower_spec(seed=seed)
+    return BuildingSpec(
+        name="m_spiral_tower",
+        style=spec.style,
+        footprint=spec.footprint,
+        storeys=spec.storeys,
+        storey_use=list(spec.storey_use),
+        towers=list(spec.towers),
+        roof=spec.roof,
+        circulation=CirculationSpec(stair_kind="spiral", stair_cells=[]),
+        openings=spec.openings,
+        seed=spec.seed,
+        ground_slab=spec.ground_slab,
+    )
+
+
+def m_spiral_tower_dict(*, seed: int = 31) -> dict:
+    """JSON-serialisable form of the spiral tower factory."""
+    spec = m_spiral_tower_spec(seed=seed)
+    data = m3_keep_tower_dict(seed=seed)
+    data["name"] = spec.name
+    data["circulation"]["stair_kind"] = "spiral"
+    return data
+
+
 def m4_l_plan_spec(*, seed: int = 4) -> BuildingSpec:
     """Factory for Milestone 4 — L-shaped cloister wing (8×8, wing_depth=2).
 
@@ -705,6 +870,7 @@ def school_academy_spec(*, seed: int = 70) -> BuildingSpec:
     Uses footprint kind ``school`` (solver emits program roles). Default circulation
     is a switchback stairwell (2×2). Storey use biases classroom partitioning.
     """
+    classroom_count = 8
     return BuildingSpec(
         name="school_academy",
         style="gothic_academy",
@@ -726,6 +892,120 @@ def school_academy_spec(*, seed: int = 70) -> BuildingSpec:
             windows_ground=None,
             skip_ground_windows=False,
         ),
+        seed=seed,
+        ground_slab=True,
+        rooms=[
+            RoomSpec(name="great_hall", kind="hall", double_height=True),
+            RoomSpec(
+                name="classrooms",
+                kind="classroom",
+                area_bays=classroom_count,
+            ),
+        ],
+    )
+
+
+def castle_curtain_wall_spec(
+    name: str,
+    length_bays: int,
+    *,
+    storeys: int = 2,
+    depth_bays: int = 3,
+    seed: int = 40,
+) -> BuildingSpec:
+    """Thin curtain-wall run — shallow bar, ``wall_plain`` envelope, no towers.
+
+    Default ``depth_bays=3`` is the minimum depth the solver can stairserve for two
+    storeys on a straight run. Trimmed with ``parapet_solid`` and ``battlement`` when
+    built via :func:`pae.compound.build_castle_curtain_compound`.
+    """
+    return BuildingSpec(
+        name=name,
+        style="keep",
+        footprint=FootprintSpec(kind="rect", bays_x=length_bays, bays_y=depth_bays),
+        storeys=storeys,
+        storey_use=["hall"] * storeys,
+        towers=[],
+        roof=RoofSpec(kind="flat", pitch=1.0),
+        circulation=CirculationSpec(stair_kind="straight", stair_cells=[]),
+        openings=OpeningPolicy(
+            windows_per_bay=1,
+            doors_ground=0,
+            windows_ground=None,
+            skip_ground_windows=True,
+        ),
+        seed=seed,
+        ground_slab=True,
+    )
+
+
+def castle_gatehouse_spec(*, seed: int = 41) -> BuildingSpec:
+    """Twin-tower gate block with a south ``gate`` entrance (``wall_gate_arch``)."""
+    return BuildingSpec(
+        name="castle_gatehouse",
+        style="keep",
+        footprint=FootprintSpec(kind="rect", bays_x=4, bays_y=3),
+        storeys=2,
+        storey_use=["hall", "hall"],
+        towers=[
+            TowerSpec(cell=(0, 0), storeys=3, attached_to="corner"),
+            TowerSpec(cell=(3, 0), storeys=3, attached_to="corner"),
+        ],
+        roof=RoofSpec(kind="flat", pitch=1.0),
+        circulation=CirculationSpec(stair_kind="straight", stair_cells=[]),
+        openings=OpeningPolicy(
+            windows_per_bay=0,
+            doors_ground=0,
+            windows_ground=None,
+            skip_ground_windows=True,
+        ),
+        entrances=[EntranceSpec(role="gate", facade="south")],
+        seed=seed,
+        ground_slab=True,
+    )
+
+
+@dataclass(frozen=True)
+class CastleBaileySpec:
+    """Layout knobs for :func:`pae.compound.build_castle_curtain_compound`."""
+
+    curtain_length_bays: int = 8
+    curtain_storeys: int = 2
+    gatehouse_seed: int = 41
+    west_curtain_seed: int = 42
+    east_curtain_seed: int = 43
+
+
+def castle_bailey_spec() -> CastleBaileySpec:
+    """Default inner-ward curtain + gatehouse preset (Phase 4.1–4.2 greybox)."""
+    return CastleBaileySpec()
+
+
+def m8_entrances_spec(*, seed: int = 8) -> BuildingSpec:
+    """Factory for Milestone 8 — declarative entrance roles on south/north facades.
+
+    Grand carriage arch on the south front; service postern on the north rear.
+    When ``entrances`` is non-empty, legacy ``openings.doors_ground`` is ignored.
+    """
+    return BuildingSpec(
+        name="m8_entrances",
+        style="keep",
+        footprint=FootprintSpec(kind="rect", bays_x=6, bays_y=5),
+        storeys=2,
+        storey_use=["hall", "hall"],
+        towers=[],
+        roof=RoofSpec(kind="pitched", pitch=0.9),
+        circulation=CirculationSpec(stair_kind="straight", stair_cells=[]),
+        openings=OpeningPolicy(
+            windows_per_bay=1,
+            doors_ground=1,
+            windows_ground=None,
+            skip_ground_windows=True,
+        ),
+        entrances=[
+            EntranceSpec(role="grand", facade="south"),
+            EntranceSpec(role="service", facade="north"),
+        ],
         seed=seed,
         ground_slab=True,
     )
@@ -760,4 +1040,13 @@ def school_academy_dict(*, seed: int = 70) -> dict:
         },
         "seed": spec.seed,
         "ground_slab": spec.ground_slab,
+        "rooms": [
+            {
+                "name": r.name,
+                "kind": r.kind,
+                "area_bays": r.area_bays,
+                "double_height": r.double_height,
+            }
+            for r in spec.rooms
+        ],
     }
