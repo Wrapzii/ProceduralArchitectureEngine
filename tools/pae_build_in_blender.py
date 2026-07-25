@@ -6,6 +6,7 @@ Usage (from any shell with RE + PAE on disk)::
     python tools/pae_build_in_blender.py --gallery
     python tools/pae_build_in_blender.py --stair-proof
     python tools/pae_build_in_blender.py --openings-proof
+    python tools/pae_build_in_blender.py --open-stairs
 
 Inside Blender MCP ``execute_blender_code`` directly (preferred for agents)::
 
@@ -28,6 +29,11 @@ M1 door + window openings proof (south/west exterior shell, SE elevated)::
 
     from pae.blender_build import build_m1_openings_proof
     build_m1_openings_proof()
+
+Open-air stair showcase (landings only, no walls)::
+
+    from pae.open_stair_showcase import build_open_stair_showcase
+    build_open_stair_showcase()
 """
 
 from __future__ import annotations
@@ -45,10 +51,12 @@ sys.path.insert(0, str(PAE))
 from Content.Python.blender._blender_mcp_client import execute  # noqa: E402
 
 BUILD = PAE / "pae" / "blender_build.py"
+OPEN_STAIRS = PAE / "pae" / "open_stair_showcase.py"
 LIVE_PNG = PAE / "Saved" / "Screenshots" / "m1_live.png"
 GALLERY_PNG = PAE / "Saved" / "Screenshots" / "gallery_m1_m4.png"
 STAIR_PROOF_PNG = PAE / "Saved" / "Screenshots" / "m2_stair_proof.png"
 OPENINGS_PROOF_PNG = PAE / "Saved" / "Screenshots" / "m1_openings_proof.png"
+OPEN_STAIRS_PNG = PAE / "Saved" / "Screenshots" / "open_stairs_showcase.png"
 
 
 def _gallery_code() -> str:
@@ -87,6 +95,18 @@ print("PAE_OPENINGS_PROOF_BUILD", result)
 """
 
 
+def _open_stairs_code() -> str:
+    return rf"""
+import runpy
+ns = runpy.run_path(
+    r"{OPEN_STAIRS.as_posix()}",
+    run_name="pae_open_stairs",
+)
+result = ns["build_open_stair_showcase"](write_png=True)
+print("PAE_OPEN_STAIRS_BUILD", result)
+"""
+
+
 def _live_code() -> str:
     return rf"""
 import runpy
@@ -115,14 +135,24 @@ def main() -> None:
         action="store_true",
         help="Build isolated M1 door+window proof shot (m1_openings_proof.png)",
     )
+    parser.add_argument(
+        "--open-stairs",
+        action="store_true",
+        help="Build open-air stair showcase (landings only, no walls)",
+    )
     args = parser.parse_args()
 
     if not BUILD.is_file():
         raise SystemExit(f"missing build script: {BUILD}")
 
-    flags = sum(bool(x) for x in (args.stair_proof, args.openings_proof, args.gallery))
+    flags = sum(
+        bool(x)
+        for x in (args.stair_proof, args.openings_proof, args.gallery, args.open_stairs)
+    )
     if flags > 1:
-        raise SystemExit("choose one of --gallery, --stair-proof, or --openings-proof")
+        raise SystemExit(
+            "choose one of --gallery, --stair-proof, --openings-proof, or --open-stairs"
+        )
 
     if args.stair_proof:
         code = _stair_proof_code()
@@ -130,6 +160,9 @@ def main() -> None:
     elif args.openings_proof:
         code = _openings_proof_code()
         png = OPENINGS_PROOF_PNG
+    elif args.open_stairs:
+        code = _open_stairs_code()
+        png = OPEN_STAIRS_PNG
     elif args.gallery:
         code = _gallery_code()
         png = GALLERY_PNG
