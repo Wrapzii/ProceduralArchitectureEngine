@@ -1,5 +1,7 @@
 # Design: the courtyard arcade — a walkable arched gallery
 
+> Detail spec for Stage G/H of `Docs/MASTER_PLAN.md`.
+
 **Status:** designed, not implemented. Nothing of this exists yet.
 
 **Lane:** `@ARCADE`

@@ -1,5 +1,7 @@
 # Design: the tower drum as a real enclosure
 
+> Detail spec for Stage E of `Docs/MASTER_PLAN.md`.
+
 **Status:** designed, not implemented. Foundations landed (`pae/drum.py`,
 `pae/tests/unit/test_drum.py`). Implementation handed to the swarm.
 

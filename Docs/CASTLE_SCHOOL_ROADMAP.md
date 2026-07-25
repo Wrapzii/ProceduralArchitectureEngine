@@ -1,5 +1,9 @@
 # Roadmap — everything still needed for the castle / school
 
+> **Read `Docs/MASTER_PLAN.md` first.** It is the plan of record and absorbs the
+> forward-looking material in Phases 10 and 11. This roadmap remains the detail
+> register for castle/school work and the open-defect list (Phase 0).
+
 Status of the engine as of this document: PAE can assemble multi-storey ranges, trim them
 with railings / buttresses / roofline / colonnades, arrange several into a compound around
 a courtyard with a balcony gallery, lay a site (paving, walks, kerbs, lawn, fence, gates),
