@@ -21,7 +21,7 @@ from pae.primitives.bpy_util import (
     normalize_boolean_solver,
     require_bpy,
 )
-from pae.primitives.roofs import DEFAULT_ROOF_PITCH, roof_rise_cm
+from pae.primitives.roofs import DEFAULT_ROOF_PITCH, roof_pitched_height_cm, roof_rise_cm
 
 
 REQUIRED_IDS = [
@@ -38,7 +38,8 @@ REQUIRED_IDS = [
     "tower_crown",
     "tower_cap",
     "battlement",
-    "roof_pitched_gable",
+    "roof_gable_infill",
+    "roof_pitched_slope",
     "roof_flat",
     "ground_plinth",
 ]
@@ -121,12 +122,21 @@ def test_tower_arc_is_centred():
     assert t.size_cm[2] == pytest.approx(STOREY_CM)
 
 
-def test_roof_includes_gable_height():
-    roof = get("roof_pitched_gable")
+def test_roof_gable_infill_includes_gable_height():
+    gable = get("roof_gable_infill")
     rise = roof_rise_cm(DEFAULT_ROOF_PITCH, MODULE_CM)
-    assert roof.size_cm[2] == pytest.approx(rise + FLOOR_T_CM)
-    assert roof.size_cm[0] == pytest.approx(MODULE_CM)
-    assert "gable" in roof.tags
+    assert gable.size_cm[2] == pytest.approx(rise + FLOOR_T_CM)
+    assert gable.size_cm[0] == pytest.approx(MODULE_CM)
+    assert "gable" in gable.tags
+    assert "gable_infill" in gable.tags
+
+
+def test_roof_pitched_slope_module_footprint():
+    slope = get("roof_pitched_slope")
+    height = roof_pitched_height_cm(DEFAULT_ROOF_PITCH, span_modules=1)
+    assert slope.size_cm == pytest.approx((MODULE_CM, MODULE_CM, height))
+    assert slope.footprint_modules == (1, 1)
+    assert "slope" in slope.tags
 
 
 def test_roof_flat_module_footprint():

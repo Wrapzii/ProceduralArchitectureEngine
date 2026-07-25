@@ -483,3 +483,176 @@ def m3_keep_tower_dict(*, seed: int = 3) -> dict:
         "seed": spec.seed,
         "ground_slab": spec.ground_slab,
     }
+
+
+def m4_l_plan_spec(*, seed: int = 4) -> BuildingSpec:
+    """Factory for Milestone 4 — L-shaped cloister wing (8×8, wing_depth=2).
+
+    South bar + west leg; re-entrant inner face gets inhabited walls in assemble.
+    """
+    return BuildingSpec(
+        name="m4_l_plan",
+        style="townhouse",
+        footprint=FootprintSpec(kind="L", bays_x=8, bays_y=8, wing_depth=2),
+        storeys=1,
+        storey_use=["hall"],
+        towers=[],
+        roof=RoofSpec(kind="flat", pitch=1.0),
+        circulation=CirculationSpec(stair_kind="straight", stair_cells=[]),
+        openings=OpeningPolicy(
+            windows_per_bay=1,
+            doors_ground=1,
+            windows_ground=None,
+            skip_ground_windows=False,
+        ),
+        seed=seed,
+        ground_slab=True,
+    )
+
+
+def m4_u_plan_spec(*, seed: int = 5) -> BuildingSpec:
+    """Factory for Milestone 4 — U-shaped plan (8×8, wing_depth=2).
+
+    South bar + west/east legs; open court to the north (exterior, not courtyard role).
+    """
+    return BuildingSpec(
+        name="m4_u_plan",
+        style="townhouse",
+        footprint=FootprintSpec(kind="U", bays_x=8, bays_y=8, wing_depth=2),
+        storeys=1,
+        storey_use=["hall"],
+        towers=[],
+        roof=RoofSpec(kind="flat", pitch=1.0),
+        circulation=CirculationSpec(stair_kind="straight", stair_cells=[]),
+        openings=OpeningPolicy(
+            windows_per_bay=1,
+            doors_ground=1,
+            windows_ground=None,
+            skip_ground_windows=False,
+        ),
+        seed=seed,
+        ground_slab=True,
+    )
+
+
+def m4_courtyard_spec(*, seed: int = 6) -> BuildingSpec:
+    """Factory for Milestone 4 — ring plan with open courtyard (8×8, wing_depth=2).
+
+    Courtyard cells are outside the enclosed envelope; no roof/floor over the hole.
+    """
+    return BuildingSpec(
+        name="m4_courtyard",
+        style="gothic_academy",
+        footprint=FootprintSpec(
+            kind="courtyard", bays_x=8, bays_y=8, wing_depth=2, courtyard=True
+        ),
+        storeys=1,
+        storey_use=["hall"],
+        towers=[],
+        roof=RoofSpec(kind="flat", pitch=1.0),
+        circulation=CirculationSpec(stair_kind="straight", stair_cells=[]),
+        openings=OpeningPolicy(
+            windows_per_bay=1,
+            doors_ground=1,
+            windows_ground=None,
+            skip_ground_windows=False,
+        ),
+        seed=seed,
+        ground_slab=True,
+    )
+
+
+def m4_l_plan_dict(*, seed: int = 4) -> dict:
+    """JSON-serialisable form of the M4 L factory."""
+    spec = m4_l_plan_spec(seed=seed)
+    return {
+        "name": spec.name,
+        "style": spec.style,
+        "footprint": {
+            "kind": spec.footprint.kind,
+            "bays_x": spec.footprint.bays_x,
+            "bays_y": spec.footprint.bays_y,
+            "wing_depth": spec.footprint.wing_depth,
+            "courtyard": spec.footprint.courtyard,
+        },
+        "storeys": spec.storeys,
+        "storey_use": list(spec.storey_use),
+        "towers": [],
+        "roof": {"kind": spec.roof.kind, "pitch": spec.roof.pitch},
+        "circulation": {
+            "stair_kind": spec.circulation.stair_kind,
+            "stair_cells": [],
+        },
+        "openings": {
+            "windows_per_bay": spec.openings.windows_per_bay,
+            "doors_ground": spec.openings.doors_ground,
+            "windows_ground": spec.openings.windows_ground,
+            "skip_ground_windows": spec.openings.skip_ground_windows,
+        },
+        "seed": spec.seed,
+        "ground_slab": spec.ground_slab,
+    }
+
+
+def m4_u_plan_dict(*, seed: int = 5) -> dict:
+    """JSON-serialisable form of the M4 U factory."""
+    spec = m4_u_plan_spec(seed=seed)
+    return {
+        "name": spec.name,
+        "style": spec.style,
+        "footprint": {
+            "kind": spec.footprint.kind,
+            "bays_x": spec.footprint.bays_x,
+            "bays_y": spec.footprint.bays_y,
+            "wing_depth": spec.footprint.wing_depth,
+            "courtyard": spec.footprint.courtyard,
+        },
+        "storeys": spec.storeys,
+        "storey_use": list(spec.storey_use),
+        "towers": [],
+        "roof": {"kind": spec.roof.kind, "pitch": spec.roof.pitch},
+        "circulation": {
+            "stair_kind": spec.circulation.stair_kind,
+            "stair_cells": [],
+        },
+        "openings": {
+            "windows_per_bay": spec.openings.windows_per_bay,
+            "doors_ground": spec.openings.doors_ground,
+            "windows_ground": spec.openings.windows_ground,
+            "skip_ground_windows": spec.openings.skip_ground_windows,
+        },
+        "seed": spec.seed,
+        "ground_slab": spec.ground_slab,
+    }
+
+
+def m4_courtyard_dict(*, seed: int = 6) -> dict:
+    """JSON-serialisable form of the M4 courtyard factory."""
+    spec = m4_courtyard_spec(seed=seed)
+    return {
+        "name": spec.name,
+        "style": spec.style,
+        "footprint": {
+            "kind": spec.footprint.kind,
+            "bays_x": spec.footprint.bays_x,
+            "bays_y": spec.footprint.bays_y,
+            "wing_depth": spec.footprint.wing_depth,
+            "courtyard": spec.footprint.courtyard,
+        },
+        "storeys": spec.storeys,
+        "storey_use": list(spec.storey_use),
+        "towers": [],
+        "roof": {"kind": spec.roof.kind, "pitch": spec.roof.pitch},
+        "circulation": {
+            "stair_kind": spec.circulation.stair_kind,
+            "stair_cells": [],
+        },
+        "openings": {
+            "windows_per_bay": spec.openings.windows_per_bay,
+            "doors_ground": spec.openings.doors_ground,
+            "windows_ground": spec.openings.windows_ground,
+            "skip_ground_windows": spec.openings.skip_ground_windows,
+        },
+        "seed": spec.seed,
+        "ground_slab": spec.ground_slab,
+    }

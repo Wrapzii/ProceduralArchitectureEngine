@@ -43,6 +43,7 @@ if str(_PAE_ROOT) not in sys.path:
 # cm → m for Blender object scale / location
 CM_TO_M = 0.01
 SCREENSHOT_REL = Path("Saved") / "Screenshots" / "m1_live.png"
+M3_SCREENSHOT_REL = Path("Saved") / "Screenshots" / "m3_pitched.png"
 PAE_ROOT_COLLECTION = "PAE_Live"
 
 
@@ -80,7 +81,7 @@ def _screenshot_path() -> Path:
 
 
 def _spec_factories() -> List[Tuple[str, Any]]:
-    """Return ``(label, factory)`` for M1 and M2 (if defined)."""
+    """Return ``(label, factory)`` for M1, M2, and M3 (if defined)."""
     from pae import spec as spec_mod
 
     factories: List[Tuple[str, Any]] = []
@@ -98,6 +99,9 @@ def _spec_factories() -> List[Tuple[str, Any]]:
         if callable(m2):
             factories.append(("m2", m2))
             break
+    m3 = getattr(spec_mod, "m3_keep_tower_spec", None)
+    if callable(m3):
+        factories.append(("m3", m3))
     return factories
 
 
@@ -418,6 +422,11 @@ def build_live(*, write_png: bool = True, milestones: Optional[Sequence[str]] = 
 
     frame_camera_on_meshes()
     shot = write_screenshot() if write_png else None
+    m3_shot = None
+    if write_png and any(r.get("label") == "m3" for r in results):
+        m3_out = _repo_root() / M3_SCREENSHOT_REL
+        m3_out.parent.mkdir(parents=True, exist_ok=True)
+        m3_shot = write_screenshot(m3_out)
     return {
         "ok": True,
         "blender": True,
@@ -425,6 +434,7 @@ def build_live(*, write_png: bool = True, milestones: Optional[Sequence[str]] = 
         "milestones": results,
         "primary": primary,
         "screenshot": str(shot) if shot else None,
+        "m3_screenshot": str(m3_shot) if m3_shot else None,
         "boolean_solvers": sorted(bpy_util.BOOLEAN_SOLVERS),
     }
 

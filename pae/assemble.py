@@ -24,7 +24,11 @@ from pae.contract import (
 )
 from pae.plan import CellRole, FloorPlan, StoreyGrid
 from pae.primitives.catalog import catalog_by_id, get as get_primitive
-from pae.primitives.roofs import roof_flat_span_size_cm
+from pae.primitives.roofs import (
+    local_slope_rise_cm,
+    roof_flat_span_size_cm,
+    roof_rise_cm,
+)
 from pae.primitives.types import PrimitiveDescriptor
 from pae.report import Failure, Report
 
@@ -143,6 +147,111 @@ _FLOOR_ROLES = frozenset(
         CellRole.STAIR,
     }
 )
+
+_VOID_FACING_ROLES = frozenset({CellRole.EXTERIOR, CellRole.COURTYARD})
+
+_FACE_DELTA: Dict[str, Tuple[int, int]] = {
+    "west": (-1, 0),
+    "east": (1, 0),
+    "south": (0, -1),
+    "north": (0, 1),
+}
+
+_YAW_FOR_VOID_FACE: Dict[str, int] = {
+    "west": 0,
+    "east": 180,
+    "south": 270,
+    "north": 90,
+}
+
+
+def _inner_wall_faces(
+    grid: StoreyGrid,
+    cx: int,
+    cy: int,
+    bbox: Tuple[int, int, int, int],
+) -> List[str]:
+    """Faces of a WALL_LINE cell toward EXTERIOR/COURTYARD not covered by §2.3 runs."""
+    x0, y0, x1, y1 = bbox
+    faces: List[str] = []
+    for face, (dx, dy) in _FACE_DELTA.items():
+        if grid.get(cx + dx, cy + dy) not in _VOID_FACING_ROLES:
+            continue
+        if face == "west" and cx == x0:
+            continue
+        if face == "east" and cx == x1:
+            continue
+        if face == "south" and cy == y0:
+            continue
+        if face == "north" and cy == y1:
+            continue
+        faces.append(face)
+    return faces
+
+
+def _massing_wing_roof_spans(
+    floor_plan: FloorPlan,
+    grid: StoreyGrid,
+) -> Optional[List[Tuple[int, int, int, int]]]:
+    """Per main/wing volume roofs when courtyard or multi-wing (§11 M4).
+
+    Avoids a single bbox deck over a courtyard hole. Towers keep their own caps.
+    """
+    has_courtyard = any(
+        role == CellRole.COURTYARD for role in grid.cells.values()
+    )
+    if floor_plan.massing is None:
+        return None
+    wings = [
+        v
+        for v in floor_plan.massing.enclosed_volumes()
+        if v.role in ("main", "wing")
+    ]
+    if has_courtyard:
+        return [(v.x0, v.y0, v.x1, v.y1) for v in wings]
+    if len(wings) > 1:
+        return [(v.x0, v.y0, v.x1, v.y1) for v in wings]
+    return None
+
+
+def _place_inhabited_inner_walls(
+    *,
+    grid: StoreyGrid,
+    bbox: Tuple[int, int, int, int],
+    level: int,
+    catalog: _PieceCatalog,
+    placements: List[SolidPlacement],
+    counters: Dict[str, int],
+) -> None:
+    """Inhabited wall ranges on re-entrant / courtyard boundaries (§11 M4)."""
+    for (cx, cy), role in grid.cells.items():
+        if role != CellRole.WALL_LINE:
+            continue
+        for face in _inner_wall_faces(grid, cx, cy, bbox):
+            yaw = _YAW_FOR_VOID_FACE[face]
+            piece_def = catalog.get("wall_plain")
+            sx, sy, _ = piece_def.size_cm
+            offset = rotation_offset_cm(
+                yaw,
+                sx,
+                sy,
+                rotates_about_center=piece_def.rotates_about_center,
+            )
+            pid = _next_piece_id(counters, f"wall_inner_{face}", (cx, cy), level)
+            placements.append(
+                SolidPlacement(
+                    piece_id=pid,
+                    asset_id=piece_def.asset_id,
+                    kind="wall",
+                    cell=(cx, cy),
+                    level=level,
+                    yaw=yaw,
+                    offset_cm=(offset[0], offset[1], 0.0),
+                    size_cm=piece_def.size_cm,
+                    rotates_about_center=piece_def.rotates_about_center,
+                    tags=piece_def.tags,
+                )
+            )
 
 
 def _boundary_wall_cells(
@@ -529,25 +638,24 @@ def _place_pitched_roof(
     y0: int,
     x1: int,
     y1: int,
+    pitch: float,
     catalog: _PieceCatalog,
     tower_cells: Set[Tuple[int, int]],
     placements: List[SolidPlacement],
     counters: Dict[str, int],
 ) -> None:
-    """Place ``roof_pitched_gable`` over the top storey (gable infill in-piece).
+    """Place per-bay slope decks plus gable-end infill prisms (§6 pitched roof).
 
     Prior failure: walls stopped at the eaves and nothing filled the gable
-    triangle → 8 m holes. The pitched kit piece includes solid gable faces.
+    triangle → 8 m holes. Gable rows/columns get ``roof_gable_infill``; interior
+    bays get ``roof_pitched_slope`` with pitch-scaled height.
 
-    Spans the enclosed footprint (same pattern as flat roof) so the deck rests
-    on the wall ring for §7.2 vertical support. Tower cells are excluded from
-    the span when they sit outside the main bbox min/max — tower uses its own
-    crown/cap instead.
+    Tower cells are excluded from the roof footprint — tower uses crown/cap.
     """
     del grid  # footprint bbox is authoritative for the deck span
-    roof_piece = catalog.get("roof_pitched_gable")
+    gable_piece = catalog.get("roof_gable_infill")
+    slope_piece = catalog.get("roof_pitched_slope")
     roof_z = STOREY_CM
-    # Shrink bbox away from tower-only cells when tower expands the ring.
     cells = [
         (x, y)
         for x in range(x0, x1 + 1)
@@ -562,24 +670,101 @@ def _place_pitched_roof(
     ry1 = max(c[1] for c in cells)
     modules_x = rx1 - rx0 + 1
     modules_y = ry1 - ry0 + 1
-    span_x = modules_x * MODULE_CM
-    span_y = modules_y * MODULE_CM
-    _, _, hz = roof_piece.size_cm
-    pid = _next_piece_id(counters, "roof_pitched", (rx0, ry0), level)
-    placements.append(
-        SolidPlacement(
-            piece_id=pid,
-            asset_id=roof_piece.asset_id,
-            kind="roof",
-            cell=(rx0, ry0),
-            level=level,
-            yaw=0,
-            offset_cm=(0.0, 0.0, roof_z),
-            size_cm=(span_x, span_y, hz),
-            rotates_about_center=roof_piece.rotates_about_center,
-            tags=roof_piece.tags,
-        )
-    )
+    ridge_along_x = modules_x >= modules_y
+    if ridge_along_x:
+        span_modules = modules_y
+        full_rise = roof_rise_cm(pitch, span_modules * MODULE_CM)
+        gable_height = full_rise + FLOOR_T_CM
+        span_x = modules_x * MODULE_CM
+        for x in range(rx0, rx1 + 1):
+            for y in (ry0, ry1):
+                pid = _next_piece_id(counters, "roof_gable", (x, y), level)
+                placements.append(
+                    SolidPlacement(
+                        piece_id=pid,
+                        asset_id=gable_piece.asset_id,
+                        kind="roof",
+                        cell=(x, y),
+                        level=level,
+                        yaw=0,
+                        offset_cm=(0.0, 0.0, roof_z),
+                        size_cm=(MODULE_CM, MODULE_CM, gable_height),
+                        rotates_about_center=gable_piece.rotates_about_center,
+                        tags=gable_piece.tags,
+                    )
+                )
+        for y in range(ry0 + 1, ry1):
+            local_rise = local_slope_rise_cm(
+                pitch=pitch,
+                cell_index=y,
+                span_start=ry0,
+                span_end=ry1,
+                ridge_axis="x",
+                along_index=rx0,
+            )
+            hz = max(FLOOR_T_CM, local_rise + FLOOR_T_CM)
+            pid = _next_piece_id(counters, "roof_slope", (rx0, y), level)
+            placements.append(
+                SolidPlacement(
+                    piece_id=pid,
+                    asset_id=slope_piece.asset_id,
+                    kind="roof",
+                    cell=(rx0, y),
+                    level=level,
+                    yaw=0,
+                    offset_cm=(0.0, 0.0, roof_z),
+                    size_cm=(span_x, MODULE_CM, hz),
+                    rotates_about_center=slope_piece.rotates_about_center,
+                    tags=slope_piece.tags,
+                )
+            )
+    else:
+        span_modules = modules_x
+        full_rise = roof_rise_cm(pitch, span_modules * MODULE_CM)
+        gable_height = full_rise + FLOOR_T_CM
+        span_y = modules_y * MODULE_CM
+        for y in range(ry0, ry1 + 1):
+            for x in (rx0, rx1):
+                pid = _next_piece_id(counters, "roof_gable", (x, y), level)
+                placements.append(
+                    SolidPlacement(
+                        piece_id=pid,
+                        asset_id=gable_piece.asset_id,
+                        kind="roof",
+                        cell=(x, y),
+                        level=level,
+                        yaw=0,
+                        offset_cm=(0.0, 0.0, roof_z),
+                        size_cm=(MODULE_CM, MODULE_CM, gable_height),
+                        rotates_about_center=gable_piece.rotates_about_center,
+                        tags=gable_piece.tags,
+                    )
+                )
+        for x in range(rx0 + 1, rx1):
+            local_rise = local_slope_rise_cm(
+                pitch=pitch,
+                cell_index=x,
+                span_start=rx0,
+                span_end=rx1,
+                ridge_axis="y",
+                along_index=ry0,
+            )
+            hz = max(FLOOR_T_CM, local_rise + FLOOR_T_CM)
+            pid = _next_piece_id(counters, "roof_slope", (x, ry0), level)
+            placements.append(
+                SolidPlacement(
+                    piece_id=pid,
+                    asset_id=slope_piece.asset_id,
+                    kind="roof",
+                    cell=(x, ry0),
+                    level=level,
+                    yaw=0,
+                    offset_cm=(0.0, 0.0, roof_z),
+                    size_cm=(MODULE_CM, span_y, hz),
+                    rotates_about_center=slope_piece.rotates_about_center,
+                    tags=slope_piece.tags,
+                )
+            )
 
 
 def _place_tower_arcs(
@@ -709,6 +894,15 @@ def assemble(
             )
             run_piece_ids[face] = [p.piece_id for p in placements[before:]]
 
+        _place_inhabited_inner_walls(
+            grid=grid,
+            bbox=(x0, y0, x1, y1),
+            level=level,
+            catalog=catalog,
+            placements=placements,
+            counters=counters,
+        )
+
         floor_piece = catalog.get("floor")
         floor_z_off = -FLOOR_T_CM
         if level == 0:
@@ -771,22 +965,25 @@ def assemble(
             if floor_plan.roof_kind == "flat":
                 roof_piece = catalog.get("roof_flat")
                 roof_z = STOREY_CM
-                modules_x = x1 - x0 + 1
-                modules_y = y1 - y0 + 1
-                pid = _next_piece_id(counters, "roof", (x0, y0), level)
-                placements.append(
-                    SolidPlacement(
-                        piece_id=pid,
-                        asset_id=roof_piece.asset_id,
-                        kind="roof",
-                        cell=(x0, y0),
-                        level=level,
-                        yaw=0,
-                        offset_cm=(0.0, 0.0, roof_z),
-                        size_cm=roof_flat_span_size_cm(modules_x, modules_y),
-                        tags=roof_piece.tags,
+                wing_spans = _massing_wing_roof_spans(floor_plan, grid)
+                roof_spans = wing_spans if wing_spans else [(x0, y0, x1, y1)]
+                for rx0, ry0, rx1, ry1 in roof_spans:
+                    modules_x = rx1 - rx0 + 1
+                    modules_y = ry1 - ry0 + 1
+                    pid = _next_piece_id(counters, "roof", (rx0, ry0), level)
+                    placements.append(
+                        SolidPlacement(
+                            piece_id=pid,
+                            asset_id=roof_piece.asset_id,
+                            kind="roof",
+                            cell=(rx0, ry0),
+                            level=level,
+                            yaw=0,
+                            offset_cm=(0.0, 0.0, roof_z),
+                            size_cm=roof_flat_span_size_cm(modules_x, modules_y),
+                            tags=roof_piece.tags,
+                        )
                     )
-                )
             elif floor_plan.roof_kind == "pitched":
                 _place_pitched_roof(
                     grid=grid,
@@ -795,6 +992,7 @@ def assemble(
                     y0=y0,
                     x1=x1,
                     y1=y1,
+                    pitch=floor_plan.roof_pitch,
                     catalog=catalog,
                     tower_cells=_tower_cells(floor_plan),
                     placements=placements,

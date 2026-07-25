@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from pae.assemble import _boundary_wall_cells, assemble
 from pae.contract import (
     FLOOR_T_CM,
@@ -16,7 +18,7 @@ from pae.contract import (
 )
 from pae.plan import plan
 from pae.primitives.catalog import get as get_primitive
-from pae.primitives.roofs import roof_flat_span_size_cm
+from pae.primitives.roofs import roof_flat_span_size_cm, roof_rise_cm
 from pae.solver import solve
 from pae.spec import load_style, m1_box_house_spec, m3_keep_tower_spec
 from pae.validate import validate
@@ -211,7 +213,7 @@ def test_roof_flat_descriptor_and_m1_span():
 
 
 def test_pitched_roof_emits_gable_pieces():
-    """M3 — roof_kind=pitched must place roof_pitched_gable (gable infill).
+    """M3 — roof_kind=pitched must place roof_gable_infill + slope deck bays.
 
     Historical bug: walls stopped at eaves; nothing filled the gable triangle.
     """
@@ -234,15 +236,48 @@ def test_pitched_roof_emits_gable_pieces():
     assembly, _, _ = _assembly_from_spec(spec)
     roofs = [p for p in assembly.placements if p.kind == "roof"]
     assert roofs, "pitched roof produced no roof placements"
-    assert all(p.asset_id == "roof_pitched_gable" for p in roofs)
-    assert all("gable" in p.tags for p in roofs)
+    gables = [p for p in roofs if p.asset_id == "roof_gable_infill"]
+    slopes = [p for p in roofs if p.asset_id == "roof_pitched_slope"]
+    assert len(gables) >= 1, "expected ≥1 gable infill piece"
+    assert all("gable" in p.tags for p in gables)
+    assert slopes, "expected interior slope deck pieces"
     assert all(p.asset_id != "roof_flat" for p in roofs)
-    # Spanning deck includes gable height (not a flat slab).
-    assert roofs[0].size_cm[2] > FLOOR_T_CM
-    assert roofs[0].size_cm[0] == 4 * MODULE_CM
-    assert roofs[0].size_cm[1] == 3 * MODULE_CM
+    # Gable infill height includes pitch rise (not a flat slab).
+    pitch = 0.9
+    rise = roof_rise_cm(pitch, 3 * MODULE_CM)
+    assert gables[0].size_cm[2] == pytest.approx(rise + FLOOR_T_CM)
+    assert gables[0].size_cm[0] == MODULE_CM
+    assert gables[0].size_cm[1] == MODULE_CM
+    # 4×3 footprint: ridge along X → 2 gable rows × 4 cols = 8 gables, 1 interior slope row.
+    assert len(gables) == 8
+    assert len(slopes) == 1
+    assert slopes[0].size_cm[0] == 4 * MODULE_CM
 
-def test_tower_arc_quarters_same_cell_no_scatter():
+def test_m3_pitched_validate_passes():
+    """M3 pitched-only spec must validate with no critical defects."""
+    from pae.pipeline import run_through_assemble
+    from pae.spec import BuildingSpec, CirculationSpec, FootprintSpec, OpeningPolicy, RoofSpec
+
+    spec = BuildingSpec(
+        name="m3_pitched_only",
+        style="keep",
+        footprint=FootprintSpec(kind="rect", bays_x=4, bays_y=3),
+        storeys=1,
+        storey_use=["hall"],
+        towers=[],
+        roof=RoofSpec(kind="pitched", pitch=0.9),
+        circulation=CirculationSpec(stair_kind="straight", stair_cells=[]),
+        openings=OpeningPolicy(doors_ground=1, windows_ground=2),
+        seed=31,
+        ground_slab=True,
+    )
+    _, _, assembly, stage_report = run_through_assemble(spec)
+    assert stage_report.ok is True
+    _, report = validate(assembly)
+    assert report.ok is True, [f.message for f in report.critical]
+    assert report.critical == []
+
+
     """M3 — 4× tower_arc_quarter share one cell; rotates_about_center; XY offset 0.
 
     Historical bug: quarters offset to four cells → no curved wall.
