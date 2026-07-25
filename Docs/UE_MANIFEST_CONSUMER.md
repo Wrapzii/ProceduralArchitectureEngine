@@ -31,6 +31,21 @@ python tools/export_m1_manifest.py
 # → Saved/exports/m1_manifest.json
 ```
 
+### Dry-run consumer (no UE editor)
+
+Before opening Unreal, prove a manifest is spawn-ready:
+
+```bash
+python tools/ue_manifest_dry_run.py
+# default: Saved/exports/m1_manifest.json (auto-exported when missing)
+# → Saved/exports/m6_dry_run_report.json
+```
+
+Checks: `schema` = `pae.manifest/1`, required top-level fields, every placement has
+`loc_cm` (3 numbers) and `yaw` ∈ `{0, 90, 180, 270}`, each `asset_id` exists in
+`assets[]`, and `validation.ok` with `critical_count == 0`. Exit code `0` when
+`ok`, else `1`.
+
 ## Schema (`pae.manifest/1`)
 
 | Field | Meaning |
@@ -113,3 +128,4 @@ Those belong exclusively to PAE Python. UE is a dumb, fast instancing consumer.
 - Spec: `Docs/PROCEDURAL_ARCHITECTURE_ENGINE.md` §8.2, §8.3, §11 M6
 - Export API: `pae/export/manifest.py`
 - M1 export: `tools/export_m1_manifest.py`
+- M6 dry-run: `tools/ue_manifest_dry_run.py`

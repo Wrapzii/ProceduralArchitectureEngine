@@ -24,11 +24,18 @@ Project root: `C:\Users\WhiteWidow\Documents\GitHub\ProceduralArchitectureEngine
 2. **Wave B:** WP-2 + WP-3 + WP-4
 3. **Wave C:** WP-5
 4. **Wave D:** WP-6 + WP-7 + WP-8
-5. **Wave E (now):** M4 courtyard/L/U · M5 dynamic assets · M6 UE manifest polish · random-spec un-xfail · gable mesh real
+5. **Wave E:** M4 courtyard/L/U · M5 dynamic assets · M6 UE manifest polish · random-spec un-xfail · gable mesh real — **DONE** (187 passed / 0 xfailed)
+6. **Wave F (now):** TOWER_AABB (annulus exempt) · M6_DRYRUN (UE spawn simulator) · GALLERY (Blender M1–M4 shots) · WARN_POLISH (wall/roof allowed pairs)
 
 ## Log
 
 ```
+2026-07-24 — Master: Wave E complete (187/0). Launching Wave F polish lanes.
+>>> TRIGGER @TOWER_AABB — Exempt same-cell tower_arc*/crown/cap AABB overlaps as designed annulus quarters; keep real overlaps critical/warning; tests for m3 warn drop; do not touch assemble wall rules.
+>>> TRIGGER @M6_DRYRUN — tools/ue_manifest_dry_run.py: load Saved/exports/*.json, verify schema+loc_cm+yaw, emit Saved/exports/m6_dry_run_report.json; unit tests; no UE editor required.
+>>> DONE @M6_DRYRUN — tools/ue_manifest_dry_run.py (schema/loc_cm/yaw/asset_id/validation gate, auto-export M1 when default missing); pae/tests/unit/test_ue_manifest_dry_run.py; Docs/UE_MANIFEST_CONSUMER.md dry-run section; report → Saved/exports/m6_dry_run_report.json.
+>>> TRIGGER @GALLERY — Extend blender_build for m1+m2+m3+m4_l side-by-side or sequential collections + screenshots Saved/Screenshots/gallery_*.png; keep reload_pae.
+>>> TRIGGER @WARN_POLISH — Allow designed wall↔roof / corner-overlap pairs in validate interpenetration without silencing real floaters; regression tests on broken_all_defects.
 2026-07-24 — Master: M1 roof-tuck + south gap closed; launching Wave E (M4/M5/M6/polish).
 >>> DONE @M5 — Dynamic assets: decorate queries AssetDB by tag (confirmed decorative → sparse interior props); assets.query helpers; run_through_decorate; test_m5_dynamic_assets (accept fake measured brazier id in output); snap_fit 1.76m pillar reject intact; 150 unit passed.
 >>> DONE @M6 — UE manifest harden (contract block, LOD placeholders, collision stubs, validation.failures); Docs/UE_MANIFEST_CONSUMER.md; bind_to_terrain integration test (2×2 flatten_pad); tools/export_m1_manifest.py → Saved/exports/m1_manifest.json (39 placements, 6 assets); 12 export+integration tests pass.
@@ -51,4 +58,6 @@ Project root: `C:\Users\WhiteWidow\Documents\GitHub\ProceduralArchitectureEngine
 >>> DONE @GABLES — Pitched roof split: `roof_gable_infill` (triangular prism per gable-end bay) + `roof_pitched_slope` (row/column-spanning wedge decks); real bpy meshes (not AABB span proxy). Assemble places gables on end rows/cols + interior slope spans for §7.2 wall support. Tests: m3_pitched emits ≥8 gable infill + slope rows; validate critical=[]; m3_keep_tower ok. `blender_build` includes m3 + optional `Saved/Screenshots/m3_pitched.png`. Removed `roof_pitched_gable`. Suite: 184 passed / 1 xfailed (pre-existing magic-number hit in m5 test).
 >>> DONE @M4 — Courtyard/L/U multi-wing: solver non-overlapping wings + courtyard role outside envelope; plan COURTYARD cells; assemble inner inhabited walls on courtyard/re-entrant faces + per-wing roofs (no deck over courtyard). Factories `m4_l_plan_spec()`, `m4_u_plan_spec()`, `m4_courtyard_spec()`. Validate ok=True critical=[] for L, U, courtyard. 12 M4 tests; M1 south-gap + E/N roof-tuck regression clean. Suite: 183 passed / 1 xfailed (2 unrelated fails: M3 pitched floater test + M5 magic grep from parallel lane).
 >>> DONE @PROPERTY — Un-xfail `test_random_specs_validate_ok`: solver local-repair now nudges *overlapping* interior towers to exterior wall/corner (was skipped via `_tower_touches`); random factory emits exterior attach cells + south-bar stairs. M5 test uses `STOREY_CM` (magic_number_grep). Suite: 187 passed / 0 xfailed; 500 random seeds green.
+>>> DONE @GALLERY — `build_gallery(milestones=None)` → `PAE_Gallery` / `PAE_M1`…`PAE_M4_L` side-by-side (+X footprint+2m gap); `write_gallery_screenshot` → `Saved/Screenshots/gallery_m1_m4.png` + per-milestone `gallery_{label}.png`; factories from `pae.spec`; `reload_pae` preserved; `build_live` M1 path unchanged; `tools/pae_build_in_blender.py --gallery`; unit tests in `test_blender_build.py`.
+>>> DONE @VALIDATE_POLISH — `pae/validate.py` §7.4 designed-pair exemptions: same-cell tower_arc/crown/cap annulus, WALL_T corner overlaps, wall↔roof deck eave tuck, storey slab above wall/stair/tower, floor_hole deck, stair openings. m3 interpenetration warns 88→1 (remaining: south+inner_north T-junction at tower); m1/m2/m4 ok=True critical=[]. `test_validate_polish.py` + broken_all_defects regression intact. Suite: 213 passed.
 ```

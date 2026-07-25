@@ -329,11 +329,178 @@ def _gaps_along_run(run: WallRun, pieces: Dict[str, SolidPlacement]) -> List[Fai
 
 # --- §7.4 interpenetration ---------------------------------------------------
 
+# Tower kit kinds placed at the same cell (§2.2 centred annulus).
+_TOWER_SOLID_KINDS = frozenset({"tower_arc", "tower_crown", "tower_cap"})
+# Roof decks that tuck over perimeter walls at the eave (§6 / assemble).
+_ROOF_DECK_ASSET_IDS = frozenset(
+    {"roof_flat", "roof_pitched_slope", "roof_gable_infill"}
+)
 
-def _interpenetration_pair_allowed(a: SolidPlacement, b: SolidPlacement) -> bool:
+
+def _is_roof_deck(p: SolidPlacement) -> bool:
+    return p.kind == "roof" and p.asset_id in _ROOF_DECK_ASSET_IDS
+
+
+def _is_tower_solid(p: SolidPlacement) -> bool:
+    return p.kind in _TOWER_SOLID_KINDS
+
+
+def _xy_overlap_extent(
+    a_min: Tuple[float, float, float],
+    a_max: Tuple[float, float, float],
+    b_min: Tuple[float, float, float],
+    b_max: Tuple[float, float, float],
+) -> Tuple[float, float]:
+    return (
+        min(a_max[0], b_max[0]) - max(a_min[0], b_min[0]),
+        min(a_max[1], b_max[1]) - max(a_min[1], b_min[1]),
+    )
+
+
+def _z_overlap_extent(
+    a_min: Tuple[float, float, float],
+    a_max: Tuple[float, float, float],
+    b_min: Tuple[float, float, float],
+    b_max: Tuple[float, float, float],
+) -> float:
+    return min(a_max[2], b_max[2]) - max(a_min[2], b_min[2])
+
+
+def _has_xy_overlap(
+    a_min: Tuple[float, float, float],
+    a_max: Tuple[float, float, float],
+    b_min: Tuple[float, float, float],
+    b_max: Tuple[float, float, float],
+    *,
+    tol: float = TOL_CM,
+) -> bool:
+    ox, oy = _xy_overlap_extent(a_min, a_max, b_min, b_max)
+    return ox > tol and oy > tol
+
+
+def _designed_tower_cell_pair(a: SolidPlacement, b: SolidPlacement) -> bool:
+    """Same-cell tower annulus quarters, crown/cap, and gable-at-tower overlaps."""
+    if a.cell != b.cell:
+        return False
+    tower_a, tower_b = _is_tower_solid(a), _is_tower_solid(b)
+    if tower_a and tower_b:
+        if a.kind == "tower_arc" and b.kind == "tower_arc":
+            return a.level == b.level
+        return True
+    if tower_a or tower_b:
+        tower = a if tower_a else b
+        other = b if tower_a else a
+        if other.kind == "wall":
+            return tower.level == other.level
+        if _is_roof_deck(other):
+            return True
+    return False
+
+
+def _designed_wall_corner_pair(
+    a: SolidPlacement,
+    b: SolidPlacement,
+    a_min: Tuple[float, float, float],
+    a_max: Tuple[float, float, float],
+    b_min: Tuple[float, float, float],
+    b_max: Tuple[float, float, float],
+) -> bool:
+    """Perimeter corners overlap by ``WALL_T`` — not a defect (§2.3)."""
+    if not (_is_wall(a) and _is_wall(b)):
+        return False
+    ox, oy = _xy_overlap_extent(a_min, a_max, b_min, b_max)
+    corner_lim = WALL_T_CM + TOL_CM
+    return ox > TOL_CM and oy > TOL_CM and ox <= corner_lim and oy <= corner_lim
+
+
+def _designed_wall_roof_pair(
+    a: SolidPlacement,
+    b: SolidPlacement,
+    a_min: Tuple[float, float, float],
+    a_max: Tuple[float, float, float],
+    b_min: Tuple[float, float, float],
+    b_max: Tuple[float, float, float],
+) -> bool:
+    """Wall thickness tucks under a roof deck at the eave within ``FLOOR_T``."""
+    if _is_wall(a) and _is_roof_deck(b):
+        wall, roof = a, b
+    elif _is_wall(b) and _is_roof_deck(a):
+        wall, roof = b, a
+    else:
+        return False
+    del wall, roof
+    if not _has_xy_overlap(a_min, a_max, b_min, b_max):
+        return False
+    z_overlap = _z_overlap_extent(a_min, a_max, b_min, b_max)
+    eave_band = FLOOR_T_CM + TOL_CM
+    return 0.0 < z_overlap <= eave_band
+
+
+def _designed_floor_upper_pair(
+    a: SolidPlacement,
+    b: SolidPlacement,
+    a_min: Tuple[float, float, float],
+    a_max: Tuple[float, float, float],
+    b_min: Tuple[float, float, float],
+    b_max: Tuple[float, float, float],
+) -> bool:
+    """Storey slab above wall / stair / tower drum in the level below (§2.4)."""
+    kinds = {a.kind, b.kind}
+    if "floor" not in kinds:
+        return False
+    floor = a if a.kind == "floor" else b
+    other = b if floor is a else a
+    if other.kind not in ("wall", "stair", "tower_arc"):
+        return False
+    if floor.level != other.level + 1:
+        return False
+    return _has_xy_overlap(a_min, a_max, b_min, b_max)
+
+
+def _designed_floor_hole_pair(a: SolidPlacement, b: SolidPlacement) -> bool:
+    """Spanning deck overlaps a stair-hole bay — opening, not double slab."""
+    if a.kind != "floor" or b.kind != "floor":
+        return False
+    ids = {a.asset_id, b.asset_id}
+    return ids == {"floor", "floor_hole"}
+
+
+def _designed_stair_opening_pair(a: SolidPlacement, b: SolidPlacement) -> bool:
+    """Stair shaft shares a wall cell or upper floor opening."""
+    kinds = {a.kind, b.kind}
+    if kinds == {"stair", "wall"}:
+        return a.cell == b.cell
+    if kinds == {"floor", "stair"}:
+        floor = a if a.kind == "floor" else b
+        stair = b if floor is a else a
+        return floor.level == stair.level + 1
+    return False
+
+
+def _interpenetration_pair_allowed(
+    a: SolidPlacement,
+    b: SolidPlacement,
+    *,
+    a_min: Tuple[float, float, float],
+    a_max: Tuple[float, float, float],
+    b_min: Tuple[float, float, float],
+    b_max: Tuple[float, float, float],
+) -> bool:
     """Pairs that may touch by design — not reported as overlap defects."""
     kinds = {a.kind, b.kind}
     if kinds == {"floor", "ground"}:
+        return True
+    if _designed_tower_cell_pair(a, b):
+        return True
+    if _designed_wall_corner_pair(a, b, a_min, a_max, b_min, b_max):
+        return True
+    if _designed_wall_roof_pair(a, b, a_min, a_max, b_min, b_max):
+        return True
+    if _designed_floor_upper_pair(a, b, a_min, a_max, b_min, b_max):
+        return True
+    if _designed_floor_hole_pair(a, b):
+        return True
+    if _designed_stair_opening_pair(a, b):
         return True
     return False
 
@@ -346,14 +513,14 @@ def _check_interpenetration(assembly: Assembly) -> List[Failure]:
         amin, amax = _placement_aabb(a)
         for j in range(i + 1, len(placements)):
             b = placements[j]
-            if _interpenetration_pair_allowed(a, b):
+            bmin, bmax = _placement_aabb(b)
+            if _interpenetration_pair_allowed(
+                a, b, a_min=amin, a_max=amax, b_min=bmin, b_max=bmax
+            ):
                 continue
-            if a.level != b.level and not _vertical_stack_overlap(amin, amax, *_placement_aabb(b)):
-                bmin, bmax = _placement_aabb(b)
+            if a.level != b.level and not _vertical_stack_overlap(amin, amax, bmin, bmax):
                 if max(amin[2], bmin[2]) >= min(amax[2], bmax[2]) - TOL_CM:
                     continue
-            else:
-                bmin, bmax = _placement_aabb(b)
             if aabb_overlap(amin, amax, bmin, bmax):
                 failures.append(
                     Failure(

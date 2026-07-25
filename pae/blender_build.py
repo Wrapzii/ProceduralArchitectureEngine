@@ -1,4 +1,4 @@
-"""Live Blender mesh build for PAE milestones (M1, M2 if present).
+"""Live Blender mesh build for PAE milestones (M1–M4 gallery + live stack).
 
 Run **inside** Blender (MCP ``execute_blender_code`` / Text Editor / add-on).
 
@@ -10,12 +10,17 @@ Hardening notes
   to a framed opening / solid box via ``bpy_util``.
 * Always ``reload_pae()`` first — Blender caches modules across agent re-runs.
 
-Example (Blender MCP)::
+Example (Blender MCP — live M1 stack)::
 
     import runpy
     runpy.run_path(
         r"C:\\Users\\WhiteWidow\\Documents\\GitHub\\ProceduralArchitectureEngine\\pae\\blender_build.py"
     )
+
+Gallery (M1–M4 side-by-side, fixed collections)::
+
+    from pae.blender_build import build_gallery
+    build_gallery()
 
 Or::
 
@@ -23,6 +28,7 @@ Or::
         r"C:\\Users\\WhiteWidow\\Documents\\GitHub\\ProceduralArchitectureEngine\\pae\\blender_build.py",
         encoding="utf-8",
     ).read())
+    build_gallery()
 """
 
 from __future__ import annotations
@@ -44,7 +50,10 @@ if str(_PAE_ROOT) not in sys.path:
 CM_TO_M = 0.01
 SCREENSHOT_REL = Path("Saved") / "Screenshots" / "m1_live.png"
 M3_SCREENSHOT_REL = Path("Saved") / "Screenshots" / "m3_pitched.png"
+GALLERY_SCREENSHOT_REL = Path("Saved") / "Screenshots" / "gallery_m1_m4.png"
 PAE_ROOT_COLLECTION = "PAE_Live"
+GALLERY_ROOT_COLLECTION = "PAE_Gallery"
+GALLERY_GAP_M = 2.0
 
 
 def reload_pae() -> List[str]:
@@ -78,6 +87,73 @@ def _screenshot_path() -> Path:
     out = _repo_root() / SCREENSHOT_REL
     out.parent.mkdir(parents=True, exist_ok=True)
     return out
+
+
+def _gallery_screenshot_path() -> Path:
+    out = _repo_root() / GALLERY_SCREENSHOT_REL
+    out.parent.mkdir(parents=True, exist_ok=True)
+    return out
+
+
+def _per_milestone_screenshot_path(label: str) -> Path:
+    out = _repo_root() / "Saved" / "Screenshots" / f"gallery_{label}.png"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    return out
+
+
+def assembly_bounds_cm(assembly) -> Tuple[Tuple[float, float, float], Tuple[float, float, float]]:
+    """World AABB (cm) union of all placements — used for gallery side-by-side offsets."""
+    from pae.contract import placement_world_aabb
+
+    mins = [1e18, 1e18, 1e18]
+    maxs = [-1e18, -1e18, -1e18]
+    for p in assembly.placements:
+        bb_min, bb_max = placement_world_aabb(
+            p.cell[0],
+            p.cell[1],
+            p.level,
+            p.yaw,
+            p.size_cm,
+            p.offset_cm,
+            rotates_about_center=p.rotates_about_center,
+        )
+        mins[0] = min(mins[0], bb_min[0])
+        mins[1] = min(mins[1], bb_min[1])
+        mins[2] = min(mins[2], bb_min[2])
+        maxs[0] = max(maxs[0], bb_max[0])
+        maxs[1] = max(maxs[1], bb_max[1])
+        maxs[2] = max(maxs[2], bb_max[2])
+    if not assembly.placements:
+        return ((0.0, 0.0, 0.0), (0.0, 0.0, 0.0))
+    return (tuple(mins), tuple(maxs))
+
+
+def assembly_footprint_extent_m(assembly) -> Tuple[float, float, float]:
+    """Axis extents (m) of the assembly world AABB."""
+    bb_min, bb_max = assembly_bounds_cm(assembly)
+    return (
+        (bb_max[0] - bb_min[0]) * CM_TO_M,
+        (bb_max[1] - bb_min[1]) * CM_TO_M,
+        (bb_max[2] - bb_min[2]) * CM_TO_M,
+    )
+
+
+def _gallery_factories() -> List[Tuple[str, str, Any]]:
+    """Return ``(label, collection_name, factory)`` for the M1–M4 gallery row."""
+    from pae import spec as spec_mod
+
+    entries: List[Tuple[str, str, str]] = [
+        ("m1", "PAE_M1", "m1_box_house_spec"),
+        ("m2", "PAE_M2", "m2_two_storey_stair_spec"),
+        ("m3", "PAE_M3", "m3_keep_tower_spec"),
+        ("m4_l", "PAE_M4_L", "m4_l_plan_spec"),
+    ]
+    factories: List[Tuple[str, str, Any]] = []
+    for label, coll_name, attr in entries:
+        factory = getattr(spec_mod, attr, None)
+        if callable(factory):
+            factories.append((label, coll_name, factory))
+    return factories
 
 
 def _spec_factories() -> List[Tuple[str, Any]]:
@@ -121,6 +197,33 @@ def assemble_and_validate(label: str, factory) -> Tuple[Any, Any]:
     return assembly, report
 
 
+def _ensure_collection(name: str, *, parent=None):
+    import bpy
+
+    coll = bpy.data.collections.get(name)
+    if coll is None:
+        coll = bpy.data.collections.new(name)
+        if parent is None:
+            bpy.context.scene.collection.children.link(coll)
+        else:
+            parent.children.link(coll)
+    elif parent is not None and coll.name not in {c.name for c in parent.children}:
+        parent.children.link(coll)
+    return coll
+
+
+def _unlink_collection_tree(coll) -> None:
+    import bpy
+
+    for child in list(coll.children):
+        _unlink_collection_tree(child)
+    for obj in list(coll.objects):
+        bpy.data.objects.remove(obj, do_unlink=True)
+    for parent in list(coll.users_collection):
+        parent.children.unlink(coll)
+    bpy.data.collections.remove(coll)
+
+
 def _clear_pae_objects():
     from pae.primitives import bpy_util
 
@@ -134,11 +237,23 @@ def _clear_pae_objects():
     for mesh in list(bpy.data.meshes):
         if mesh.users == 0:
             bpy.data.meshes.remove(mesh)
-    coll = bpy.data.collections.get(PAE_ROOT_COLLECTION)
-    if coll is None:
-        coll = bpy.data.collections.new(PAE_ROOT_COLLECTION)
-        bpy.context.scene.collection.children.link(coll)
+    coll = _ensure_collection(PAE_ROOT_COLLECTION)
     return coll
+
+
+def _clear_gallery_collections():
+    from pae.primitives import bpy_util
+
+    bpy_util.require_bpy()
+    import bpy
+
+    root = bpy.data.collections.get(GALLERY_ROOT_COLLECTION)
+    if root is not None:
+        _unlink_collection_tree(root)
+    for mesh in list(bpy.data.meshes):
+        if mesh.users == 0:
+            bpy.data.meshes.remove(mesh)
+    return _ensure_collection(GALLERY_ROOT_COLLECTION)
 
 
 def _ensure_material(kind: str):
@@ -244,7 +359,13 @@ def _mesh_for_asset(
     return obj
 
 
-def instance_assembly(assembly, *, label: str = "m1") -> int:
+def instance_assembly(
+    assembly,
+    *,
+    label: str = "m1",
+    target_coll=None,
+    offset_m: Tuple[float, float, float] = (0.0, 0.0, 0.0),
+) -> int:
     """Create linked instances for each placement. Returns instance count."""
     from pae.export.manifest import placement_loc_cm
     from pae.primitives import bpy_util
@@ -253,13 +374,20 @@ def instance_assembly(assembly, *, label: str = "m1") -> int:
     import bpy
     from mathutils import Vector
 
-    coll = bpy.data.collections.get(PAE_ROOT_COLLECTION) or _clear_pae_objects()
+    coll = target_coll
+    if coll is None:
+        coll = bpy.data.collections.get(PAE_ROOT_COLLECTION) or _clear_pae_objects()
     cache: Dict[str, Any] = {}
     count = 0
+    ox, oy, oz = offset_m
     for p in assembly.placements:
         proto = _mesh_for_asset(p.asset_id, tuple(p.size_cm), cache=cache)
         loc_cm = placement_loc_cm(p)
-        loc_m = (loc_cm[0] * CM_TO_M, loc_cm[1] * CM_TO_M, loc_cm[2] * CM_TO_M)
+        loc_m = (
+            loc_cm[0] * CM_TO_M + ox,
+            loc_cm[1] * CM_TO_M + oy,
+            loc_cm[2] * CM_TO_M + oz,
+        )
         # Linked duplicate shares mesh datablock.
         inst = proto.copy()
         inst.data = proto.data
@@ -287,22 +415,41 @@ def instance_assembly(assembly, *, label: str = "m1") -> int:
     return count
 
 
-def frame_camera_on_meshes() -> None:
+def frame_camera_on_meshes(*, collection: Optional[str] = None) -> None:
     from pae.primitives import bpy_util
 
     bpy_util.require_bpy()
     import bpy
     from mathutils import Vector
 
+    target_coll = bpy.data.collections.get(collection) if collection else None
+    allowed_colls: Optional[set] = None
+    if target_coll is not None:
+        allowed_colls = {target_coll.name}
+
+        def _descendants(coll):
+            for child in coll.children:
+                allowed_colls.add(child.name)
+                _descendants(child)
+
+        _descendants(target_coll)
+
+    def _in_scope(obj) -> bool:
+        if obj.type != "MESH" or obj.hide_get():
+            return False
+        if not obj.name.startswith("PAE_"):
+            return False
+        if "Proto" in obj.name:
+            return False
+        if allowed_colls is None:
+            return True
+        return any(c.name in allowed_colls for c in obj.users_collection)
+
     mins = Vector((1e9, 1e9, 1e9))
     maxs = Vector((-1e9, -1e9, -1e9))
     found = 0
     for obj in bpy.data.objects:
-        if obj.type != "MESH" or obj.hide_get():
-            continue
-        if not obj.name.startswith("PAE_"):
-            continue
-        if "Proto" in obj.name:
+        if not _in_scope(obj):
             continue
         found += 1
         for corner in obj.bound_box:
@@ -370,6 +517,122 @@ def write_screenshot(path: Optional[Path] = None) -> Path:
     scene.render.image_settings.file_format = "PNG"
     bpy.ops.render.render(write_still=True)
     return out
+
+
+def write_gallery_screenshot(
+    path: Optional[Path] = None,
+    *,
+    collection: str = GALLERY_ROOT_COLLECTION,
+) -> Optional[Path]:
+    """Frame the gallery row and write ``Saved/Screenshots/gallery_m1_m4.png``.
+
+    Returns ``None`` when bpy is unavailable (no-op).
+    """
+    from pae.primitives import bpy_util
+
+    if not bpy_util.HAS_BPY:
+        return None
+    frame_camera_on_meshes(collection=collection)
+    return write_screenshot(path or _gallery_screenshot_path())
+
+
+def build_gallery(
+    *,
+    milestones: Optional[Sequence[str]] = None,
+    write_png: bool = True,
+    gap_m: float = GALLERY_GAP_M,
+) -> Dict[str, Any]:
+    """Build M1–M4 into side-by-side collections under ``PAE_Gallery``.
+
+    Each milestone gets its own child collection (``PAE_M1`` … ``PAE_M4_L``),
+    offset along +X by prior footprint width + *gap_m* metres.
+    """
+    reloaded = reload_pae()
+
+    from pae.primitives import bpy_util
+
+    selected = milestones
+    factories = _gallery_factories()
+    if selected:
+        allowed = {s.lower() for s in selected}
+        factories = [(lbl, coll, fn) for lbl, coll, fn in factories if lbl in allowed]
+
+    if not bpy_util.HAS_BPY:
+        results = []
+        for label, coll_name, factory in factories:
+            assembly, report = assemble_and_validate(label, factory)
+            extent = assembly_footprint_extent_m(assembly)
+            results.append(
+                {
+                    "label": label,
+                    "collection": coll_name,
+                    "placements": len(assembly.placements),
+                    "extent_m": extent,
+                    "ok": report.ok,
+                }
+            )
+        return {
+            "ok": True,
+            "blender": False,
+            "mode": "gallery",
+            "reloaded": len(reloaded),
+            "milestones": results,
+            "screenshot": None,
+            "per_milestone_screenshots": {},
+            "note": "bpy missing - assemble/validate only",
+        }
+
+    gallery_root = _clear_gallery_collections()
+    results = []
+    cursor_x_m = 0.0
+    per_shots: Dict[str, str] = {}
+
+    for label, coll_name, factory in factories:
+        assembly, report = assemble_and_validate(label, factory)
+        bb_min, bb_max = assembly_bounds_cm(assembly)
+        offset_m = (
+            cursor_x_m - bb_min[0] * CM_TO_M,
+            -bb_min[1] * CM_TO_M,
+            -bb_min[2] * CM_TO_M,
+        )
+        child_coll = _ensure_collection(coll_name, parent=gallery_root)
+        n = instance_assembly(
+            assembly,
+            label=label,
+            target_coll=child_coll,
+            offset_m=offset_m,
+        )
+        width_m = (bb_max[0] - bb_min[0]) * CM_TO_M
+        extent = assembly_footprint_extent_m(assembly)
+        results.append(
+            {
+                "label": label,
+                "collection": coll_name,
+                "placements": len(assembly.placements),
+                "instances": n,
+                "offset_m": offset_m,
+                "extent_m": extent,
+                "ok": report.ok,
+            }
+        )
+        if write_png:
+            frame_camera_on_meshes(collection=coll_name)
+            shot = write_screenshot(_per_milestone_screenshot_path(label))
+            per_shots[label] = str(shot)
+        cursor_x_m += width_m + gap_m
+
+    gallery_shot = write_gallery_screenshot() if write_png else None
+    return {
+        "ok": True,
+        "blender": True,
+        "mode": "gallery",
+        "reloaded": len(reloaded),
+        "milestones": results,
+        "gap_m": gap_m,
+        "screenshot": str(gallery_shot) if gallery_shot else None,
+        "per_milestone_screenshots": per_shots,
+        "boolean_solvers": sorted(bpy_util.BOOLEAN_SOLVERS),
+    }
 
 
 def build_live(*, write_png: bool = True, milestones: Optional[Sequence[str]] = None) -> Dict[str, Any]:
@@ -440,7 +703,12 @@ def build_live(*, write_png: bool = True, milestones: Optional[Sequence[str]] = 
 
 
 def main() -> Dict[str, Any]:
-    result = build_live(write_png=True)
+    import os
+
+    if os.environ.get("PAE_BUILD_MODE", "").lower() == "gallery":
+        result = build_gallery(write_png=True)
+    else:
+        result = build_live(write_png=True)
     print("PAE_BLENDER_BUILD", result)
     return result
 
