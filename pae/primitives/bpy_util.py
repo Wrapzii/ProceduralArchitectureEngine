@@ -34,6 +34,8 @@ Vec3 = Tuple[float, float, float]
 
 # Arc tessellation: ≥ 96 segments per full circle (§ WP-3 / swarm prompt).
 ARC_SEGMENTS_FULL = 96
+# Tower drum/crown/cap: denser cylinder so stacked storeys read straight, not puffy.
+TOWER_ARC_SEGMENTS_FULL = 128
 
 # Blender 5.0+ BooleanModifier.solver enums (FAST was renamed to FLOAT).
 BOOLEAN_SOLVERS = frozenset({"FLOAT", "EXACT", "MANIFOLD"})
@@ -124,6 +126,122 @@ def new_empty_mesh_object(name: str, collection=None):
     return obj
 
 
+def _bmesh_add_axis_aligned_box(bm, origin: Vec3, size: Vec3) -> None:
+    """Append a closed axis-aligned box (cm) to an existing *bm*."""
+    ox, oy, oz = origin
+    sx, sy, sz = size
+    if sx <= 0.0 or sy <= 0.0 or sz <= 0.0:
+        return
+    v = [
+        bm.verts.new((ox, oy, oz)),
+        bm.verts.new((ox + sx, oy, oz)),
+        bm.verts.new((ox + sx, oy + sy, oz)),
+        bm.verts.new((ox, oy + sy, oz)),
+        bm.verts.new((ox, oy, oz + sz)),
+        bm.verts.new((ox + sx, oy, oz + sz)),
+        bm.verts.new((ox + sx, oy + sy, oz + sz)),
+        bm.verts.new((ox, oy + sy, oz + sz)),
+    ]
+    for face in (
+        (0, 1, 2, 3),
+        (4, 7, 6, 5),
+        (0, 4, 5, 1),
+        (1, 5, 6, 2),
+        (2, 6, 7, 3),
+        (3, 7, 4, 0),
+    ):
+        try:
+            bm.faces.new([v[i] for i in face])
+        except ValueError:
+            continue
+
+
+def build_box_with_rect_aperture_along_x(
+    name: str,
+    size_cm: Vec3,
+    opening_min: Vec3,
+    opening_max: Vec3,
+    *,
+    origin_at_min_corner: bool = True,
+    location: Vec3 = (0.0, 0.0, 0.0),
+    collection=None,
+):
+    """Solid box with a rectangular through-opening along +X (wall thickness).
+
+    Builds sill / lintel / jambs as separate sub-boxes and welds them in bmesh —
+    avoids boolean corner voids on door/window bases.  ``opening_*`` Y/Z are
+    clamped to the wall interior; the opening spans the full wall thickness in X.
+    """
+    require_bpy()
+    wx, wy, wz = size_cm
+    _, oy0, oz0 = opening_min
+    _, oy1, oz1 = opening_max
+    oy0 = max(0.0, min(wy, oy0))
+    oy1 = max(oy0, min(wy, oy1))
+    oz0 = max(0.0, min(wz, oz0))
+    oz1 = max(oz0, min(wz, oz1))
+
+    eps = 1e-5
+    parts: List[Tuple[Vec3, Vec3]] = []
+    if oz0 > eps:
+        parts.append(((0.0, 0.0, 0.0), (wx, wy, oz0)))
+    if oz1 < wz - eps:
+        parts.append(((0.0, 0.0, oz1), (wx, wy, wz - oz1)))
+    if oy0 > eps:
+        parts.append(((0.0, 0.0, oz0), (wx, oy0, oz1 - oz0)))
+    if oy1 < wy - eps:
+        parts.append(((0.0, oy1, oz0), (wx, wy - oy1, oz1 - oz0)))
+
+    if not parts:
+        return box_mesh(
+            name,
+            size_cm,
+            origin_at_min_corner=origin_at_min_corner,
+            location=location,
+            collection=collection,
+        )
+
+    obj = new_empty_mesh_object(name, collection=collection)
+    bm = bmesh.new()
+    for part_origin, part_size in parts:
+        _bmesh_add_axis_aligned_box(bm, part_origin, part_size)
+    bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=1e-4)
+    bm.normal_update()
+    bm.to_mesh(obj.data)
+    bm.free()
+    obj.location = Vector(location)
+    return obj
+
+
+def apply_aperture_boolean_cut(
+    target,
+    cutter_min: Vec3,
+    cutter_max: Vec3,
+    *,
+    solver: str = DEFAULT_BOOLEAN_SOLVER,
+    dissolve_cutter: bool = True,
+) -> None:
+    """Boolean DIFFERENCE using an axis-aligned cutter box (EXACT/MANIFOLD only)."""
+    require_bpy()
+    size = (
+        cutter_max[0] - cutter_min[0],
+        cutter_max[1] - cutter_min[1],
+        cutter_max[2] - cutter_min[2],
+    )
+    cutter = box_mesh(
+        f"{target.name}_cut",
+        size,
+        origin_at_min_corner=True,
+        location=cutter_min,
+    )
+    apply_boolean_difference(
+        target,
+        cutter,
+        dissolve_cutter=dissolve_cutter,
+        solver=solver,
+    )
+
+
 def box_mesh(
     name: str,
     size_cm: Vec3,
@@ -188,6 +306,21 @@ def _snap_axis_xy(x: float, y: float, *, eps: float = 1e-9) -> Tuple[float, floa
     return x, y
 
 
+def _merge_mesh_parts(
+    *parts: Tuple[List[Vec3], Sequence[Sequence[int]]],
+) -> Tuple[List[Vec3], List[Tuple[int, ...]]]:
+    """Concatenate mesh parts with face index offsets."""
+    verts: List[Vec3] = []
+    faces: List[Tuple[int, ...]] = []
+    offset = 0
+    for part_verts, part_faces in parts:
+        verts.extend(part_verts)
+        for face in part_faces:
+            faces.append(tuple(i + offset for i in face))
+        offset += len(part_verts)
+    return verts, faces
+
+
 def mesh_aabb_from_verts(verts: Sequence[Vec3]) -> Tuple[Vec3, Vec3]:
     """Axis-aligned bounds of *verts* — import-safe (no bpy)."""
     if not verts:
@@ -205,10 +338,15 @@ def annulus_quarter_verts(
     z1: float,
     *,
     segments_full: int = ARC_SEGMENTS_FULL,
+    cap_horizontal: bool = True,
+    cap_radial: bool = True,
 ) -> Tuple[List[Vec3], List[Tuple[int, int, int, int]]]:
     """Author a 90° annular sector about the origin (centred piece).
 
-    First quadrant: angles 0 → π/2. Origin at circle centre.
+    First quadrant: angles 0 → π/2. Origin at circle centre. Vertical walls
+    share (x, y) columns from *z0* to *z1* so the outer surface is a true
+    cylinder segment (not a torus-like ring stack). Set ``cap_horizontal``
+    False for tower drums that stack storey-to-storey without doubled slabs.
     """
     import math
 
@@ -230,17 +368,16 @@ def annulus_quarter_verts(
 
     faces: List[Tuple[int, int, int, int]] = []
     for i in range(n):
-        # outer wall
+        # outer wall — straight vertical quads
         faces.append((idx(0, i), idx(0, i + 1), idx(2, i + 1), idx(2, i)))
         # inner wall (reversed winding)
         faces.append((idx(1, i + 1), idx(1, i), idx(3, i), idx(3, i + 1)))
-        # bottom
-        faces.append((idx(0, i), idx(1, i), idx(1, i + 1), idx(0, i + 1)))
-        # top
-        faces.append((idx(2, i + 1), idx(3, i + 1), idx(3, i), idx(2, i)))
-    # radial end caps at 0° and 90°
-    faces.append((idx(0, 0), idx(2, 0), idx(3, 0), idx(1, 0)))
-    faces.append((idx(0, n), idx(1, n), idx(3, n), idx(2, n)))
+        if cap_horizontal:
+            faces.append((idx(0, i), idx(1, i), idx(1, i + 1), idx(0, i + 1)))
+            faces.append((idx(2, i + 1), idx(3, i + 1), idx(3, i), idx(2, i)))
+    if cap_radial:
+        faces.append((idx(0, 0), idx(2, 0), idx(3, 0), idx(1, 0)))
+        faces.append((idx(0, n), idx(1, n), idx(3, n), idx(2, n)))
     return verts, faces
 
 
@@ -251,6 +388,8 @@ def annulus_ring_verts(
     z1: float,
     *,
     segments_full: int = ARC_SEGMENTS_FULL,
+    cap_bottom: bool = True,
+    cap_top: bool = True,
 ) -> Tuple[List[Vec3], List[Tuple[int, int, int, int]]]:
     """Full 360° annulus centred on the origin (tower crown parapet base)."""
     import math
@@ -274,8 +413,46 @@ def annulus_ring_verts(
         i1 = (i + 1) % n
         faces.append((idx(0, i), idx(0, i1), idx(2, i1), idx(2, i)))
         faces.append((idx(1, i1), idx(1, i), idx(3, i), idx(3, i1)))
-        faces.append((idx(0, i), idx(1, i), idx(1, i1), idx(0, i1)))
-        faces.append((idx(2, i1), idx(3, i1), idx(3, i), idx(2, i)))
+        if cap_bottom:
+            faces.append((idx(0, i), idx(1, i), idx(1, i1), idx(0, i1)))
+        if cap_top:
+            faces.append((idx(2, i1), idx(3, i1), idx(3, i), idx(2, i)))
+    return verts, faces
+
+
+def _annular_wedge_verts(
+    outer_r: float,
+    inner_r: float,
+    z0: float,
+    z1: float,
+    t0: float,
+    t1: float,
+) -> Tuple[List[Vec3], List[Tuple[int, int, int, int]]]:
+    """Small annular wedge (one merlon tooth) between angles *t0* and *t1*."""
+    import math
+
+    def corner(r: float, t: float, z: float) -> Vec3:
+        x, y = _snap_axis_xy(r * math.cos(t), r * math.sin(t))
+        return (x, y, z)
+
+    verts = [
+        corner(outer_r, t0, z0),
+        corner(inner_r, t0, z0),
+        corner(inner_r, t1, z0),
+        corner(outer_r, t1, z0),
+        corner(outer_r, t0, z1),
+        corner(inner_r, t0, z1),
+        corner(inner_r, t1, z1),
+        corner(outer_r, t1, z1),
+    ]
+    faces = [
+        (0, 3, 2, 1),
+        (4, 5, 6, 7),
+        (0, 1, 5, 4),
+        (3, 7, 6, 2),
+        (0, 4, 7, 3),
+        (1, 2, 6, 5),
+    ]
     return verts, faces
 
 
@@ -285,46 +462,38 @@ def annulus_battlement_ring_verts(
     z0: float,
     z1: float,
     *,
-    merlon_count: int = 12,
-    segments_full: int = ARC_SEGMENTS_FULL,
+    merlon_count: int = 8,
+    segments_full: int = TOWER_ARC_SEGMENTS_FULL,
+    parapet_frac: float = 0.42,
 ) -> Tuple[List[Vec3], List[Tuple[int, ...]]]:
-    """Annular parapet with alternating merlons and gaps (centred tower crown)."""
+    """Battlement crown: straight parapet drum + discrete merlon teeth on top.
+
+    The lower ring is a true vertical annulus (drum continuation). Merlons are
+    separate wedges above the parapet walk — not a wavy per-vertex outer ring.
+    """
     import math
 
-    n = max(merlon_count * 4, segments_full)
-    parapet_z = z0 + (z1 - z0) * 0.38
-    verts: List[Vec3] = []
-    # 0 bottom outer, 1 bottom inner, 2 parapet inner, 3 top outer (varying)
-    for z in (z0, z0):
-        for r in (outer_r, inner_r):
-            for i in range(n):
-                t = (i / n) * (2.0 * math.pi)
-                x, y = _snap_axis_xy(r * math.cos(t), r * math.sin(t))
-                verts.append((x, y, z))
-    for i in range(n):
-        t = (i / n) * (2.0 * math.pi)
-        x, y = _snap_axis_xy(inner_r * math.cos(t), inner_r * math.sin(t))
-        verts.append((x, y, parapet_z))
-    for i in range(n):
-        t = (i / n) * (2.0 * math.pi)
-        x, y = _snap_axis_xy(outer_r * math.cos(t), outer_r * math.sin(t))
-        is_merlon = (i * merlon_count) // n % 2 == 0
-        z_top = z1 if is_merlon else parapet_z
-        verts.append((x, y, z_top))
-
-    stride = n
-
-    def idx(ring: int, i: int) -> int:
-        return ring * stride + (i % n)
-
-    faces: List[Tuple[int, ...]] = []
-    for i in range(n):
-        i1 = (i + 1) % n
-        faces.append((idx(0, i), idx(1, i), idx(1, i1), idx(0, i1)))
-        faces.append((idx(1, i), idx(2, i), idx(2, i1), idx(1, i1)))
-        faces.append((idx(0, i), idx(0, i1), idx(3, i1), idx(3, i)))
-        faces.append((idx(3, i), idx(3, i1), idx(2, i1), idx(2, i)))
-    return verts, faces
+    parapet_z = z0 + (z1 - z0) * parapet_frac
+    base_v, base_f = annulus_ring_verts(
+        outer_r,
+        inner_r,
+        z0,
+        parapet_z,
+        segments_full=segments_full,
+        cap_bottom=True,
+        cap_top=False,
+    )
+    period = (2.0 * math.pi) / merlon_count
+    tooth = period * 0.46
+    merlon_parts: List[Tuple[List[Vec3], List[Tuple[int, int, int, int]]]] = []
+    for m in range(merlon_count):
+        if m % 2 == 1:
+            continue
+        t0 = m * period
+        merlon_parts.append(
+            _annular_wedge_verts(outer_r, inner_r, parapet_z, z1, t0, t0 + tooth)
+        )
+    return _merge_mesh_parts((base_v, base_f), *merlon_parts)
 
 
 def cone_verts(
@@ -334,7 +503,11 @@ def cone_verts(
     *,
     segments_full: int = ARC_SEGMENTS_FULL,
 ) -> Tuple[List[Vec3], List[Tuple[int, ...]]]:
-    """Steep cone (or pyramid if segments_full is small) centred on the origin."""
+    """Steep cone (or pyramid if segments_full is small) centred on the origin.
+
+    Open base (no bottom cap) so the cap sits cleanly on the crown with a small
+  intentional Z gap from assembly.
+    """
     import math
 
     n = max(8, segments_full)
@@ -347,7 +520,7 @@ def cone_verts(
     faces: List[Tuple[int, ...]] = []
     for i in range(n):
         i1 = (i + 1) % n
-        faces.append((apex, i + 1, i1 + 1))
+        faces.append((apex, i1 + 1, i + 1))
     return verts, faces
 
 

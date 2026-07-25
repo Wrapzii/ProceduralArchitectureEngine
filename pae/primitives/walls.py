@@ -6,7 +6,7 @@ Arcade arch is cut **into** the module so the outer footprint still fills one ba
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Optional, Tuple
 
 from pae.contract import MODULE_CM, STOREY_CM, WALL_T_CM
 from pae.primitives.types import (
@@ -27,6 +27,45 @@ _SLIT_H = 0.45
 _SLIT_SILL = 0.30
 _ARCH_JAMB = 0.15  # fraction of MODULE each side
 _ARCH_SPRING = 0.18  # fraction of STOREY — arch starts above plinth band
+
+# Boolean cutter overrun (mesh build prefers bmesh frame; these pad descriptor X/Y/Z).
+_CUTTER_PAD_X_FRAC = 0.25  # each face — pierces both wall skins
+_CUTTER_PAD_YZ_CM = 0.5  # coplanar guard for boolean fallback
+
+
+def aperture_opening_yz(ap: ApertureDesc) -> Tuple[float, float, float, float]:
+    """Logical Y/Z opening inside the bay (ignores X cutter pad on the descriptor)."""
+    return (ap.min_cm[1], ap.max_cm[1], ap.min_cm[2], ap.max_cm[2])
+
+
+def aperture_cutter_bounds(
+    ap: ApertureDesc,
+    wall_size_cm: Tuple[float, float, float],
+) -> Tuple[Tuple[float, float, float], Tuple[float, float, float]]:
+    """Axis-aligned boolean cutter — oversized through wall thickness on X."""
+    wx, _wy, wz = wall_size_cm
+    pad_x = WALL_T_CM * _CUTTER_PAD_X_FRAC
+    pad_yz = _CUTTER_PAD_YZ_CM
+    y0, y1, z0, z1 = aperture_opening_yz(ap)
+    return (
+        (-pad_x, y0 - pad_yz, z0 - pad_yz),
+        (wx + pad_x, y1 + pad_yz, min(wz, z1 + pad_yz)),
+    )
+
+
+def _wall_aperture_desc(
+    kind: str,
+    y0: float,
+    y1: float,
+    z0: float,
+    z1: float,
+) -> ApertureDesc:
+    pad_x = WALL_T_CM * _CUTTER_PAD_X_FRAC
+    return ApertureDesc(
+        kind=kind,
+        min_cm=(-pad_x, y0, z0),
+        max_cm=(WALL_T_CM + pad_x, y1, z1),
+    )
 
 
 def _wall_sockets() -> tuple:
@@ -89,23 +128,15 @@ def wall_plain() -> PrimitiveDescriptor:
 
 
 def wall_window() -> PrimitiveDescriptor:
-    cx = WALL_T_CM * 0.5
-    # Opening punches through thickness; Y/Z centred in bay.
     half_w = MODULE_CM * _WINDOW_W * 0.5
     y0 = MODULE_CM * 0.5 - half_w
     y1 = MODULE_CM * 0.5 + half_w
     z0 = STOREY_CM * _WINDOW_SILL
     z1 = z0 + STOREY_CM * _WINDOW_H
-    # Cutter slightly oversized in X so boolean clears both faces.
-    pad = WALL_T_CM * 0.1
     return _base_wall(
         "wall_window",
         tags=frozenset({"wall", "window", "exterior", module_tag()}),
-        aperture=ApertureDesc(
-            kind="window",
-            min_cm=(-pad, y0, z0),
-            max_cm=(WALL_T_CM + pad, y1, z1),
-        ),
+        aperture=_wall_aperture_desc("window", y0, y1, z0, z1),
         notes="Window opening; sill above floor.",
     )
 
@@ -116,15 +147,10 @@ def wall_arrowslit() -> PrimitiveDescriptor:
     y1 = MODULE_CM * 0.5 + half_w
     z0 = STOREY_CM * _SLIT_SILL
     z1 = z0 + STOREY_CM * _SLIT_H
-    pad = WALL_T_CM * 0.1
     return _base_wall(
         "wall_arrowslit",
         tags=frozenset({"wall", "arrowslit", "defensive", "exterior", module_tag()}),
-        aperture=ApertureDesc(
-            kind="arrowslit",
-            min_cm=(-pad, y0, z0),
-            max_cm=(WALL_T_CM + pad, y1, z1),
-        ),
+        aperture=_wall_aperture_desc("arrowslit", y0, y1, z0, z1),
         notes="Narrow vertical slit.",
     )
 
@@ -135,15 +161,10 @@ def wall_door() -> PrimitiveDescriptor:
     y1 = MODULE_CM * 0.5 + half_w
     z0 = 0.0
     z1 = STOREY_CM * _DOOR_H
-    pad = WALL_T_CM * 0.1
     return _base_wall(
         "wall_door",
         tags=frozenset({"wall", "door", "exterior", module_tag()}),
-        aperture=ApertureDesc(
-            kind="door",
-            min_cm=(-pad, y0, z0),
-            max_cm=(WALL_T_CM + pad, y1, z1),
-        ),
+        aperture=_wall_aperture_desc("door", y0, y1, z0, z1),
         notes="Door reaches floor (z=0).",
     )
 
@@ -154,17 +175,11 @@ def wall_arcade() -> PrimitiveDescriptor:
     y0 = jamb
     y1 = MODULE_CM - jamb
     z0 = STOREY_CM * _ARCH_SPRING
-    # Arch rises to near storey top, leaving a lintel band.
     z1 = STOREY_CM * 0.92
-    pad = WALL_T_CM * 0.1
     return _base_wall(
         "wall_arcade",
         tags=frozenset({"wall", "arcade", "arch", "exterior", module_tag()}),
-        aperture=ApertureDesc(
-            kind="arch",
-            min_cm=(-pad, y0, z0),
-            max_cm=(WALL_T_CM + pad, y1, z1),
-        ),
+        aperture=_wall_aperture_desc("arch", y0, y1, z0, z1),
         notes="Rounded arch boolean into core before any decorative bands.",
     )
 
@@ -180,29 +195,22 @@ def all_walls() -> tuple:
 
 
 def build_wall_mesh(desc: PrimitiveDescriptor, *, name: Optional[str] = None):
-    """Optional bpy builder: core box, then aperture boolean (if any)."""
+    """Optional bpy builder: frame mesh around aperture (no boolean corner voids)."""
     from pae.primitives import bpy_util
 
     bpy_util.require_bpy()
     obj_name = name or desc.id
-    core = bpy_util.box_mesh(obj_name, desc.size_cm, origin_at_min_corner=True)
     if desc.aperture is None:
-        return core
+        return bpy_util.box_mesh(obj_name, desc.size_cm, origin_at_min_corner=True)
+
     ap = desc.aperture
-    cutter_size = (
-        ap.max_cm[0] - ap.min_cm[0],
-        ap.max_cm[1] - ap.min_cm[1],
-        ap.max_cm[2] - ap.min_cm[2],
-    )
-    cutter = bpy_util.box_mesh(
-        f"{obj_name}_cut",
-        cutter_size,
+    y0, y1, z0, z1 = aperture_opening_yz(ap)
+    wx = desc.size_cm[0]
+    # Bmesh frame: opening spans full wall thickness; Y/Z from contract fractions.
+    return bpy_util.build_box_with_rect_aperture_along_x(
+        obj_name,
+        desc.size_cm,
+        opening_min=(0.0, y0, z0),
+        opening_max=(wx, y1, z1),
         origin_at_min_corner=True,
-        location=ap.min_cm,
     )
-    if ap.kind == "arch":
-        # Approximate arch: keep rectangular cutter for descriptor parity;
-        # a true radial arch can replace the cutter top in a later polish pass.
-        pass
-    bpy_util.apply_boolean_difference(core, cutter)
-    return core
