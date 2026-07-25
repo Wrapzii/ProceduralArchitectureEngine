@@ -83,6 +83,48 @@ def footprint_contract_errors(
     elif kind == "roof":
         errors.extend(_axis_err(f"{desc.id}.size.x", sx, mx * MODULE_CM, tol_cm))
         errors.extend(_axis_err(f"{desc.id}.size.y", sy, my * MODULE_CM, tol_cm))
+    elif kind == "barrier":
+        # Barriers tile on the same boundary lines as walls (§2.3): full module run and
+        # contract-locked height. Thickness is free below WALL_T — a railing is
+        # deliberately thinner than a wall, and forcing WALL_T would make it read as one.
+        errors.extend(
+            _axis_err(f"{desc.id}.size.y (run)", sy, my * MODULE_CM, tol_cm)
+        )
+        errors.extend(
+            _axis_err(
+                f"{desc.id}.size.z",
+                sz,
+                desc.height_storeys * STOREY_CM,
+                tol_cm,
+            )
+        )
+        if sx > WALL_T_CM + tol_cm:
+            errors.append(
+                f"{desc.id}.size.x: barrier thickness {sx:.1f} cm exceeds "
+                f"WALL_T {WALL_T_CM:.1f} cm"
+            )
+    elif kind in ("column", "roofline"):
+        # Sub-bay pieces must FIT their declared footprint but need not fill it: a chimney
+        # is not a module wide, and padding it to one would put a 4 m box around it.
+        # Height stays contract-locked so storey stacking still works.
+        errors.extend(
+            _axis_err(
+                f"{desc.id}.size.z",
+                sz,
+                desc.height_storeys * STOREY_CM,
+                tol_cm,
+            )
+        )
+        if sx > mx * MODULE_CM + tol_cm:
+            errors.append(
+                f"{desc.id}.size.x: {sx:.1f} cm overflows its "
+                f"{mx}-module footprint ({mx * MODULE_CM:.1f} cm)"
+            )
+        if sy > my * MODULE_CM + tol_cm:
+            errors.append(
+                f"{desc.id}.size.y: {sy:.1f} cm overflows its "
+                f"{my}-module footprint ({my * MODULE_CM:.1f} cm)"
+            )
     else:
         errors.append(f"{desc.id}: unknown kind {kind!r} for footprint check")
 

@@ -5,9 +5,12 @@ from __future__ import annotations
 from typing import Dict, List, Optional
 
 from pae.primitives.battlements import all_battlements
+from pae.primitives.columns import all_columns
 from pae.primitives.floors import all_floors
 from pae.primitives.plinth import all_plinths
+from pae.primitives.railings import all_railings
 from pae.primitives.roofs import all_roofs
+from pae.primitives.spires import all_spires
 from pae.primitives.stairs import all_stairs
 from pae.primitives.towers import all_towers
 from pae.primitives.types import PrimitiveDescriptor
@@ -23,6 +26,9 @@ def all_descriptors() -> List[PrimitiveDescriptor]:
     pieces.extend(all_battlements())
     pieces.extend(all_roofs())
     pieces.extend(all_plinths())
+    pieces.extend(all_columns())
+    pieces.extend(all_railings())
+    pieces.extend(all_spires())
     return pieces
 
 
@@ -44,7 +50,18 @@ def piece_ids() -> List[str]:
 
 def build_mesh(piece_id: str, *, name: Optional[str] = None):
     """Dispatch optional bpy builder by piece id."""
-    from pae.primitives import battlements, floors, plinth, roofs, stairs, towers, walls
+    from pae.primitives import (
+        battlements,
+        columns,
+        floors,
+        plinth,
+        railings,
+        roofs,
+        spires,
+        stairs,
+        towers,
+        walls,
+    )
 
     desc = get(piece_id)
     builders = {
@@ -57,6 +74,9 @@ def build_mesh(piece_id: str, *, name: Optional[str] = None):
         "battlement": battlements.build_battlement_mesh,
         "roof": roofs.build_roof_mesh,
         "plinth": plinth.build_plinth_mesh,
+        "column": columns.build_column_mesh,
+        "barrier": railings.build_railing_mesh,
+        "roofline": spires.build_spire_mesh,
     }
     builder = builders.get(desc.kind)
     if builder is None:

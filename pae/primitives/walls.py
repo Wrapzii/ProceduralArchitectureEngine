@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import List, Optional, Tuple
 
 from pae.contract import MODULE_CM, STOREY_CM, TOL_CM, WALL_T_CM
+from pae.primitives.apertures import ApertureProfile, PROFILES, get_profile
 from pae.primitives.types import (
     ApertureDesc,
     PrimitiveDescriptor,
@@ -186,6 +187,7 @@ def _base_wall(
     *,
     tags: frozenset,
     aperture: Optional[ApertureDesc] = None,
+    profile: Optional[str] = None,
     notes: str = "",
 ) -> PrimitiveDescriptor:
     return PrimitiveDescriptor(
@@ -200,7 +202,31 @@ def _base_wall(
         rotates_about_center=False,
         aabb_min_cm=(0.0, 0.0, 0.0),
         aperture=aperture,
+        profile=profile,
         notes=notes,
+    )
+
+
+def wall_from_profile(
+    profile: ApertureProfile,
+    *,
+    piece_id: Optional[str] = None,
+    extra_tags: frozenset = frozenset(),
+) -> PrimitiveDescriptor:
+    """Build a wall bay whose opening is described by an aperture profile.
+
+    The descriptor's ``aperture`` is the opening's bounding box (what the validator and
+    the fitter reason about); ``profile`` carries the actual shape so the mesh builder can
+    cut a pointed head or a three-light mullioned window rather than a rectangle.
+    """
+    run0, run1 = profile.opening_run_cm(MODULE_CM)
+    z0, z1 = profile.opening_z_cm(STOREY_CM)
+    return _base_wall(
+        piece_id or f"wall_{profile.name}",
+        tags=frozenset({"wall", "exterior", module_tag()}) | profile.tags | extra_tags,
+        aperture=_wall_aperture_desc(profile.kind, run0, run1, z0, z1),
+        profile=profile.name,
+        notes=profile.notes,
     )
 
 
@@ -212,71 +238,49 @@ def wall_plain() -> PrimitiveDescriptor:
     )
 
 
+# Legacy piece ids kept stable — they are referenced by assemble, golden hashes and the
+# UE manifest. Each now delegates to a named profile instead of private constants.
+LEGACY_PROFILE_IDS = {
+    "wall_window": "window_plain",
+    "wall_arrowslit": "arrowslit",
+    "wall_door": "door_plain",
+    "wall_arcade": "arcade_round",
+}
+
+
 def wall_window() -> PrimitiveDescriptor:
-    half_w = MODULE_CM * _WINDOW_W * 0.5
-    y0 = MODULE_CM * 0.5 - half_w
-    y1 = MODULE_CM * 0.5 + half_w
-    z0 = STOREY_CM * _WINDOW_SILL
-    z1 = z0 + STOREY_CM * _WINDOW_H
-    return _base_wall(
-        "wall_window",
-        tags=frozenset({"wall", "window", "exterior", module_tag()}),
-        aperture=_wall_aperture_desc("window", y0, y1, z0, z1),
-        notes="Window opening; sill above floor.",
-    )
+    return wall_from_profile(get_profile("window_plain"), piece_id="wall_window")
 
 
 def wall_arrowslit() -> PrimitiveDescriptor:
-    half_w = MODULE_CM * _SLIT_W * 0.5
-    y0 = MODULE_CM * 0.5 - half_w
-    y1 = MODULE_CM * 0.5 + half_w
-    z0 = STOREY_CM * _SLIT_SILL
-    z1 = z0 + STOREY_CM * _SLIT_H
-    return _base_wall(
-        "wall_arrowslit",
-        tags=frozenset({"wall", "arrowslit", "defensive", "exterior", module_tag()}),
-        aperture=_wall_aperture_desc("arrowslit", y0, y1, z0, z1),
-        notes="Narrow vertical slit.",
-    )
+    return wall_from_profile(get_profile("arrowslit"), piece_id="wall_arrowslit")
 
 
 def wall_door() -> PrimitiveDescriptor:
-    half_w = MODULE_CM * _DOOR_W * 0.5
-    y0 = MODULE_CM * 0.5 - half_w
-    y1 = MODULE_CM * 0.5 + half_w
-    z0 = 0.0
-    z1 = STOREY_CM * _DOOR_H
-    return _base_wall(
-        "wall_door",
-        tags=frozenset({"wall", "door", "exterior", module_tag()}),
-        aperture=_wall_aperture_desc("door", y0, y1, z0, z1),
-        notes="Door reaches floor (z=0).",
-    )
+    return wall_from_profile(get_profile("door_plain"), piece_id="wall_door")
 
 
 def wall_arcade() -> PrimitiveDescriptor:
     """Arcade bay: arch cut **into** the module — outer size still one bay."""
-    jamb = MODULE_CM * _ARCH_JAMB
-    y0 = jamb
-    y1 = MODULE_CM - jamb
-    z0 = STOREY_CM * _ARCH_SPRING
-    z1 = STOREY_CM * 0.92
-    return _base_wall(
-        "wall_arcade",
-        tags=frozenset({"wall", "arcade", "arch", "exterior", module_tag()}),
-        aperture=_wall_aperture_desc("arch", y0, y1, z0, z1),
-        notes="Rounded arch boolean into core before any decorative bands.",
-    )
+    return wall_from_profile(get_profile("arcade_round"), piece_id="wall_arcade")
 
 
 def all_walls() -> tuple:
-    return (
+    """Solid wall, the four legacy ids, and one bay per registered aperture profile."""
+    pieces = [
         wall_plain(),
         wall_window(),
         wall_arrowslit(),
         wall_door(),
         wall_arcade(),
-    )
+    ]
+    taken = {p.id for p in pieces}
+    for name in sorted(PROFILES):
+        desc = wall_from_profile(PROFILES[name])
+        if desc.id not in taken:
+            pieces.append(desc)
+            taken.add(desc.id)
+    return tuple(pieces)
 
 
 def build_wall_mesh(desc: PrimitiveDescriptor, *, name: Optional[str] = None):
@@ -288,9 +292,15 @@ def build_wall_mesh(desc: PrimitiveDescriptor, *, name: Optional[str] = None):
     if desc.aperture is None:
         return bpy_util.box_mesh(obj_name, desc.size_cm, origin_at_min_corner=True)
 
-    ap = desc.aperture
-    run0, run1, z0, z1 = aperture_opening_run_vertical(ap, desc.size_cm)
-    parts = wall_aperture_frame_parts_cm(desc.size_cm, run0, run1, z0, z1)
+    if desc.profile is not None:
+        # Profile-driven: real head curvature, mullions and transoms.
+        from pae.primitives import apertures
+
+        parts = apertures.frame_parts(get_profile(desc.profile), desc.size_cm)
+    else:
+        ap = desc.aperture
+        run0, run1, z0, z1 = aperture_opening_run_vertical(ap, desc.size_cm)
+        parts = wall_aperture_frame_parts_cm(desc.size_cm, run0, run1, z0, z1)
     return bpy_util.build_mesh_from_box_parts(
         obj_name,
         parts,

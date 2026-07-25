@@ -62,6 +62,10 @@ class PrimitiveDescriptor:
     rotates_about_center: bool = False
     aabb_min_cm: Vec3 = (0.0, 0.0, 0.0)
     aperture: Optional[ApertureDesc] = None
+    profile: Optional[str] = None
+    """Name of an :mod:`pae.primitives.apertures` profile, when the piece's opening is
+    described by one. Carries the *shape* (head, mullions, transom) that ``aperture``
+    can only bound. ``None`` for solid pieces and for non-wall kinds."""
     notes: str = ""
 
     @property
