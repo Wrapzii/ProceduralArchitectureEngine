@@ -33,7 +33,13 @@ from typing import Dict, List, Optional, Sequence, Set, Tuple
 
 from pae.assembly_types import Assembly, SolidPlacement
 from pae.boundary import FACE_YAW, boundary_offset_cm, outward_offset_cm
-from pae.contract import FLOOR_T_CM, MODULE_CM, STOREY_CM, placement_world_aabb
+from pae.contract import (
+    FLOOR_T_CM,
+    MODULE_CM,
+    STOREY_CM,
+    TOL_CM,
+    placement_world_aabb,
+)
 from pae.primitives.catalog import catalog_by_id
 from pae.report import Failure, Report
 
@@ -296,7 +302,14 @@ def _buttresses(assembly: Assembly, opts: TrimOptions) -> List[SolidPlacement]:
     if not walls:
         return out
 
-    interior = _deck_cells_by_level(assembly).get(0, set())
+    # The whole plan ENVELOPE, every level — not just level 0's deck. Where an upper
+    # storey oversails the ground floor, the cell beneath it is still building, and a
+    # ground-bearing pier planted there stands in the space under the overhang rather
+    # than against the outside of the wall.
+    decks = _deck_cells_by_level(assembly)
+    interior: Set[Cell] = set()
+    for _cells in decks.values():
+        interior |= _cells
     depth = catalog_by_id()[opts.buttress_piece].size_cm
 
     for i, wall in enumerate(sorted(walls, key=lambda p: (p.cell, p.piece_id))):
@@ -316,22 +329,52 @@ def _buttresses(assembly: Assembly, opts: TrimOptions) -> List[SolidPlacement]:
             face = "west" if (bb_min[0] - cx0) < near else "east"
         else:
             face = "south" if (bb_min[1] - cy0) < near else "north"
-        dx, dy = _NEIGHBOURS[face]
-        if (cell[0] + dx, cell[1] + dy) in interior:
-            continue  # that face looks inward — bracing there would be inside a room
-        chosen = face
-        yaw, off = outward_offset_cm(chosen, depth)
-        out.append(
-            _placement(
-                opts.buttress_piece,
-                cell,
-                0,
-                yaw=yaw,
-                offset_cm=off,
-                suffix=chosen,
+        # VERIFY, do not assume. The derived face is a good first guess, but the wall's
+        # own AABB is what a buttress has to bear against, and ``outward_offset_cm`` is
+        # cell-relative — where the two disagree you get masonry braced against air, or
+        # a pier standing inside the room. User: "they're not facing properly and
+        # they're implemented incorrectly." So build the candidate, MEASURE it, and keep
+        # it only if it really touches this wall and stays out of the interior.
+        cand: Optional[SolidPlacement] = None
+        for f in [face] + [g for g in _NEIGHBOURS if g != face]:
+            dx, dy = _NEIGHBOURS[f]
+            if (cell[0] + dx, cell[1] + dy) in interior:
+                continue  # that face looks inward — bracing there would be in a room
+            yaw, off = outward_offset_cm(f, depth)
+            trial = _placement(
+                opts.buttress_piece, cell, 0, yaw=yaw, offset_cm=off, suffix=f,
             )
-        )
+            if not _buttress_is_sound(trial, (bb_min, bb_max), interior):
+                continue
+            cand = trial
+            break
+        if cand is None:
+            continue  # no sound face on this bay — a missing buttress beats a wrong one
+        out.append(cand)
     return out
+
+
+def _buttress_is_sound(
+    butt: SolidPlacement,
+    wall_box: Tuple[Tuple[float, float, float], Tuple[float, float, float]],
+    interior: Set[Cell],
+) -> bool:
+    """A buttress must bear on its wall, and must not stand inside the building.
+
+    This is the orientation check the Validation Handbook's seven questions owe for any
+    piece that attaches to a face: *what does it attach to* (this wall) and *which way
+    does it face* (away from the interior).
+    """
+    bmn, bmx = placement_world_aabb(
+        butt.cell[0], butt.cell[1], butt.level, butt.yaw, butt.size_cm,
+        butt.offset_cm, rotates_about_center=butt.rotates_about_center,
+    )
+    wmn, wmx = wall_box
+    # Bearing: share real extent on every axis, not merely graze a corner.
+    for i in (0, 1, 2):
+        if min(bmx[i], wmx[i]) - max(bmn[i], wmn[i]) < -TOL_CM:
+            return False
+    return not (covered_cells(butt) & interior)
 
 
 def _roofline(assembly: Assembly, opts: TrimOptions) -> List[SolidPlacement]:

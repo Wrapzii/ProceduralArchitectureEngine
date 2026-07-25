@@ -1746,7 +1746,31 @@ def _check_structural_islands(assembly: Assembly) -> List[Failure]:
     other component is freestanding and reported with its size and location, because a
     two-piece island is a different bug from a two-hundred-piece one.
     """
-    pieces = [p for p in assembly.placements if not _island_exempt(p)]
+    candidates = [p for p in assembly.placements if not _island_exempt(p)]
+    if len(candidates) < 2:
+        return []
+
+    # Partition by BUILDING first. A site holds several buildings that are legitimately
+    # separate structures; connectivity is a WITHIN-building property, not a site-wide
+    # one. Without this a street of six houses reports five freestanding groups and the
+    # check becomes noise the moment you build more than one thing.
+    by_building: Dict[str, List[SolidPlacement]] = {}
+    for p in candidates:
+        mk = next((t for t in p.tags if t.startswith("building:")), "")
+        by_building.setdefault(mk, []).append(p)
+    if len(by_building) > 1:
+        out: List[Failure] = []
+        for mk, group in sorted(by_building.items()):
+            out.extend(_islands_within(group, mk))
+        return out
+    return _islands_within(candidates, next(iter(by_building)))
+
+
+def _islands_within(
+    pieces: List[SolidPlacement],
+    marker: str = "",
+) -> List[Failure]:
+    """Island check over ONE building's pieces."""
     if len(pieces) < 2:
         return []
 
@@ -2322,6 +2346,21 @@ def _check_upper_entrance_landing(assembly: Assembly) -> List[Failure]:
 # --- §7.17 storey egress -----------------------------------------------------
 
 
+def _is_outdoor_tower_deck_floor(p: SolidPlacement) -> bool:
+    """Outdoor crown / rampart deck — not an indoor habitable storey slab.
+
+    Phase 4.7 ``tower_deck`` / ``tower_top`` floors sit under the crown in open
+    air (same exemption family as headroom). They must not invent a STOREY or
+    VOLUME ``storey_egress`` critical merely because a floor-kind piece exists
+    above the last indoor landing. Deck existence / walkability is owned by
+    ``tower_top_walkable`` / rampart checks — do **not** demote storey_egress
+    for ordinary indoor floors, and do **not** broaden this tag set casually.
+    """
+    if p.kind != "floor" or "hole" in p.asset_id:
+        return False
+    return "tower_deck" in p.tags or "tower_top" in p.tags
+
+
 def _check_storey_egress(assembly: Assembly) -> List[Failure]:
     """Every enclosed space must be enterable, and every storey must have a way in and out.
 
@@ -2335,6 +2374,10 @@ def _check_storey_egress(assembly: Assembly) -> List[Failure]:
       VOLUME    every level with floor area has at least one aperture (door or window).
                 A windowless, doorless enclosed volume is a mistake, not a cellar.
 
+    Outdoor tower crown / rampart decks (``tower_deck`` / ``tower_top``) are
+    excluded from the floor-level set — they are open-air wall-walks, not
+    enclosed habitable storeys (Handbook: outdoor tower deck exemption).
+
     NOTE: true PER-ROOM door checking needs the room graph (roadmap Phase 2.1/2.2). Until
     interior partitions exist there is one room per storey, and this is that check. When
     partitions land, this must be extended to iterate rooms rather than storeys.
@@ -2346,6 +2389,9 @@ def _check_storey_egress(assembly: Assembly) -> List[Failure]:
     levels_with_floor: Dict[int, set] = {}
     for p in assembly.placements:
         if p.kind == "floor" and "hole" not in p.asset_id:
+            # Outdoor crown/rampart deck — not an indoor storey (see helper).
+            if _is_outdoor_tower_deck_floor(p):
+                continue
             levels_with_floor.setdefault(p.level, set()).update(covered_cells(p))
     if not levels_with_floor:
         return failures
@@ -2833,6 +2879,11 @@ def _check_aperture_sanity(assembly: Assembly) -> List[Failure]:
     failures: List[Failure] = []
     policy = assembly.aperture_policy
     layer_map = assembly.floor_plan
+    from pae.tower_entry import is_tower_entry_piece
+
+    tower_entry_walls = {
+        p.piece_id for p in assembly.placements if is_tower_entry_piece(p)
+    }
 
     for ap in assembly.apertures:
         sill_above_floor = ap.sill_z_cm - ap.floor_z_cm
@@ -2881,7 +2932,13 @@ def _check_aperture_sanity(assembly: Assembly) -> List[Failure]:
                 )
 
         if ap.kind == "door":
-            failures.extend(_check_door_walkable(ap, layer_map))
+            failures.extend(
+                _check_door_walkable(
+                    ap,
+                    layer_map,
+                    tower_entry=ap.wall_piece_id in tower_entry_walls,
+                )
+            )
 
     return failures
 
@@ -2889,6 +2946,8 @@ def _check_aperture_sanity(assembly: Assembly) -> List[Failure]:
 def _check_door_walkable(
     ap,
     layer_map: Dict[int, FloorPlanLayer],
+    *,
+    tower_entry: bool = False,
 ) -> List[Failure]:
     failures: List[Failure] = []
     layer = layer_map.get(ap.level)
@@ -2914,6 +2973,42 @@ def _check_door_walkable(
             CellRole.COURTYARD,
             CellRole.DOOR,
         )
+
+    # tower_entry: hall↔drum passage — both sides must be passable inhabited /
+    # stairwell cells. Do NOT accept EXTERIOR here, and do NOT weaken the
+    # exterior_walkable rule for ordinary perimeter doors.
+    if tower_entry:
+        from pae.tower_entry import _DRUM_PASSABLE, _HALL_WALKABLE
+
+        drum_role = layer.role_at(*ap.interior_cell)
+        hall_role = layer.role_at(*ap.exterior_cell)
+        if drum_role not in _DRUM_PASSABLE:
+            failures.append(
+                Failure(
+                    check="aperture_sanity",
+                    message=(
+                        f"door {ap.piece_id} interior side cell "
+                        f"{ap.interior_cell} is not walkable"
+                    ),
+                    world_xyz=ap.world_xyz,
+                    piece_id=ap.piece_id,
+                    critical=False,
+                )
+            )
+        if hall_role not in _HALL_WALKABLE:
+            failures.append(
+                Failure(
+                    check="aperture_sanity",
+                    message=(
+                        f"door {ap.piece_id} exterior side cell "
+                        f"{ap.exterior_cell} is not walkable"
+                    ),
+                    world_xyz=ap.world_xyz,
+                    piece_id=ap.piece_id,
+                    critical=False,
+                )
+            )
+        return failures
 
     if not interior_walkable(ap.interior_cell):
         failures.append(

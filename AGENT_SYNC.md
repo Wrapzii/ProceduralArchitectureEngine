@@ -396,3 +396,5 @@ claimed. Numbers are from a measured pass over all 10 showcase builds + school +
 >>> TRIGGER @VAL_TRIAGE_MISC — fitout merge + magic 350.0 in tower_entry + gallery blender assert.
 
 >>> DONE @VAL_TRIAGE_ROOF ? Gallery roofs: building-face overhang WALL_T_CM so eaves kiss wall heads (EAVE was 30 cm < 35 cm XY tol); roof_bears_on_wall kept critical, no gallery exemption (posts alone still fail). Trim: skip tower_deck/tower_top for railings + count tower_arc as wall cells ? stops floating balustrade_stone mid-drum (gatehouse/chapel/library). test_roof_connect uncovered warn still green (20). trim/showcase/freestanding/eng_continuity green for owned fails.
+
+>>> DONE @VAL_TRIAGE_EGRESS — Option B: outdoor tower_deck/tower_top excluded from storey_egress STOREY+VOLUME (explicit helper + handbook; indoor floors unchanged). tower_entry: resolve hall landing through WALL_LINE + aperture_sanity through-passage check (drum+hall walkable; no global demotion). Tests: test_tower_entry_door + spiral/tower_windows/rampart green for owned fails.

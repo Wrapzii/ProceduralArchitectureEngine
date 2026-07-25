@@ -1903,6 +1903,7 @@ def _place_tower_arcs(
             placements=placements,
             apertures=apertures,
             counters=counters,
+            floor_plan=floor_plan,
         )
         top = vol.storeys - 1
         junction_z = STOREY_CM

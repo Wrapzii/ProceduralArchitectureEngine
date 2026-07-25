@@ -117,6 +117,19 @@ ISLAND_EXEMPT_TAGS = frozenset({"site", "boundary", "light_anchor", "marker"})
 
 An exemption that is not written down becomes a bug the next person has to rediscover.
 
+**Outdoor tower crown / rampart decks (`tower_deck` / `tower_top`):** these are
+open-air wall-walks under the crown (Phase 4.7), not enclosed habitable storeys.
+`storey_egress` STOREY/VOLUME **must not** treat them as indoor floors that need a
+stair arrival or a door/window volume — that is an explicit classification in
+`validate._is_outdoor_tower_deck_floor` / `_check_storey_egress`, not a demotion of
+the check. Indoor slabs stay fully covered. Deck presence is owned by
+`tower_top_walkable` / rampart checks. Same family as the headroom outdoor-deck skip.
+
+**`tower_entry` hall↔drum doors:** aperture cells must resolve to a walkable hall
+bay (not the naive WALL_LINE neighbour) and a passable drum/stairwell cell.
+`aperture_sanity` checks both sides as a through-passage for `tower_entry` only —
+ordinary exterior doors still require EXTERIOR/COURTYARD on the outside.
+
 **Worked example — `light_anchor` (S-068…S-070) is fully registered:**
 `pae/primitives/anchors.py` + catalog `all_anchors` / `build_mesh` dispatch + measure
 sub-bay branch + island exempt above + `blender_build` KIND colour + manifest

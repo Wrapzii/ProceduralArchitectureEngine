@@ -7,7 +7,9 @@ Handbook §2 seven questions:
   1 Touch — attach-face drum rim kisses the hall envelope
   2 Under — hall/tower floor at that storey
   5 Isolation — no (joins drum via same-cell AABB like drum_window)
-  6 Use — walk-through → aperture_reachability treats hall floor as landing
+  6 Use — walk-through → aperture_reachability treats hall floor as landing;
+    aperture_sanity requires *both* sides walkable (hall cell + drum cell), not
+    an exterior EXTERIOR/COURTYARD role (this is an interior passage)
   7 Spec — critical ``tower_entry_door`` when spiral / tower stair present
 
 Do not own newel / drum enclosure (@VAL_SPIRAL_SHELL) or crown rampart
@@ -21,14 +23,53 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple, Union
 from pae.assembly_types import Aperture, SolidPlacement
 from pae.contract import FLOOR_T_CM, MODULE_CM, STOREY_CM, WALL_T_CM
 from pae.existence import TOWER_ENTRY_TAG
+from pae.plan import CellRole, FloorPlan
 from pae.solver import Volume
 
 StyleLike = Union[Mapping[str, Any], None]
 
 _TOWER_ENTRY_CHORD_CM = MODULE_CM * 0.5
 
+# Hall / inhabited roles the door must open onto (not WALL_LINE attach cells).
+_HALL_WALKABLE = frozenset(
+    {
+        CellRole.INTERIOR,
+        CellRole.STAIR,
+        CellRole.DOOR,
+        CellRole.CORRIDOR,
+        CellRole.CLASSROOM,
+    }
+)
+# Drum side: stairwell roles — VOID is the open well at the upper landing.
+_DRUM_PASSABLE = frozenset(
+    {
+        CellRole.STAIR,
+        CellRole.DOOR,
+        CellRole.VOID,
+        CellRole.DOUBLE_VOID,
+        CellRole.INTERIOR,
+    }
+)
 
-def _tower_exterior_cell(cell: Tuple[int, int], yaw: int) -> Tuple[int, int]:
+# Attach yaw → face of the *hall* perimeter wall that abuts the tower
+# (opposite the door's outward normal). Used to BFS into inhabited hall cells.
+_HALL_WALL_FACE_FOR_YAW: Dict[int, str] = {
+    0: "east",
+    90: "south",
+    180: "west",
+    270: "north",
+}
+
+_INWARD_DELTA: Dict[str, Tuple[int, int]] = {
+    "west": (1, 0),
+    "east": (-1, 0),
+    "south": (0, 1),
+    "north": (0, -1),
+}
+
+
+def _tower_adjacent_cell(cell: Tuple[int, int], yaw: int) -> Tuple[int, int]:
+    """Neighbour on the hall side of the attach face (by wall yaw)."""
     cx, cy = cell
     if yaw == 0:
         return (cx - 1, cy)
@@ -37,6 +78,67 @@ def _tower_exterior_cell(cell: Tuple[int, int], yaw: int) -> Tuple[int, int]:
     if yaw == 180:
         return (cx + 1, cy)
     return (cx, cy - 1)
+
+
+def _resolve_hall_landing_cell(
+    tower_cell: Tuple[int, int],
+    yaw: int,
+    *,
+    role_at: Callable[[int, int], Optional[CellRole]],
+) -> Optional[Tuple[int, int]]:
+    """Step through WALL_LINE attach cells to a walkable hall bay.
+
+    The naive neighbour of a west-attached tower is often WALL_LINE (the hall
+    envelope), not INTERIOR — aperture_sanity then reports
+    ``exterior side cell not walkable``. Mirror assemble's perimeter door
+    resolver: seed from the abutting wall cell and BFS inward.
+    """
+    face = _HALL_WALL_FACE_FOR_YAW.get(int(yaw) % 360)
+    if face is None:
+        return None
+    wall_cell = _tower_adjacent_cell(tower_cell, yaw)
+    if role_at(*wall_cell) in _HALL_WALKABLE:
+        return wall_cell
+
+    inward = _INWARD_DELTA[face]
+    perp = (-inward[1], inward[0])
+    seeds = {
+        (wall_cell[0] + inward[0], wall_cell[1] + inward[1]),
+        (
+            wall_cell[0] + inward[0] + perp[0],
+            wall_cell[1] + inward[1] + perp[1],
+        ),
+        (
+            wall_cell[0] + inward[0] - perp[0],
+            wall_cell[1] + inward[1] - perp[1],
+        ),
+        wall_cell,
+    }
+    for seed in seeds:
+        if role_at(*seed) in _HALL_WALKABLE:
+            return seed
+    queue: List[Tuple[int, int]] = list(seeds)
+    seen = set(seeds)
+    while queue:
+        cx, cy = queue.pop(0)
+        role = role_at(cx, cy)
+        if role in _HALL_WALKABLE:
+            return (cx, cy)
+        if role not in (
+            CellRole.WALL_LINE,
+            CellRole.DOOR,
+            CellRole.VOID,
+            CellRole.DOUBLE_VOID,
+            CellRole.EXTERIOR,
+            None,
+        ):
+            continue
+        for dx, dy in (inward, perp, (-perp[0], -perp[1])):
+            nxt = (cx + dx, cy + dy)
+            if nxt not in seen:
+                seen.add(nxt)
+                queue.append(nxt)
+    return None
 
 
 def _tower_entry_shell_pose(
@@ -90,20 +192,46 @@ def place_tower_entry_doors(
     placements: List[SolidPlacement],
     apertures: List[Aperture],
     counters: Dict[str, int],
+    floor_plan: Optional[FloorPlan] = None,
 ) -> int:
-    """Emit hall↔drum doors on the attach face. Returns count placed."""
+    """Emit hall↔drum doors on the attach face. Returns count placed.
+
+    Aperture cells: ``interior_cell`` = drum, ``exterior_cell`` = resolved hall
+    landing (not the naive WALL_LINE neighbour). Doors are skipped when either
+    side is not passable at that storey — keeps aperture_sanity honest without
+    demoting the check.
+    """
     if skip_yaw is None or body is None:
         return 0
     aid = door_asset_id
     if "door" not in aid and "gate" not in aid:
         aid = "wall_door"
     n_levels = min(vol.storeys, body.storeys)
-    hall_cell = _tower_exterior_cell(cell, skip_yaw)
+    if floor_plan is not None:
+        n_levels = min(n_levels, len(floor_plan.storeys))
     # Prefer a passable opening height under the storey slab.
-    height = min(350.0, STOREY_CM - FLOOR_T_CM)
+    height = STOREY_CM - FLOOR_T_CM
     chord = min(_TOWER_ENTRY_CHORD_CM, MODULE_CM * 0.55)
     placed = 0
     for level in range(n_levels):
+        if floor_plan is not None and level < len(floor_plan.storeys):
+            grid = floor_plan.storeys[level]
+
+            def role_at(x: int, y: int, _g=grid) -> Optional[CellRole]:
+                return _g.get(x, y)
+
+            drum_role = role_at(*cell)
+            if drum_role not in _DRUM_PASSABLE:
+                continue
+            hall_cell = _resolve_hall_landing_cell(
+                cell, skip_yaw, role_at=role_at
+            )
+            if hall_cell is None:
+                continue
+        else:
+            # No plan — keep legacy neighbour (tests that stub without a plan).
+            hall_cell = _tower_adjacent_cell(cell, skip_yaw)
+
         size, offset = _tower_entry_shell_pose(
             drum_xy,
             skip_yaw,
@@ -137,6 +265,9 @@ def place_tower_entry_doors(
                 level=level,
                 sill_z_cm=world[2],
                 floor_z_cm=floor_z,
+                # Drum = interior side of the passage; hall landing = other side.
+                # aperture_sanity treats tower_entry as a through-passage (both
+                # sides interior-walkable), not an exterior exit.
                 interior_cell=cell,
                 exterior_cell=hall_cell,
                 world_xyz=world,
@@ -154,4 +285,7 @@ __all__ = [
     "place_tower_entry_doors",
     "is_tower_entry_piece",
     "TOWER_ENTRY_TAG",
+    "_resolve_hall_landing_cell",
+    "_HALL_WALKABLE",
+    "_DRUM_PASSABLE",
 ]
