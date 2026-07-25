@@ -14,6 +14,13 @@ fix each time was a check, not a patch.
 
 ---
 
+> **Companion document:** `Docs/STYLE_AND_DETAIL_ROADMAP.md` carries 135 numbered
+> style-and-detail objectives (S-001…S-135) for the wizarding-school / medieval read —
+> roof profiles, spires, grand entrances, attachable doors, lighting and prop anchors,
+> seeded surface variation, interiors, grounds. This document is *structure*; that one is
+> *style*. Work the two together: a structural feature with no style hooks gets hard-coded
+> twice.
+
 ## Phase 0 — Open defects (blocking, known now)
 
 | # | Defect | Evidence | Notes |
