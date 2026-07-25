@@ -92,6 +92,45 @@ class BandingSpec:
         return not self.faces or face in self.faces
 
 
+def _clear_course_height(
+    wanted_z: float,
+    band_h: float,
+    openings: Sequence[Tuple[float, float]],
+) -> Optional[float]:
+    """Nearest height to ``wanted_z`` at which a course clears EVERY opening.
+
+    Masonry runs a string course under the sills or over the heads; it does not stop at
+    each window and start again after it. So instead of skipping bays, move the whole run
+    to a height that works for the whole elevation. Returns None when no such height
+    exists, in which case the course is dropped for that elevation entirely.
+    """
+
+    def clear(z: float) -> bool:
+        return all(
+            not (z + band_h > a0 + TOL_CM and z < a1 - TOL_CM)
+            for a0, a1 in openings
+        )
+
+    if clear(wanted_z):
+        return wanted_z
+    if not openings:
+        return wanted_z
+
+    lowest_sill = min(a0 for a0, _a1 in openings)
+    highest_head = max(a1 for _a0, a1 in openings)
+    candidates = []
+    below = lowest_sill - band_h - TOL_CM
+    above = highest_head + TOL_CM
+    if below >= 0.0:
+        candidates.append(below)
+    if above + band_h <= STOREY_CM:
+        candidates.append(above)
+    candidates = [c for c in candidates if clear(c)]
+    if not candidates:
+        return None
+    return min(candidates, key=lambda c: abs(c - wanted_z))
+
+
 def _crosses_opening(opening, z0: float, z1: float) -> bool:
     """True when a band at z0..z1 would run across a wall's door or window."""
     if opening is None:
@@ -228,81 +267,117 @@ def band(
     hosts = {p.piece_id: p for p in assembly.placements if p.piece_id in faces}
     extra: List[SolidPlacement] = []
 
-    for i, (pid, face) in enumerate(sorted(faces.items())):
+    # ------------------------------------------------------------------
+    # Group walls into ELEVATIONS, not bays.
+    #
+    # The first version placed a course per bay and skipped any bay containing an
+    # opening. That produces disconnected strips scattered across a wall - banding that
+    # starts and stops at nothing, which is worse than none. Real articulation is a
+    # CONTINUOUS run at one height along a whole elevation, set to clear the openings,
+    # with vertical members at the corners and junctions where walls actually meet.
+    # ------------------------------------------------------------------
+    elevations: Dict[Tuple[int, int, int, Face], List[SolidPlacement]] = {}
+    for pid, face in faces.items():
         host = hosts[pid]
         if not opts.wants_face(face):
             continue
         if opts.levels and host.level not in opts.levels:
             continue
+        axis = 1 if host.yaw in (0, 180) else 0
+        plane = host.cell[1 - axis]
+        elevations.setdefault((host.level, axis, plane, face), []).append(host)
 
-        host_desc = catalog.get(host.asset_id)
-        opening = getattr(host_desc, "aperture", None) if host_desc else None
+    for key, members in sorted(elevations.items(), key=lambda kv: str(kv[0])):
+        level, axis, _plane, face = key
+        members.sort(key=lambda m: m.cell[axis])
+
+        openings: List[Tuple[float, float]] = []
+        for m in members:
+            ap = getattr(catalog.get(m.asset_id), "aperture", None)
+            if ap is not None:
+                openings.append((ap.min_cm[2], ap.max_cm[2]))
 
         for course in opts.courses:
-            z = STOREY_CM * course.height_frac
             band_h = catalog[course.piece].size_cm[2]
-            if _crosses_opening(opening, z, z + band_h):
-                # A stringcourse ploughing straight through a window is the single most
-                # obvious "this was generated" tell. Real masonry steps around openings;
-                # until we can split a course into segments (roadmap), skip this bay.
+            z = _clear_course_height(STOREY_CM * course.height_frac, band_h, openings)
+            if z is None:
+                # No height on this elevation clears every opening. Drop the COURSE for
+                # the whole elevation - never leave a partial run.
                 continue
-            extra.append(
-                _place_on_face(
-                    course.piece, host, face,
-                    z_cm=z,
-                    suffix=f"course_{course.name}",
-                    extra_tags=frozenset({f"course:{course.name}", "horizontal"}),
-                )
-            )
-
-        if opts.verticals_every_bays > 0 and i % opts.verticals_every_bays == 0:
-            # A mid-bay stud would land across an opening; keep to the bay edge there.
-            positions = (0.0,) if (opts.corners_only or opening is not None) else (0.0, 0.5)
-            for k, frac in enumerate(positions):
+            for m in members:
                 extra.append(
                     _place_on_face(
-                        opts.vertical_piece, host, face,
-                        z_cm=0.0, run0_frac=frac,
-                        suffix=f"stud{k}",
-                        extra_tags=frozenset({"vertical"}),
+                        course.piece, m, face,
+                        z_cm=z,
+                        suffix="course_" + course.name,
+                        extra_tags=frozenset(
+                            {"course:" + course.name, "horizontal", "run"}
+                        ),
                     )
                 )
 
-        if opts.braces and opening is None:
-            # Braces cross a whole panel diagonally, so they cannot share a bay with an
-            # opening at all.
-            extra.append(
-                _place_on_face(
-                    opts.brace_piece, host, face,
-                    z_cm=0.0,
-                    suffix="brace",
-                    extra_tags=frozenset({"diagonal"}),
+        # Vertical members belong at CORNERS and junctions - the ends of the run - not on
+        # an arbitrary every-N-bays rhythm that lands mid-wall next to nothing.
+        if opts.verticals_every_bays > 0 and members:
+            picked = [members[0], members[-1]]
+            if not opts.corners_only:
+                for idx in range(
+                    opts.verticals_every_bays,
+                    max(1, len(members) - 1),
+                    opts.verticals_every_bays,
+                ):
+                    m = members[idx]
+                    if getattr(catalog.get(m.asset_id), "aperture", None) is None:
+                        picked.append(m)
+            seen_ids: Set[str] = set()
+            for m in picked:
+                if m.piece_id in seen_ids:
+                    continue
+                seen_ids.add(m.piece_id)
+                extra.append(
+                    _place_on_face(
+                        opts.vertical_piece, m, face,
+                        z_cm=0.0,
+                        suffix="stud",
+                        extra_tags=frozenset({"vertical", "corner"}),
+                    )
                 )
-            )
+
+        if opts.braces:
+            for m in members:
+                if getattr(catalog.get(m.asset_id), "aperture", None) is not None:
+                    continue  # a brace crosses the whole panel; it cannot share a bay
+                extra.append(
+                    _place_on_face(
+                        opts.brace_piece, m, face,
+                        z_cm=0.0,
+                        suffix="brace",
+                        extra_tags=frozenset({"diagonal"}),
+                    )
+                )
 
         if opts.coping:
             over = WALL_T_CM * 0.15
-            cap = _place_on_face(
-                opts.coping_piece, host, face,
-                z_cm=_aabb(host)[1][2] - _aabb(host)[0][2],
-                suffix="coping",
-                extra_tags=frozenset({"coping"}),
-            )
-            # Coping sits ON the wall head and oversails BOTH faces, so pull it back by
-            # the overhang rather than standing it proud like a course.
-            ox, oy, oz = cap.offset_cm
-            if face in ("south", "north"):
-                oy = oy + (over if face == "south" else -over)
-            else:
-                ox = ox + (over if face == "west" else -over)
-            extra.append(
-                SolidPlacement(
-                    piece_id=cap.piece_id, asset_id=cap.asset_id, kind=cap.kind,
-                    cell=cap.cell, level=cap.level, yaw=cap.yaw,
-                    offset_cm=(ox, oy, oz), size_cm=cap.size_cm,
-                    rotates_about_center=cap.rotates_about_center, tags=cap.tags,
+            for m in members:
+                cap = _place_on_face(
+                    opts.coping_piece, m, face,
+                    z_cm=_aabb(m)[1][2] - _aabb(m)[0][2],
+                    suffix="coping",
+                    extra_tags=frozenset({"coping"}),
                 )
-            )
+                ox, oy, oz = cap.offset_cm
+                if face in ("south", "north"):
+                    oy = oy + (over if face == "south" else -over)
+                else:
+                    ox = ox + (over if face == "west" else -over)
+                extra.append(
+                    SolidPlacement(
+                        piece_id=cap.piece_id, asset_id=cap.asset_id, kind=cap.kind,
+                        cell=cap.cell, level=cap.level, yaw=cap.yaw,
+                        offset_cm=(ox, oy, oz), size_cm=cap.size_cm,
+                        rotates_about_center=cap.rotates_about_center, tags=cap.tags,
+                    )
+                )
 
     extra.sort(key=lambda p: (p.level, p.cell, p.asset_id, p.piece_id))
     out = Assembly(

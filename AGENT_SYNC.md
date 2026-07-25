@@ -192,14 +192,14 @@ Suite at close: 405 passed, 1 failed (@TOWER_ATTACH above). Renders: Saved/Scree
 
 >>> DONE @RM_ENTRANCE_ADV — Phase 1.5 no_bare_aperture. existence.check_no_bare_aperture_holes (critical) for door apertures + balcony_door + entrance_role_*; EntranceSpec leaf contract docstring; test_entrances.py 10 passed; m1/m8 validate bare=[]. Gaps: 1.3 ensembles, 1.4 aperture_alignment. Did not demote any critical checks.
 
-2026-07-25 � @VAL_SUITE
->>> DONE @VAL_SUITE � Registered light_anchor end-to-end (measure/catalog/build_mesh/island exempt/manifest NoCollision + light_anchors block); DOUBLE_VOID hall sconces/chandeliers; style_pack cycle raises + critical schema/extends rejection; PRIMITIVE_MEASUREMENTS regen; ledger E-3/E-4. Owned tests green (style_pack + light_anchors + measurement doc). Remaining suite red: room_spec DOUBLE_VOID (VAL_ROOMS), showcase/variation bare-aperture (VAL_APERTURE / RM_ENTRANCE), magic_number in test_entrances.py.
+2026-07-25 � @VAL_SUITE
+>>> DONE @VAL_SUITE � Registered light_anchor end-to-end (measure/catalog/build_mesh/island exempt/manifest NoCollision + light_anchors block); DOUBLE_VOID hall sconces/chandeliers; style_pack cycle raises + critical schema/extends rejection; PRIMITIVE_MEASUREMENTS regen; ledger E-3/E-4. Owned tests green (style_pack + light_anchors + measurement doc). Remaining suite red: room_spec DOUBLE_VOID (VAL_ROOMS), showcase/variation bare-aperture (VAL_APERTURE / RM_ENTRANCE), magic_number in test_entrances.py.
 
 >>> DONE @VAL_APERTURE — Phase 0.5 green: aperture_reachability + storey_egress GROUND/VOLUME stay CRITICAL. Fixes: variation balcony landing set (gallery doors no longer demoted) + aperture sync after door moves (no_bare_aperture) + skip drum tower_win blanking; assemble upper glazing always south-face exterior (not copied plan bays / not west-edge inner walls); compound balcony doors only on deck-adjacent bays; property factory windows_per_bay>=1 for multi-storey. Tests: test_aperture_reachability_critical.py 5 passed; random 100 VOLUME/reach critical empty; compound+vary keeps 8 gallery doors. Honest gap: library_tower headroom vs drum windows is pre-vary (tower/headroom lane), not demoted.
 
-2026-07-25 � @VAL_ROOMS
->>> TRIGGER @VAL_ROOMS � Fix room_spec/DOUBLE_VOID consistency (school great_hall). Own: pae/plan.py double-height carve only, pae/validate.py _check_room_specs only, test_rooms_double_height.py, school room_spec asserts if needed. Do NOT touch aperture_reachability/storey_egress/style_pack/anchors/gallery.
->>> DONE @VAL_ROOMS � room_spec/DOUBLE_VOID: _cell_role_is value-compare (fixes reload_pae stale CellRole flake after openings_proof); plan double_height carve fail-closed + gallery fallback; tests in test_rooms_double_height.py + school assert; ledger D-17. School+double-height green; suite room_spec criticals=0.
+2026-07-25 � @VAL_ROOMS
+>>> TRIGGER @VAL_ROOMS � Fix room_spec/DOUBLE_VOID consistency (school great_hall). Own: pae/plan.py double-height carve only, pae/validate.py _check_room_specs only, test_rooms_double_height.py, school room_spec asserts if needed. Do NOT touch aperture_reachability/storey_egress/style_pack/anchors/gallery.
+>>> DONE @VAL_ROOMS � room_spec/DOUBLE_VOID: _cell_role_is value-compare (fixes reload_pae stale CellRole flake after openings_proof); plan double_height carve fail-closed + gallery fallback; tests in test_rooms_double_height.py + school assert; ledger D-17. School+double-height green; suite room_spec criticals=0.
 
 2026-07-25 — Master: VALIDATION+ROADMAP WAVE2 (parallel, no wait). Suite after WAVE1: 541 pass / 13 fail. room_spec green. Spawn: @VAL_TOWER_FIX @VAL_STYLE_LIGHTS @VAL_BANDING @RM_M9_ENSEMBLE @RM_ALIGN_1_4 @RM_ROOMS_CORRIDOR @DOCS_SYNC.
 >>> TRIGGER @VAL_TOWER_FIX — Fix tower_win collateral (yaw/headroom/interpenetration/roof_penetration). Owns assemble tower windows + designed-pair if needed. Do NOT demote checks.
@@ -212,3 +212,51 @@ Suite at close: 405 passed, 1 failed (@TOWER_ATTACH above). Renders: Saved/Scree
 
 2026-07-25 — @DOCS_SYNC (roadmap-completion swarm close-out)
 >>> DONE @DOCS_SYNC — Roadmap + ledger synced for swarm-closed Phase 0 / structure / roof greybox items. **CASTLE_SCHOOL_ROADMAP:** 0.5 aperture_reachability/storey_egress critical; 0.6 tower windows; 1.5 no_bare_aperture; 3.1 spiral (`stair_kind=spiral`); 4.1–4.2 curtain/gatehouse greybox; 4.7 partial (drum windows from 0.6); Phase 6 aperture row struck. **Not marked done:** 1.3 ensembles, 1.4 alignment, 2.x rooms/corridors. **STYLE_AND_DETAIL_ROADMAP:** S-011 steep pitch + StylePack `RoofHints`/`resolve_roof_pitch`; S-012 hip; S-019 valley stub. **DEFECT_LEDGER:** D-6 closed (@VAL_APERTURE evidence). **WAVE1 closed:** RM_P0_5/VAL_APERTURE, RM_TOWER_WIN, RM_ENTRANCE_ADV, RM_SPIRAL_POLISH, RM_CASTLE_POLISH, RM_ROOF_ADV, RM_STYLE_ADV, VAL_ROOMS (room_spec only). **WAVE2 in flight:** VAL_TOWER_FIX, VAL_STYLE_LIGHTS, VAL_BANDING, RM_M9_ENSEMBLE (1.3), RM_ALIGN_1_4 (1.4), RM_ROOMS_CORRIDOR (2.3).
+
+2026-07-25 — Claude: USER-REPORTED DEFECTS FROM RENDERS. Checks + failing tests added so
+these are visible in CI. **Do not weaken the tests to get green — fix the placement.**
+
+>>> TRIGGER @STAIR_SPIRAL_FIX — `m_spiral_tower_spec` places FOUR `stair_spiral_quarter`
+    at yaw 0/90/180/270 on the SAME cells (-2,0) and (-1,0), and all four sit OUTSIDE the
+    wall envelope. Same class as the old tower-arc scatter: quarters must share a centre
+    and STACK vertically to form a helix, not sit on top of each other. User: "single piece
+    staircases outside that should be inside ... 2 different facing staircases for the same
+    spot". Failing: test_stair_integrity.py::test_no_two_stairs_occupy_the_same_cell and
+    ::test_stairs_are_inside_the_building. Owns: spiral placement in solver/plan/assemble.
+
+>>> TRIGGER @STAIR_LANDING — NEW CHECK `stair_landing_clearance` finds **29 stairs running
+    into walls** across every showcase building and every milestone fixture (m2, m3, m8,
+    school, spiral). `stair_exit_clearance` only ever checked the void ABOVE a flight, so a
+    stair could have clear headroom and still dead-end into masonry at the bottom tread or
+    top landing. User: "still have staircases that start or end into walls!!!!". Currently
+    WARNING for one milestone (roadmap 0.5) — promote to critical once fixtures are fixed.
+    Failing: test_stair_integrity.py::test_stairs_do_not_run_into_walls. Owns: stair
+    placement in solver — put the run against an interior wall with a clear landing cell at
+    both ends, or add a landing.
+
+>>> DONE @BANDING_RUNS — Banding was placing a course PER BAY and skipping bays containing
+    openings, producing disconnected strips that start and stop at nothing. User: "just
+    being randomly thrown on any wall ... you just get random strips not at edges or
+    connections". Now grouped by ELEVATION: one continuous run at a single height chosen to
+    clear every opening on that elevation (`_clear_course_height` moves the run below the
+    sills or above the heads); if no height clears them all the course is dropped for the
+    whole elevation, never left partial. Verticals now go at CORNERS and junctions (run
+    ends) rather than an arbitrary every-N-bays rhythm. Braces skip bays with openings.
+
+>>> NOTE @LIGHT_ANCHORS — `light_anchor` kind is HALF-REGISTERED: it is in the catalog with
+    no `measure.py` branch, so `footprint_contract_errors` returns "unknown kind
+    'light_anchor'" and those pieces are validated by NOTHING. See VALIDATION_HANDBOOK §3
+    completeness checklist — every kind needs a footprint rule.
+
+>>> NOTE @MAGIC_NUMBERS — CI grep failing: `pae/primitives/anchors.py:18` hard-codes 350.0,
+    `pae/style_pack.py:83` hard-codes 30.0, and test_aperture_reachability_critical.py
+    hard-codes 30.0. Handbook rule 5.5 — import from pae.contract.
+
+>>> NOTE @TEST_POLLUTION — test_style_pack, test_light_anchors and test_school_academy all
+    PASS in isolation and FAIL in the full run. Shared mutable state between test modules
+    (style registry or asset DB cache). Worth fixing early.
+
+>>> NOTE @APERTURE_FALSE_POSITIVE — `aperture_reachability` (mine) false-positives on the
+    compound's own balcony doors: it computes "interior" from ALL floor placements, which
+    includes balcony decks, so a door onto a balcony reads as opening onto nothing. Mine to
+    fix; flagging so @RM_P0_5 does not chase it.
