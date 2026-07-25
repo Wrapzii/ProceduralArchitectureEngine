@@ -2,7 +2,19 @@
 
 Project root: `C:\Users\WhiteWidow\Documents\GitHub\ProceduralArchitectureEngine`
 
-**Read `Docs/PROCEDURAL_ARCHITECTURE_ENGINE.md` before coding. Do not redesign â€” implement.**
+**Read before coding â€” in this order:**
+
+| Doc | When |
+|---|---|
+| `Docs/PROCEDURAL_ARCHITECTURE_ENGINE.md` | Always. The spec. Do not redesign â€” implement. |
+| `Docs/VALIDATION_HANDBOOK.md` | **Before adding any piece, placement rule or check.** The seven questions, the nine defect classes, tolerance rules, the five standing rules. |
+| `Docs/CHANGE_PROTOCOL.md` | **Before your first commit.** Commit format, sync-board etiquette, which docs to update, red-suite handling, close-out. |
+| `Docs/DEFECT_LEDGER.md` | When you hit a weird symptom â€” it is probably in here already. Append every new bug. |
+| `Docs/CASTLE_SCHOOL_ROADMAP.md` | Picking up new work. Open defects are Phase 0. |
+
+**Three rules that cause most breakage here:** never `git add -A` in this shared tree;
+never reason from `p.cell` (use `covered_cells`); never hand-roll a placement offset (use
+`pae/boundary.py`).
 
 ## Ownership (do not edit another WP's files without ACK)
 
@@ -64,33 +76,33 @@ Project root: `C:\Users\WhiteWidow\Documents\GitHub\ProceduralArchitectureEngine
 >>> DONE @APERTURE_GAPS â€” m1 warns 3â†’0, m2 7â†’0, m3 9â†’0 (incl. interpenetration 1â†’0), m4_l 3â†’0; critical=[] all milestones. Root fixes: `assemble.py` perimeter wall_runs classify by piece_id face (not cell bucket â€” killed 340 cm false collinear_gap); skip redundant inner walls on perpendicular perimeter corners (tower T-junction); BFS door interior/exterior cell resolve through WALL_LINE corners + tower attach. `validate.py` exterior door side accepts EXTERIOR/COURTYARD/out-of-grid/DOOR threshold. `broken_all_defects` door_bad_exit exteriorâ†’interior cell (still aperture_sanity). Tests: `test_m1_m4_m3_aperture_gap_warnings_zero`, `test_m3_interpenetration_zero`. Suite: 241 passed.
 >>> DONE @EXPORT_ALL â€” `tools/export_manifest.py` (`--milestone m1|m2|m3|m4_l|m4_u|m4_c` â†’ `Saved/exports/{milestone}_manifest.json`, fail-closed on critical); `export_m1_manifest.py` thin wrapper; `ue_manifest_dry_run.py` `--milestone` + generalized auto-export; `test_export_manifest_cli.py` (per-milestone export + m1/m3 dry-run integration); full pytest green.
 ```
->>> DONE @GALLERY_CAM_FIX — Collection unlink used Object.users_collection by mistake; parent scan via scene+data children. Gallery rebuild ok (m1=39 m2=55 m3=104 m4_l=102).
+>>> DONE @GALLERY_CAM_FIX ï¿½ Collection unlink used Object.users_collection by mistake; parent scan via scene+data children. Gallery rebuild ok (m1=39 m2=55 m3=104 m4_l=102).
 
->>> DONE @GALLERY_FRAME — depsgraph update before bounds; hide sibling collections per-milestone; fixed tiny/empty PNGs.
+>>> DONE @GALLERY_FRAME ï¿½ depsgraph update before bounds; hide sibling collections per-milestone; fixed tiny/empty PNGs.
 
->>> DONE @TOWER_VISUAL — Real tower meshes: `annulus_quarter_verts` axis snap + 96-seg seams; `annulus_battlement_ring_verts` centred crown; `cone_verts` centred cap (removed proto `obj.location` hack lost on instance). `test_tower_mesh.py` (vert counts, seam continuity, AABB, crown/cap Z stack). Assemble stacking unchanged (crown_z=STOREY_CM on top level correct). Suite: +6 tower tests; 250 passed / 3 pre-existing fails (m1 golden hash, pitched roof floater).
+>>> DONE @TOWER_VISUAL ï¿½ Real tower meshes: `annulus_quarter_verts` axis snap + 96-seg seams; `annulus_battlement_ring_verts` centred crown; `cone_verts` centred cap (removed proto `obj.location` hack lost on instance). `test_tower_mesh.py` (vert counts, seam continuity, AABB, crown/cap Z stack). Assemble stacking unchanged (crown_z=STOREY_CM on top level correct). Suite: +6 tower tests; 250 passed / 3 pre-existing fails (m1 golden hash, pitched roof floater).
 
 >>> DONE @M1_VISUAL - Corner opening ownership (_primary_opening_face): SW door south-only, NW window west-only. placement_instance_scale_cm non-uniform XY for spanning roof_flat (fixes recessed roof ledge). Measured wall/roof outer flush delta=0 cm all faces. Tests + golden hash updated.
 
->>> DONE @ROOF_VISUAL ? Pitched roof gable fix: `_place_pitched_roof` places 2 end-cap `roof_gable_infill` prisms (ridge-end X or Y) spanning full cross-span; slope wedges on every cross row/column spanning full ridge length (not sawtooth along eaves). m3 4×3: gables 8?2, slopes 1?3; validate critical=[]; `_designed_roof_gable_slope_pair` exempts end-cap AABB overlap. Restored `test_m3_tower_arcs_same_cell` def. Suite: 253 passed.
+>>> DONE @ROOF_VISUAL ? Pitched roof gable fix: `_place_pitched_roof` places 2 end-cap `roof_gable_infill` prisms (ridge-end X or Y) spanning full cross-span; slope wedges on every cross row/column spanning full ridge length (not sawtooth along eaves). m3 4ï¿½3: gables 8?2, slopes 1?3; validate critical=[]; `_designed_roof_gable_slope_pair` exempts end-cap AABB overlap. Restored `test_m3_tower_arcs_same_cell` def. Suite: 253 passed.
 
->>> DONE @ROOF_AFRAME — single double-pitch span + end gables facing ±X; Proto mesh refresh (crown 576 / cap 97 verts). M3 gallery reads as gabled hall + cone tower. Suite 253.
+>>> DONE @ROOF_AFRAME ï¿½ single double-pitch span + end gables facing ï¿½X; Proto mesh refresh (crown 576 / cap 97 verts). M3 gallery reads as gabled hall + cone tower. Suite 253.
 
->>> DONE @TOWER_OUTSIDE — `_tower_drum_xy_offset_cm` pushes 2×MODULE annulus outward along abutment normal (west m3: centre (-800,200) vs old (-400,0); drum east edge -400 kisses hall west at 0). Same-cell 4-quarter rule intact; crown/cap share offset + 0.5 cm Z gap. Tests: `test_m3_tower_drum_outside_hall_footprint`. Suite: 254 passed.
+>>> DONE @TOWER_OUTSIDE ï¿½ `_tower_drum_xy_offset_cm` pushes 2ï¿½MODULE annulus outward along abutment normal (west m3: centre (-800,200) vs old (-400,0); drum east edge -400 kisses hall west at 0). Same-cell 4-quarter rule intact; crown/cap share offset + 0.5 cm Z gap. Tests: `test_m3_tower_drum_outside_hall_footprint`. Suite: 254 passed.
 
->>> DONE @M2_STAIR_VIS — `stair_straight`: 20 stepped tread/riser boxes (`straight_stair_verts_faces`, 17.5 cm × 40 cm); `floor_hole`: full-bay void (10 cm rim, 380×380 opening) via perimeter frame mesh; descriptor sizes unchanged; `test_stair_floor_mesh.py` (step count + hole AABB/void); M2 pipeline + validate polish green.
->>> DONE @M6_HANDOFF — `tools/ue_spawn_table.py` (`--milestone` ? `Saved/exports/{milestone}_spawn_table.json`, optional `--csv`; rows: asset_id/loc_cm/yaw/piece_id; validation+dry-run gate); `pae/tests/unit/test_ue_spawn_table.py`; `Docs/UE_MANIFEST_CONSUMER.md` spawn-table + UE Editor Python pseudocode.
+>>> DONE @M2_STAIR_VIS ï¿½ `stair_straight`: 20 stepped tread/riser boxes (`straight_stair_verts_faces`, 17.5 cm ï¿½ 40 cm); `floor_hole`: full-bay void (10 cm rim, 380ï¿½380 opening) via perimeter frame mesh; descriptor sizes unchanged; `test_stair_floor_mesh.py` (step count + hole AABB/void); M2 pipeline + validate polish green.
+>>> DONE @M6_HANDOFF ï¿½ `tools/ue_spawn_table.py` (`--milestone` ? `Saved/exports/{milestone}_spawn_table.json`, optional `--csv`; rows: asset_id/loc_cm/yaw/piece_id; validation+dry-run gate); `pae/tests/unit/test_ue_spawn_table.py`; `Docs/UE_MANIFEST_CONSUMER.md` spawn-table + UE Editor Python pseudocode.
 
->>> DONE @M4_GALLERY — Gallery extended m4_u + m4_c (`PAE_M4_U`, `PAE_M4_C`); factories `m4_u_plan_spec`, `m4_courtyard_spec`; per-milestone `gallery_m4_u.png` / `gallery_m4_c.png`; headless test asserts courtyard has 4 wing roofs and none cover court cell (3,3). Suite: test_blender_build green.
+>>> DONE @M4_GALLERY ï¿½ Gallery extended m4_u + m4_c (`PAE_M4_U`, `PAE_M4_C`); factories `m4_u_plan_spec`, `m4_courtyard_spec`; per-milestone `gallery_m4_u.png` / `gallery_m4_c.png`; headless test asserts courtyard has 4 wing roofs and none cover court cell (3,3). Suite: test_blender_build green.
 
->>> DONE @M5_DEMO — M5 e2e demo: `pae/tests/fixtures/m5_demo_crate.obj` (50×50×80 cm) + `pae/assets/obj_measure.py` + `pae/assets/demo_seed.py`; `tools/m5_demo_seed_db.py` seeds `Saved/demo/m5_assets.db` and runs `run_through_decorate(m1_box_house_spec())` (39?40 placements, 1 prop); `test_m5_demo_fixture` proves count increase + validate ok. Suite: 265 passed.
+>>> DONE @M5_DEMO ï¿½ M5 e2e demo: `pae/tests/fixtures/m5_demo_crate.obj` (50ï¿½50ï¿½80 cm) + `pae/assets/obj_measure.py` + `pae/assets/demo_seed.py`; `tools/m5_demo_seed_db.py` seeds `Saved/demo/m5_assets.db` and runs `run_through_decorate(m1_box_house_spec())` (39?40 placements, 1 prop); `test_m5_demo_fixture` proves count increase + validate ok. Suite: 265 passed.
 
->>> DONE @DOOR_BOOL — Wall door/window mesh: bmesh frame (sill/lintel/jambs) via `build_box_with_rect_aperture_along_x` ? no boolean corner voids. Descriptor fractions unchanged (_DOOR_W=0.40, _WINDOW_* contract-relative); cutter pad 25% WALL_T each face + 0.5 cm Y/Z for boolean fallback (`apply_aperture_boolean_cut`, EXACT/MANIFOLD). Tests: `test_wall_apertures.py` (9). Suite: 279 passed / 1 pre-existing fail (`test_stair_floor_mesh` tread nose count).
+>>> DONE @DOOR_BOOL ï¿½ Wall door/window mesh: bmesh frame (sill/lintel/jambs) via `build_box_with_rect_aperture_along_x` ? no boolean corner voids. Descriptor fractions unchanged (_DOOR_W=0.40, _WINDOW_* contract-relative); cutter pad 25% WALL_T each face + 0.5 cm Y/Z for boolean fallback (`apply_aperture_boolean_cut`, EXACT/MANIFOLD). Tests: `test_wall_apertures.py` (9). Suite: 279 passed / 1 pre-existing fail (`test_stair_floor_mesh` tread nose count).
 
->>> DONE @TOWER_LOOK — Tower mesh polish: `TOWER_ARC_SEGMENTS_FULL=128`; arc quarters open horizontal caps + true vertical cylinder columns (132/66 verts); crown = parapet drum ring + discrete merlon wedges (544/408, was 576/384 wavy ring); cap cone 128-seg (129/128). `rotates_about_center` / size_cm / aabb contracts intact. Tests: +3 tower mesh. Suite: 283 passed.
+>>> DONE @TOWER_LOOK ï¿½ Tower mesh polish: `TOWER_ARC_SEGMENTS_FULL=128`; arc quarters open horizontal caps + true vertical cylinder columns (132/66 verts); crown = parapet drum ring + discrete merlon wedges (544/408, was 576/384 wavy ring); cap cone 128-seg (129/128). `rotates_about_center` / size_cm / aabb contracts intact. Tests: +3 tower mesh. Suite: 283 passed.
 
 
-2026-07-24 — Master: Wave H VISUAL/PRODUCT swarm dispatched (DOOR_BOOL, TOWER_LOOK, M2_STAIR_VIS, M4_GALLERY, M5_DEMO, M6_HANDOFF).
+2026-07-24 ï¿½ Master: Wave H VISUAL/PRODUCT swarm dispatched (DOOR_BOOL, TOWER_LOOK, M2_STAIR_VIS, M4_GALLERY, M5_DEMO, M6_HANDOFF).
 
 
 2026-07-24 â€” Master: Wave I swarm (Composer 2.5) â€” aperture facing, eaves, materials, floaters, stair prove, UE bind note.
@@ -99,19 +111,19 @@ Project root: `C:\Users\WhiteWidow\Documents\GitHub\ProceduralArchitectureEngine
 >>> TRIGGER @EAVES â€” Small roof overhang past walls (flat + pitched) so roofs read as roofs. Own roofs.py + assemble roof size/offset.
 >>> DONE @EAVES â€” `EAVE_OVERHANG_CM = WALL_T_CM * 0.5` (30 cm); flat + pitched roofs grow/offset via roof span helpers; per-wing interior seams zero overhang. m1/m3/m4 validate ok. Suite: 304 passed.
 >>> TRIGGER @MAT_READ â€” Distinct Blender materials per kind (wall/roof/floor/tower/stair) for gallery readability. Own blender_build.py materials only.
->>> DONE @MAT_READ — KIND_MATERIAL_COLORS + material_color_for_kind() in pae/blender_build.py; distinct workbench hues for wall/floor/ground/roof/stair/tower_arc/tower_crown/tower_cap/door/window (+ prop/plinth/hole fallbacks); _ensure_material updates existing mats on re-run. Tests: test_kind_material_colors_* in test_blender_build.py.
+>>> DONE @MAT_READ ï¿½ KIND_MATERIAL_COLORS + material_color_for_kind() in pae/blender_build.py; distinct workbench hues for wall/floor/ground/roof/stair/tower_arc/tower_crown/tower_cap/door/window (+ prop/plinth/hole fallbacks); _ensure_material updates existing mats on re-run. Tests: test_kind_material_colors_* in test_blender_build.py.
 >>> TRIGGER @FLOATER_KILL â€” Find/remove stray disconnected slabs in m3 gallery (left block). Own assemble ground/tower plinth or blender clear.
 >>> DONE @FLOATER_KILL - Orphan ground_plinth + L0 floor at tower cell (-1,0) after drum XY offset (slab x in [-400,0] vs drum x in [-1000,-600]). Fix: skip _tower_cells in ground + L0 floor loops. Test: test_m3_no_disconnected_ground_plinth_far_from_hall_tower_union.
 >>> TRIGGER @STAIR_PROVE â€” Gallery/live shot proves stepped stair + hole visible (dedicated Cam or forced m2 interior frame). Own blender_build.py screenshot helpers.
->>> DONE @STAIR_PROVE — build_m2_stair_proof() -> Saved/Screenshots/m2_stair_proof.png; deterministic camera from stair+floor_hole AABB; hides roof_flat + upper floor deck; tools/pae_build_in_blender.py --stair-proof; optional build_gallery(stair_proof=True); headless tests in test_blender_build.py.
+>>> DONE @STAIR_PROVE ï¿½ build_m2_stair_proof() -> Saved/Screenshots/m2_stair_proof.png; deterministic camera from stair+floor_hole AABB; hides roof_flat + upper floor deck; tools/pae_build_in_blender.py --stair-proof; optional build_gallery(stair_proof=True); headless tests in test_blender_build.py.
 >>> TRIGGER @UE_BIND â€” Doc + tool mapping spawn_table asset_id to Content path stub for RE. Own Docs + tools only.
->>> DONE @UE_BIND — `tools/ue_asset_bind_table.py` (`--milestone` ? `Saved/exports/{milestone}_asset_bind.json`; `pae.asset_bind/1`: asset_id/suggested_content_path/lod0/collision_profile stubs under `/Game/RE/PAE/...`; optional spawn-table id source); `pae/tests/unit/test_ue_asset_bind_table.py`; `Docs/UE_MANIFEST_CONSUMER.md` bind + UE fill section.
+>>> DONE @UE_BIND ï¿½ `tools/ue_asset_bind_table.py` (`--milestone` ? `Saved/exports/{milestone}_asset_bind.json`; `pae.asset_bind/1`: asset_id/suggested_content_path/lod0/collision_profile stubs under `/Game/RE/PAE/...`; optional spawn-table id source); `pae/tests/unit/test_ue_asset_bind_table.py`; `Docs/UE_MANIFEST_CONSUMER.md` bind + UE fill section.
 
 2026-07-24 â€” Master: Wave J swarm â€” stair isolate, mat tint by asset, wall thickness read, opening prove shot, ground skirt.
 >>> TRIGGER @STAIR_ISO â€” Hide ALL non stair/floor_hole in stair proof (walls/ground too). Own blender_build.py only.
->>> DONE @STAIR_ISO — is_stair_proof_visible_asset() allow-list; _apply_stair_proof_visibility hides viewport+render on every mesh except stair/floor_hole/hole tokens; _hide_non_stair_proof_collections excludes other PAE collections; camera still framed on stair+hole AABB; tests in test_blender_build.py.
+>>> DONE @STAIR_ISO ï¿½ is_stair_proof_visible_asset() allow-list; _apply_stair_proof_visibility hides viewport+render on every mesh except stair/floor_hole/hole tokens; _hide_non_stair_proof_collections excludes other PAE collections; camera still framed on stair+hole AABB; tests in test_blender_build.py.
 >>> TRIGGER @MAT_TINT â€” Tint door/window by asset_id not just kind=wall. Own blender_build.py materials.
->>> DONE @MAT_TINT — ASSET_MATERIAL_COLORS + material_key_for_placement() / material_color_for_placement(); instance_assembly + _ensure_material tint by asset_id (wall_door, wall_window, roof_*, tower_*, stair_*, floor_hole); higher-contrast workbench hues. Tests: test_material_key_for_placement_*, test_asset_material_colors_* in test_blender_build.py.
+>>> DONE @MAT_TINT ï¿½ ASSET_MATERIAL_COLORS + material_key_for_placement() / material_color_for_placement(); instance_assembly + _ensure_material tint by asset_id (wall_door, wall_window, roof_*, tower_*, stair_*, floor_hole); higher-contrast workbench hues. Tests: test_material_key_for_placement_*, test_asset_material_colors_* in test_blender_build.py.
 >>> TRIGGER @OPEN_PROVE â€” Dedicated m1_openings_proof.png camera on door+windows exterior. Own blender_build.py.
 >>> DONE @OPEN_PROVE â€” build_m1_openings_proof() -> Saved/Screenshots/m1_openings_proof.png; SE-elevated ortho on south/west shell AABB; hides north/east walls + roof/floor; tools/pae_build_in_blender.py --openings-proof; headless tests in test_blender_build.py.
 >>> TRIGGER @WALL_READ â€” Ensure wall thickness WALL_T reads in gallery (not paper-thin illusion). Own walls size/assemble if needed.
@@ -121,8 +133,17 @@ Project root: `C:\Users\WhiteWidow\Documents\GitHub\ProceduralArchitectureEngine
 >>> TRIGGER @STAIR_CAM ? Perpendicular stair proof camera (not along tread run); Workbench MATERIAL proof colors.
 >>> DONE @STAIR_CAM ? stair_proof_camera_direction_from_bounds_m (longer X ? offset Y, longer Y ? offset X, elevated); stair_proof_ortho_scale_from_bounds_m tight on visible face; GALLERY_SUN_ENERGY 4.5; write_screenshot uses configure_workbench_screenshot_scene MATERIAL. Tests: test_stair_proof_camera_offset_* + test_m2_stair_proof_camera_perpendicular_to_y_run.
 
-2026-07-24 — Stair exit clearance (fail-closed).
->>> DONE @STAIR_EXIT — validate stair_exit_clearance: missing floor_hole / solid pad / wall|roof in head clearance = critical. Spanning upper deck mesh punches VOID holes (slab_with_rect_holes). Open-stair tops use floor_hole rim + deck tiles (no solid plug). Proof: Saved/Screenshots/open_stair_roof_hole_proof.png + m2_stair_proof.png. Tests: test_stair_exit_clearance.py; suite stair-related green.
+2026-07-24 ï¿½ Stair exit clearance (fail-closed).
+>>> DONE @STAIR_EXIT ï¿½ validate stair_exit_clearance: missing floor_hole / solid pad / wall|roof in head clearance = critical. Spanning upper deck mesh punches VOID holes (slab_with_rect_holes). Open-stair tops use floor_hole rim + deck tiles (no solid plug). Proof: Saved/Screenshots/open_stair_roof_hole_proof.png + m2_stair_proof.png. Tests: test_stair_exit_clearance.py; suite stair-related green.
 
-2026-07-24 — Stair styles + school readiness audit.
->>> DONE @STAIR_STYLES — Kit: stair_half, stair_landing, stair_switchback (2x2 dog-leg), stair_wide (2x2 monumental); helical spiral wedges replace annulus proxy. Showcase A–E + open_stairs_showcase.png. Docs/SCHOOL_READINESS.md honest gap list. Assemble honors stair_kind switchback|wide. Tests: test_stair_styles.py green.
+2026-07-24 ï¿½ Stair styles + school readiness audit.
+>>> DONE @STAIR_STYLES ï¿½ Kit: stair_half, stair_landing, stair_switchback (2x2 dog-leg), stair_wide (2x2 monumental); helical spiral wedges replace annulus proxy. Showcase Aï¿½E + open_stairs_showcase.png. Docs/SCHOOL_READINESS.md honest gap list. Assemble honors stair_kind switchback|wide. Tests: test_stair_styles.py green.
+
+2026-07-25 â€” Claude (Opus 5) lane: kit expansion, placement wave, verification, docs.
+>>> DONE @KIT â€” Aperture profiles (17 window/door/arch types, curved heads, mullions, transoms) + columns/railings/spires/surfaces families. Kit 17 â†’ 55 pieces. measure.py rules for barrier/column/roofline/surface kinds.
+>>> DONE @PLACEMENT â€” trim.py (railings, buttresses, parapets, dormers, chimneys, spires, colonnades), site.py (multi-building merge, paving, walks, kerbs, lawn, fence/gates), compound.py (4-range quadrangle, per-range trim, BalconySpec), boundary.py (yaw + boundary-line table, single source).
+>>> DONE @VERIFY â€” New checks: `freestanding` (touch-graph islands), `canopy_attachment` (roof must meet envelope, not just posts), `roof_penetration` (WARNING â€” hits on school academy NOT yet triaged, must be promoted or explained). Fixed: covered_cells off-by-one, buttress face derivation, site fence rotation offset, stranded parapets, gallery roof plane, hole railings, support tolerance for thin pieces.
+>>> DONE @DOCS â€” Docs/VALIDATION_HANDBOOK.md, Docs/DEFECT_LEDGER.md, Docs/CHANGE_PROTOCOL.md, Docs/CASTLE_SCHOOL_ROADMAP.md.
+>>> BLOCKED @TOWER_ATTACH â€” `test_random_specs_validate_ok` RED: 26-piece detached tower. TRUE POSITIVE in solver local-repair (nudges overlapping towers toward a wall, never asserts contact). Ledger C-5, roadmap defect 0.1. Owns pae/solver.py â€” NOT claimed by me.
+>>> BLOCKED @STAIR_CELLS â€” `_check_stair_exit_clearance` matches holes by `h.cell`; violates Handbook rule 5.1 and can miss a plugged stair top under a spanning deck. Ledger D-5, roadmap defect 0.2.
+Suite at close: 405 passed, 1 failed (@TOWER_ATTACH above). Renders: Saved/Screenshots/verify_compound_{aerial,quad,balcony,roofflush}.png
