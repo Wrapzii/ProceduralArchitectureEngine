@@ -289,6 +289,8 @@ def _gallery_factories() -> List[Tuple[str, str, Any]]:
         ("m2", "PAE_M2", "m2_two_storey_stair_spec"),
         ("m3", "PAE_M3", "m3_keep_tower_spec"),
         ("m4_l", "PAE_M4_L", "m4_l_plan_spec"),
+        ("m4_u", "PAE_M4_U", "m4_u_plan_spec"),
+        ("m4_c", "PAE_M4_C", "m4_courtyard_spec"),
     ]
     factories: List[Tuple[str, str, Any]] = []
     for label, coll_name, attr in entries:
@@ -717,7 +719,7 @@ def build_gallery(
 ) -> Dict[str, Any]:
     """Build M1–M4 into side-by-side collections under ``PAE_Gallery``.
 
-    Each milestone gets its own child collection (``PAE_M1`` … ``PAE_M4_L``),
+    Each milestone gets its own child collection (``PAE_M1`` … ``PAE_M4_C``),
     offset along +X by prior footprint width + *gap_m* metres.
     """
     reloaded = reload_pae()

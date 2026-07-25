@@ -22,14 +22,21 @@ def test_reload_pae_drops_cached_modules():
     assert "pae.spec" not in sys.modules
 
 
-def test_gallery_factories_include_m1_through_m4_l():
+def test_gallery_factories_include_m1_through_m4_c():
     from pae.blender_build import _gallery_factories
 
     factories = _gallery_factories()
     labels = [lbl for lbl, _coll, _fn in factories]
-    assert labels == ["m1", "m2", "m3", "m4_l"]
+    assert labels == ["m1", "m2", "m3", "m4_l", "m4_u", "m4_c"]
     coll_names = [coll for _lbl, coll, _fn in factories]
-    assert coll_names == ["PAE_M1", "PAE_M2", "PAE_M3", "PAE_M4_L"]
+    assert coll_names == [
+        "PAE_M1",
+        "PAE_M2",
+        "PAE_M3",
+        "PAE_M4_L",
+        "PAE_M4_U",
+        "PAE_M4_C",
+    ]
 
 
 def test_assembly_bounds_cm_positive_extent():
@@ -71,7 +78,7 @@ def test_build_gallery_headless_all_milestones():
     result = build_gallery(write_png=False)
     assert result["ok"] is True
     assert result["mode"] == "gallery"
-    assert len(result["milestones"]) == 4
+    assert len(result["milestones"]) == 6
     for entry in result["milestones"]:
         assert entry["ok"] is True
         assert entry["placements"] > 0
@@ -87,6 +94,49 @@ def test_build_gallery_headless_subset():
     result = build_gallery(write_png=False, milestones=("m1", "m4_l"))
     labels = [m["label"] for m in result["milestones"]]
     assert labels == ["m1", "m4_l"]
+
+
+def test_gallery_m4_courtyard_no_roof_over_court():
+    """Open courtyard gallery milestone: no roof deck spans the court hole."""
+    from pae.blender_build import assemble_and_validate
+    from pae.contract import MODULE_CM, placement_world_aabb
+    from pae.plan import CellRole
+    from pae.pipeline import run_through_assemble
+    from pae.spec import m4_courtyard_spec
+
+    _, floor_plan, assembly, _ = run_through_assemble(m4_courtyard_spec())
+    assembly, report = assemble_and_validate("m4_c", m4_courtyard_spec)
+    assert report.ok is True
+
+    grid = floor_plan.storeys[0]
+    court = {c for c, r in grid.cells.items() if r == CellRole.COURTYARD}
+    assert len(court) > 0
+
+    for p in assembly.placements:
+        if p.kind in ("floor", "roof", "ground"):
+            assert p.cell not in court
+
+    roofs = [p for p in assembly.placements if p.kind == "roof"]
+    assert len(roofs) == 4
+
+    cx, cy = 3, 3
+    wx, wy = cx * MODULE_CM, cy * MODULE_CM
+    for r in roofs:
+        bb_min, bb_max = placement_world_aabb(
+            r.cell[0],
+            r.cell[1],
+            r.level,
+            r.yaw,
+            r.size_cm,
+            r.offset_cm,
+        )
+        covers = (
+            bb_min[0] <= wx
+            and bb_min[1] <= wy
+            and bb_max[0] >= wx + MODULE_CM
+            and bb_max[1] >= wy + MODULE_CM
+        )
+        assert not covers
 
 
 def test_build_live_m1_still_works():
@@ -163,7 +213,7 @@ def test_gallery_headless_offsets_are_monotonic_along_x():
     from pae.blender_build import build_gallery
 
     result = build_gallery(write_png=False)
-    assert len(result["milestones"]) == 4
+    assert len(result["milestones"]) == 6
     # Headless path records extent; blender path records offset_m — check labels order.
     labels = [m["label"] for m in result["milestones"]]
-    assert labels == ["m1", "m2", "m3", "m4_l"]
+    assert labels == ["m1", "m2", "m3", "m4_l", "m4_u", "m4_c"]

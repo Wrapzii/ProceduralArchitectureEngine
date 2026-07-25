@@ -12,7 +12,7 @@ Inside Blender MCP ``execute_blender_code`` directly (preferred for agents)::
         encoding="utf-8",
     ).read())
 
-Gallery (M1–M4 side-by-side)::
+Gallery (M1–M4 L/U/courtyard side-by-side)::
 
     from pae.blender_build import build_gallery
     build_gallery()
@@ -65,7 +65,7 @@ def main() -> None:
     parser.add_argument(
         "--gallery",
         action="store_true",
-        help="Build M1–M4 gallery row (default: live M1/M2/M3 stack)",
+        help="Build M1–M4 L/U/courtyard gallery row (default: live M1/M2/M3 stack)",
     )
     args = parser.parse_args()
 
