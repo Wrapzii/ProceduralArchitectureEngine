@@ -376,7 +376,7 @@ claimed. Numbers are from a measured pass over all 10 showcase builds + school +
 >>> TRIGGER @VAL_TOWER_DOOR — Doorway from hall into spiral tower at ground (and landings). Existence + aperture_reachability must pass. Owns assemble tower door + tests.
 >>> TRIGGER @VAL_TOWER_RAMPART — Tower crown: walkable top + battlement/rampart ring + outward view apertures; railing continuity stub. Owns assemble tower top + validate + tests.
 >>> TRIGGER @VAL_STAIR_TYPOLOGY — Stair kind by building class: house/cottage → compact (stair_straight / half); academy/industrial/castle → wide/switchback/spiral in towers. Spec policy + existence + no buttress-as-stair confusion. Owns spec/variation typology + tests.
->>> DONE @VAL_STAIR_TYPOLOGY — \uilding_class\ + \STAIR_TYPOLOGY_POLICY\; \ary_spec\ continuity-safe stair pick; \stair_typology_match\ (critical house/buttress, warning undersized industrial); handbook §6b + D-22; \	est_stair_typology.py\ 11 pass. Buttresses stay trim.
+>>> DONE @VAL_STAIR_TYPOLOGY — building_class + STAIR_TYPOLOGY_POLICY; vary_spec continuity-safe stair pick; stair_typology_match (critical house/buttress, warning undersized industrial); handbook section 6b + D-22; test_stair_typology.py 11 pass. Buttresses stay trim.
 >>> TRIGGER @VAL_ROOF_CONNECT — Roof variation (flat/hip/pitched/steep) with canopy_attachment / end_connectivity / roof_penetration / watertight stub staying fail-closed. Owns roof assemble + connection checks + tests.
 >>> TRIGGER @VAL_ENG_CONNECT — Engineering continuity pass: wall-to-wall runs, wall-to-roof bearing, tower-to-hall kiss. Strengthen or add connection checks; deliberately broken fixtures first.
 
