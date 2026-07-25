@@ -318,6 +318,7 @@ whole board unreliable. Worth a sweep to close or re-declare them.
 >>> TRIGGER @DOCS_WAVE3 — Mark 1.3/1.4/2.3 DONE in roadmap.
 >>> TRIGGER @RM_PHASE9 — One Phase 9 verified slice.
 >>> TRIGGER @RM_FITOUT — Phase 2.5 fit-out greybox + containment check.
+>>> DONE @RM_FITOUT — Phase 2.5 greybox fit-out: `pae/fitout.py` (bench/table/crate on CLASSROOM + declared-hall ground INTERIOR); `validate._check_fitout_containment`; `pipeline.run_through_decorate` → `fitout_greybox`; `test_fitout.py` 9 passed (3b0438b). Gaps: Comfy AssetDB props still sparse; prop–prop overlap not tuned.
 
 2026-07-25 - @DOCS_WAVE3 (roadmap-completion WAVE3 close-out)
 >>> DONE @DOCS_WAVE3 - **CASTLE_SCHOOL_ROADMAP** synced for WAVE2 landed items (docs only; Phase 9 untouched):
