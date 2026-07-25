@@ -179,6 +179,25 @@ def smooth_shade_curved_faces(obj, *, angle_deg: float = 30.0) -> None:
         mesh.auto_smooth_angle = angle_deg * 3.141592653589793 / 180.0
 
 
+def _snap_axis_xy(x: float, y: float, *, eps: float = 1e-9) -> Tuple[float, float]:
+    """Snap near-axis coordinates so quarter seams meet on cardinal axes."""
+    if abs(x) < eps:
+        x = 0.0
+    if abs(y) < eps:
+        y = 0.0
+    return x, y
+
+
+def mesh_aabb_from_verts(verts: Sequence[Vec3]) -> Tuple[Vec3, Vec3]:
+    """Axis-aligned bounds of *verts* — import-safe (no bpy)."""
+    if not verts:
+        return ((0.0, 0.0, 0.0), (0.0, 0.0, 0.0))
+    xs = [v[0] for v in verts]
+    ys = [v[1] for v in verts]
+    zs = [v[2] for v in verts]
+    return ((min(xs), min(ys), min(zs)), (max(xs), max(ys), max(zs)))
+
+
 def annulus_quarter_verts(
     outer_r: float,
     inner_r: float,
@@ -200,7 +219,8 @@ def annulus_quarter_verts(
         for r in (outer_r, inner_r):
             for i in range(n + 1):
                 t = (i / n) * (math.pi * 0.5)
-                verts.append((r * math.cos(t), r * math.sin(t), z))
+                x, y = _snap_axis_xy(r * math.cos(t), r * math.sin(t))
+                verts.append((x, y, z))
 
     # indexing: 0:bot_outer, 1:bot_inner, 2:top_outer, 3:top_inner — each n+1 verts
     stride = n + 1
@@ -221,6 +241,113 @@ def annulus_quarter_verts(
     # radial end caps at 0° and 90°
     faces.append((idx(0, 0), idx(2, 0), idx(3, 0), idx(1, 0)))
     faces.append((idx(0, n), idx(1, n), idx(3, n), idx(2, n)))
+    return verts, faces
+
+
+def annulus_ring_verts(
+    outer_r: float,
+    inner_r: float,
+    z0: float,
+    z1: float,
+    *,
+    segments_full: int = ARC_SEGMENTS_FULL,
+) -> Tuple[List[Vec3], List[Tuple[int, int, int, int]]]:
+    """Full 360° annulus centred on the origin (tower crown parapet base)."""
+    import math
+
+    n = max(8, segments_full)
+    verts: List[Vec3] = []
+    for z in (z0, z1):
+        for r in (outer_r, inner_r):
+            for i in range(n):
+                t = (i / n) * (2.0 * math.pi)
+                x, y = _snap_axis_xy(r * math.cos(t), r * math.sin(t))
+                verts.append((x, y, z))
+
+    stride = n
+
+    def idx(ring: int, i: int) -> int:
+        return ring * stride + (i % n)
+
+    faces: List[Tuple[int, int, int, int]] = []
+    for i in range(n):
+        i1 = (i + 1) % n
+        faces.append((idx(0, i), idx(0, i1), idx(2, i1), idx(2, i)))
+        faces.append((idx(1, i1), idx(1, i), idx(3, i), idx(3, i1)))
+        faces.append((idx(0, i), idx(1, i), idx(1, i1), idx(0, i1)))
+        faces.append((idx(2, i1), idx(3, i1), idx(3, i), idx(2, i)))
+    return verts, faces
+
+
+def annulus_battlement_ring_verts(
+    outer_r: float,
+    inner_r: float,
+    z0: float,
+    z1: float,
+    *,
+    merlon_count: int = 12,
+    segments_full: int = ARC_SEGMENTS_FULL,
+) -> Tuple[List[Vec3], List[Tuple[int, ...]]]:
+    """Annular parapet with alternating merlons and gaps (centred tower crown)."""
+    import math
+
+    n = max(merlon_count * 4, segments_full)
+    parapet_z = z0 + (z1 - z0) * 0.38
+    verts: List[Vec3] = []
+    # 0 bottom outer, 1 bottom inner, 2 parapet inner, 3 top outer (varying)
+    for z in (z0, z0):
+        for r in (outer_r, inner_r):
+            for i in range(n):
+                t = (i / n) * (2.0 * math.pi)
+                x, y = _snap_axis_xy(r * math.cos(t), r * math.sin(t))
+                verts.append((x, y, z))
+    for i in range(n):
+        t = (i / n) * (2.0 * math.pi)
+        x, y = _snap_axis_xy(inner_r * math.cos(t), inner_r * math.sin(t))
+        verts.append((x, y, parapet_z))
+    for i in range(n):
+        t = (i / n) * (2.0 * math.pi)
+        x, y = _snap_axis_xy(outer_r * math.cos(t), outer_r * math.sin(t))
+        is_merlon = (i * merlon_count) // n % 2 == 0
+        z_top = z1 if is_merlon else parapet_z
+        verts.append((x, y, z_top))
+
+    stride = n
+
+    def idx(ring: int, i: int) -> int:
+        return ring * stride + (i % n)
+
+    faces: List[Tuple[int, ...]] = []
+    for i in range(n):
+        i1 = (i + 1) % n
+        faces.append((idx(0, i), idx(1, i), idx(1, i1), idx(0, i1)))
+        faces.append((idx(1, i), idx(2, i), idx(2, i1), idx(1, i1)))
+        faces.append((idx(0, i), idx(0, i1), idx(3, i1), idx(3, i)))
+        faces.append((idx(3, i), idx(3, i1), idx(2, i1), idx(2, i)))
+    return verts, faces
+
+
+def cone_verts(
+    base_r: float,
+    z0: float,
+    z1: float,
+    *,
+    segments_full: int = ARC_SEGMENTS_FULL,
+) -> Tuple[List[Vec3], List[Tuple[int, ...]]]:
+    """Steep cone (or pyramid if segments_full is small) centred on the origin."""
+    import math
+
+    n = max(8, segments_full)
+    verts: List[Vec3] = [(0.0, 0.0, z1)]
+    apex = 0
+    for i in range(n):
+        t = (i / n) * (2.0 * math.pi)
+        x, y = _snap_axis_xy(base_r * math.cos(t), base_r * math.sin(t))
+        verts.append((x, y, z0))
+    faces: List[Tuple[int, ...]] = []
+    for i in range(n):
+        i1 = (i + 1) % n
+        faces.append((apex, i + 1, i1 + 1))
     return verts, faces
 
 

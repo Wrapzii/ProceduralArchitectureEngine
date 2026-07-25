@@ -118,22 +118,27 @@ def build_tower_mesh(desc: PrimitiveDescriptor, *, name: Optional[str] = None):
 
     bpy_util.require_bpy()
     obj_name = name or desc.id
+    outer = MODULE_CM
+    inner = MODULE_CM - WALL_T_CM
     if desc.id == "tower_arc_quarter":
-        outer = MODULE_CM
-        inner = MODULE_CM - WALL_T_CM
         verts, faces = bpy_util.annulus_quarter_verts(
             outer, inner, 0.0, STOREY_CM
         )
         obj = bpy_util.mesh_from_verts_faces(obj_name, verts, faces)
         bpy_util.smooth_shade_curved_faces(obj)
         return obj
-    # Crown / cap: proxy boxes matching declared AABB (min-corner local then shift).
-    # True cone / crenellation authored in a polish pass.
-    obj = bpy_util.box_mesh(obj_name, desc.size_cm, origin_at_min_corner=True)
-    # Shift so origin sits at circle centre (aabb_min is negative).
-    obj.location = (
-        desc.aabb_min_cm[0],
-        desc.aabb_min_cm[1],
-        desc.aabb_min_cm[2],
-    )
-    return obj
+    if desc.id == "tower_crown":
+        h = desc.size_cm[2]
+        verts, faces = bpy_util.annulus_battlement_ring_verts(
+            outer, inner, 0.0, h
+        )
+        obj = bpy_util.mesh_from_verts_faces(obj_name, verts, faces)
+        bpy_util.smooth_shade_curved_faces(obj)
+        return obj
+    if desc.id == "tower_cap":
+        h = desc.size_cm[2]
+        verts, faces = bpy_util.cone_verts(outer, 0.0, h)
+        obj = bpy_util.mesh_from_verts_faces(obj_name, verts, faces)
+        bpy_util.smooth_shade_curved_faces(obj)
+        return obj
+    raise ValueError(f"unknown tower primitive: {desc.id!r}")
