@@ -99,16 +99,21 @@ def rotate_local_xy(
     footprint_sx_cm: float,
     footprint_sy_cm: float,
 ) -> Tuple[float, float]:
-    """Map a local XY point through yaw + min-corner offset (§2.2)."""
-    sx, sy = footprint_sx_cm, footprint_sy_cm
+    """Rotate a local XY point about the min-corner origin (pure yaw).
+
+    Compensating cell offset is applied separately via ``rotation_offset_cm`` /
+    ``offset_cm`` on the placement origin — do **not** bake it in here or east
+    walls land a full ``WALL_T`` too far out and corners fail to meet.
+    """
+    del footprint_sx_cm, footprint_sy_cm
     if yaw == 0:
         return (lx, ly)
     if yaw == 90:
-        return (-ly + sy, lx)
+        return (-ly, lx)
     if yaw == 180:
-        return (-lx + sx, -ly + sy)
+        return (-lx, -ly)
     if yaw == 270:
-        return (ly, -lx + sx)
+        return (ly, -lx)
     raise ValueError(f"yaw must be 0/90/180/270, got {yaw}")
 
 

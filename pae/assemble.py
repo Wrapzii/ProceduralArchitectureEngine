@@ -125,23 +125,44 @@ def _layer_from_grid(grid: StoreyGrid) -> FloorPlanLayer:
     )
 
 
-def _interior_bbox(grid: StoreyGrid) -> Tuple[int, int, int, int]:
-    """Inclusive interior cell bounds (§2.3 room coordinates)."""
-    interior = [
-        (x, y) for (x, y), role in grid.cells.items() if role == CellRole.INTERIOR
+_ENCLOSED_ROLES = frozenset(
+    {
+        CellRole.INTERIOR,
+        CellRole.WALL_LINE,
+        CellRole.DOOR,
+        CellRole.STAIR,
+        CellRole.VOID,
+    }
+)
+
+_FLOOR_ROLES = frozenset(
+    {
+        CellRole.INTERIOR,
+        CellRole.WALL_LINE,
+        CellRole.DOOR,
+        CellRole.STAIR,
+    }
+)
+
+
+def _footprint_bbox(grid: StoreyGrid) -> Tuple[int, int, int, int]:
+    """Inclusive enclosed footprint (x0, y0, x1, y1) for §2.3 wall runs.
+
+    WALL_LINE cells are part of the volume footprint — do **not** use INTERIOR
+    alone or east/north land one module too far in.
+    """
+    enclosed = [
+        (x, y)
+        for (x, y), role in grid.cells.items()
+        if role in _ENCLOSED_ROLES
     ]
-    if not interior:
+    if not enclosed:
         ox, oy = grid.origin
         w, h = grid.size
         return ox, oy, ox + w - 1, oy + h - 1
-    xs = [c[0] for c in interior]
-    ys = [c[1] for c in interior]
+    xs = [c[0] for c in enclosed]
+    ys = [c[1] for c in enclosed]
     return min(xs), min(ys), max(xs), max(ys)
-
-
-def _wall_ring_from_interior(ix0: int, iy0: int, ix1: int, iy1: int) -> Tuple[int, int, int, int]:
-    """Perimeter span for wall modules: west/east x and south/north y (§2.3)."""
-    return ix0 - 1, iy0 - 1, ix1 + 1, iy1 + 1
 
 
 def _boundary_wall_offset_cm(
@@ -149,19 +170,15 @@ def _boundary_wall_offset_cm(
     yaw: int,
     piece: _ResolvedPiece,
 ) -> Tuple[float, float, float]:
-    """§2.2 offset via contract; §2.3 boundary cells absorb E/S/N table shift."""
+    """§2.2 yaw offset for every face — never skip E/N/S."""
+    del face  # face selects yaw; offset table is yaw-driven
     sx, sy, _ = piece.size_cm
-    if face == "west":
-        ox, oy = rotation_offset_cm(
-            yaw,
-            sx,
-            sy,
-            rotates_about_center=piece.rotates_about_center,
-        )
-    else:
-        # East/north/south runs sit on x1+1 / y1+1 boundary-line cells — the
-        # rotation-offset table is satisfied by cell index + yaw, not extra XY.
-        ox, oy = 0.0, 0.0
+    ox, oy = rotation_offset_cm(
+        yaw,
+        sx,
+        sy,
+        rotates_about_center=piece.rotates_about_center,
+    )
     return (ox, oy, 0.0)
 
 
@@ -180,14 +197,24 @@ def _next_piece_id(
 def _wall_asset_for_cell(
     fp: FloorPlan,
     cell: Tuple[int, int],
+    face: str,
     catalog: _PieceCatalog,
     style: StyleLike,
 ) -> _ResolvedPiece:
+    """Pick wall kit piece; map boundary-line cells back to footprint for openings."""
     x, y = cell
-    is_door = cell in fp.door_cells or any(
-        grid.get(x, y) == CellRole.DOOR for grid in fp.storeys
+    face = face.lower()
+    # East/north walls sit on x1+1 / y1+1 — openings are authored on footprint cells.
+    if face == "east":
+        probe = (x - 1, y)
+    elif face == "north":
+        probe = (x, y - 1)
+    else:
+        probe = cell
+    is_door = probe in fp.door_cells or any(
+        grid.get(probe[0], probe[1]) == CellRole.DOOR for grid in fp.storeys
     )
-    is_window = cell in fp.window_cells
+    is_window = probe in fp.window_cells
     return catalog.pick_wall(is_door=is_door, is_window=is_window, style=style)
 
 
@@ -263,7 +290,7 @@ def _place_wall_run(
     yaw = yaw_by_face[face]
     for cell in cells:
 
-        piece_def = _wall_asset_for_cell(fp, cell, catalog, style)
+        piece_def = _wall_asset_for_cell(fp, cell, face, catalog, style)
         offset = _boundary_wall_offset_cm(face, yaw, piece_def)
         pid = _next_piece_id(counters, f"wall_{face}", cell, level)
         sp = SolidPlacement(
@@ -401,10 +428,7 @@ def assemble(
     for grid in floor_plan.storeys:
         level = grid.level
         floor_layers[level] = _layer_from_grid(grid)
-        ix0, iy0, ix1, iy1 = _interior_bbox(grid)
-        wx0, wy0, ex, ny = _wall_ring_from_interior(ix0, iy0, ix1, iy1)
-        wx1 = ex
-        wy1 = ny
+        x0, y0, x1, y1 = _footprint_bbox(grid)
 
         run_piece_ids: Dict[str, List[str]] = {
             "west": [],
@@ -413,10 +437,11 @@ def assemble(
             "north": [],
         }
 
-        west_cells = [(wx0, y) for y in range(wy0, wy1 + 1)]
-        east_cells = [(ex, y) for y in range(wy0, wy1 + 1)]
-        south_cells = [(x, wy0) for x in range(wx0, wx1 + 1)]
-        north_cells = [(x, ny) for x in range(wx0, wx1 + 1)]
+        # §2.3 boundary-line cells — east/north on x1+1 / y1+1 (NOT x1/y1).
+        west_cells = [(x0, y) for y in range(y0, y1 + 1)]
+        east_cells = [(x1 + 1, y) for y in range(y0, y1 + 1)]
+        south_cells = [(x, y0) for x in range(x0, x1 + 1)]
+        north_cells = [(x, y1 + 1) for x in range(x0, x1 + 1)]
 
         for face, cells in (
             ("west", west_cells),
@@ -442,7 +467,7 @@ def assemble(
         floor_piece = catalog.get("floor")
         floor_z_off = floor_placement_z_cm(level)
         for (cx, cy), role in grid.cells.items():
-            if role == CellRole.INTERIOR:
+            if role in _FLOOR_ROLES:
                 pid = _next_piece_id(counters, "floor", (cx, cy), level)
                 placements.append(
                     SolidPlacement(
@@ -476,15 +501,16 @@ def assemble(
 
         if floor_plan.roof_kind == "flat" and level == storeys - 1:
             roof_z = STOREY_CM
-            span_x = (wx1 - wx0 + 1) * MODULE_CM
-            span_y = (wy1 - wy0 + 1) * MODULE_CM
-            pid = _next_piece_id(counters, "roof", (wx0, wy0), level)
+            # Roof covers footprint cells x0..x1, y0..y1 (not the wall ring outside).
+            span_x = (x1 - x0 + 1) * MODULE_CM
+            span_y = (y1 - y0 + 1) * MODULE_CM
+            pid = _next_piece_id(counters, "roof", (x0, y0), level)
             placements.append(
                 SolidPlacement(
                     piece_id=pid,
                     asset_id="roof_flat",
                     kind="roof",
-                    cell=(wx0, wy0),
+                    cell=(x0, y0),
                     level=level,
                     yaw=0,
                     offset_cm=(0.0, 0.0, roof_z),
@@ -520,10 +546,9 @@ def assemble(
     wall_runs: List[WallRun] = []
     for grid in floor_plan.storeys:
         level = grid.level
-        ix0, iy0, ix1, iy1 = _interior_bbox(grid)
-        wx0, wy0, ex, ny = _wall_ring_from_interior(ix0, iy0, ix1, iy1)
-        wx1 = ex
-        wy1 = ny
+        x0, y0, x1, y1 = _footprint_bbox(grid)
+        ex = x1 + 1
+        ny = y1 + 1
         ids_by_face: Dict[str, List[str]] = {
             "west": [],
             "east": [],
@@ -534,20 +559,20 @@ def assemble(
             if p.level != level or p.kind != "wall":
                 continue
             cx, cy = p.cell
-            if cx == wx0 and wy0 <= cy <= wy1:
+            if cx == x0 and y0 <= cy <= y1:
                 ids_by_face["west"].append(p.piece_id)
-            elif cx == ex and wy0 <= cy <= wy1:
+            elif cx == ex and y0 <= cy <= y1:
                 ids_by_face["east"].append(p.piece_id)
-            elif cy == wy0 and wx0 <= cx <= wx1:
+            elif cy == y0 and x0 <= cx <= x1:
                 ids_by_face["south"].append(p.piece_id)
-            elif cy == ny and wx0 <= cx <= wx1:
+            elif cy == ny and x0 <= cx <= x1:
                 ids_by_face["north"].append(p.piece_id)
         wall_runs.extend(
             _build_wall_runs(
-                wx0=wx0,
-                wy0=wy0,
-                wx1=wx1,
-                wy1=wy1,
+                wx0=x0,
+                wy0=y0,
+                wx1=x1,
+                wy1=y1,
                 ex=ex,
                 ny=ny,
                 level=level,

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from pae.assemble import assemble
 from pae.contract import (
-    FLOOR_T_CM,
     MODULE_CM,
     STOREY_CM,
     WALL_T_CM,
@@ -40,22 +39,44 @@ def test_yaw_offset_table_matches_contract():
     assert rotation_offset_cm(270, sx, sy) == (0.0, sx)
 
 
-def test_wall_boundary_cells_east_north():
-    """§2.3 — east/north runs on interior x1+1 / y1+1 boundary-line cells."""
-    # Interior x=1..2, y=1 → east column 3, north row 2 (not footprint x1/y1).
-    assert wall_run_cell("east", 1, 1, 2, 1) == (3, 1, 180)
-    assert wall_run_cell("north", 1, 1, 2, 1) == (1, 2, 90)
+def test_wall_boundary_cells_east_north_out_by_one():
+    """§2.3 — east/north on footprint x1+1 / y1+1 (not on x1/y1)."""
+    assert wall_run_cell("east", 0, 0, 3, 2) == (4, 0, 180)
+    assert wall_run_cell("north", 0, 0, 3, 2) == (0, 3, 90)
 
     assembly, _ = _m1_assembly()
     east_cells = {p.cell for p in assembly.placements if p.kind == "wall" and p.yaw == 180}
     north_cells = {p.cell for p in assembly.placements if p.kind == "wall" and p.yaw == 90}
-    assert (3, 0) in east_cells
-    assert (3, 1) in east_cells
-    assert (3, 2) in east_cells
-    assert (2, 3) not in east_cells  # footprint x1, not east boundary
-    assert (0, 2) in north_cells
-    assert (1, 2) in north_cells
-    assert (0, 1) not in north_cells  # interior row, not north boundary
+    west_cells = {p.cell for p in assembly.placements if p.kind == "wall" and p.yaw == 0}
+    south_cells = {p.cell for p in assembly.placements if p.kind == "wall" and p.yaw == 270}
+
+    # Footprint 0..3 × 0..2 → east column 4, north row 3.
+    assert east_cells == {(4, 0), (4, 1), (4, 2)}
+    assert north_cells == {(0, 3), (1, 3), (2, 3), (3, 3)}
+    assert west_cells == {(0, 0), (0, 1), (0, 2)}
+    assert south_cells == {(0, 0), (1, 0), (2, 0), (3, 0)}
+    # Regression: must NOT sit on the old too-far-in ring.
+    assert (3, 0) not in east_cells
+    assert (0, 2) not in north_cells
+
+
+def test_floor_covers_full_footprint():
+    assembly, _ = _m1_assembly()
+    floors = {p.cell for p in assembly.placements if p.kind == "floor"}
+    assert floors == {
+        (0, 0),
+        (0, 1),
+        (0, 2),
+        (1, 0),
+        (1, 1),
+        (1, 2),
+        (2, 0),
+        (2, 1),
+        (2, 2),
+        (3, 0),
+        (3, 1),
+        (3, 2),
+    }
 
 
 def test_floor_and_ground_z_offsets_in_placements():
@@ -79,10 +100,10 @@ def test_m1_validate_passes():
     assert report.critical == []
 
 
-def test_m1_wall_aabb_touches_boundary():
-    """East wall AABB sits on interior x1+1 module line (cell x=3)."""
+def test_m1_east_wall_aabb_on_outer_boundary():
+    """East wall outer strip sits on x = (x1+1)*MODULE = 4*MODULE."""
     assembly, _ = _m1_assembly()
-    east = next(p for p in assembly.placements if p.kind == "wall" and p.cell == (3, 1))
+    east = next(p for p in assembly.placements if p.kind == "wall" and p.cell == (4, 1))
     bb_min, bb_max = placement_world_aabb(
         east.cell[0],
         east.cell[1],
@@ -91,6 +112,8 @@ def test_m1_wall_aabb_touches_boundary():
         east.size_cm,
         east.offset_cm,
     )
-    assert abs(bb_min[0] - 3 * MODULE_CM) < 1.0
-    assert abs(bb_max[0] - (3 * MODULE_CM + WALL_T_CM)) < 1.0
+    # After §2.2 offset, yaw-180 wall occupies [4*MODULE, 4*MODULE+WALL_T] in X…
+    # actually low-X strip after 180+offset lands with min at 4*MODULE.
+    assert abs(bb_min[0] - 4 * MODULE_CM) < 1.0
+    assert abs(bb_max[0] - (4 * MODULE_CM + WALL_T_CM)) < 1.0
     assert abs(bb_max[2] - STOREY_CM) < 1.0
