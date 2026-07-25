@@ -124,11 +124,16 @@ def covered_cells(p: SolidPlacement) -> Set[Cell]:
         p.offset_cm,
         rotates_about_center=p.rotates_about_center,
     )
-    eps = MODULE_CM * 0.25
-    x0 = int(math.floor((mn[0] + eps) / MODULE_CM))
-    x1 = int(math.ceil((mx[0] - eps) / MODULE_CM))
-    y0 = int(math.floor((mn[1] + eps) / MODULE_CM))
-    y1 = int(math.ceil((mx[1] - eps) / MODULE_CM))
+    # The inset must never exceed HALF THE PIECE, or a thin piece flush against a cell's
+    # far boundary is pushed into the NEXT cell: a 60 cm wall on the east edge of cell 9,
+    # inset by 100 cm, reports as cell 10. That inflated every range by one cell, which
+    # pushed the balcony gallery a full bay inward and left decks 4 m short of the wall.
+    eps_x = min(MODULE_CM * 0.25, (mx[0] - mn[0]) * 0.5)
+    eps_y = min(MODULE_CM * 0.25, (mx[1] - mn[1]) * 0.5)
+    x0 = int(math.floor((mn[0] + eps_x) / MODULE_CM))
+    x1 = int(math.ceil((mx[0] - eps_x) / MODULE_CM))
+    y0 = int(math.floor((mn[1] + eps_y) / MODULE_CM))
+    y1 = int(math.ceil((mx[1] - eps_y) / MODULE_CM))
     cells = {(x, y) for x in range(x0, max(x1, x0 + 1)) for y in range(y0, max(y1, y0 + 1))}
     return cells or {p.cell}
 

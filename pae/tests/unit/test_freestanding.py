@@ -110,3 +110,44 @@ def test_compound_has_no_freestanding_entities():
     _, report = validate(assembly)
     bad = [f for f in report.critical if f.check in ("freestanding", "canopy_attachment")]
     assert not bad, [f.message for f in bad]
+
+
+def test_covered_cells_does_not_leak_into_the_next_cell():
+    """A thin piece flush against a cell's far boundary must stay in ITS cell.
+
+    The inset used to be a flat MODULE/4 = 100 cm, larger than a 60 cm wall, so a wall on
+    the east edge of cell 9 reported as cell 10. Every range came out one cell too big and
+    the balcony gallery landed a full bay off the wall.
+    """
+    from pae.contract import MODULE_CM, WALL_T_CM
+    from pae.trim import covered_cells
+
+    wall = _piece("wall_plain", (9, 0), offset=(MODULE_CM - WALL_T_CM, 0.0, 0.0))
+    assert covered_cells(wall) == {(9, 0)}
+
+
+def test_compound_balcony_decks_touch_their_range():
+    """The deck must butt the wall it serves, not stand a bay away from it."""
+    from pae.contract import placement_world_aabb, TOL_CM
+
+    assembly, _, _ = build_compound()
+
+    def bb(p):
+        return placement_world_aabb(
+            p.cell[0], p.cell[1], p.level, p.yaw, p.size_cm, p.offset_cm,
+            rotates_about_center=p.rotates_about_center,
+        )
+
+    decks = [p for p in assembly.placements if "balcony" in p.tags and p.kind == "floor"]
+    walls = [p for p in assembly.placements if p.kind == "wall"]
+    assert decks
+    wall_boxes = [bb(w) for w in walls]
+    for d in decks:
+        dmn, dmx = bb(d)
+        touching = any(
+            min(dmx[0], wmx[0]) - max(dmn[0], wmn[0]) > -TOL_CM
+            and min(dmx[1], wmx[1]) - max(dmn[1], wmn[1]) > -TOL_CM
+            and min(dmx[2], wmx[2]) - max(dmn[2], wmn[2]) > -TOL_CM
+            for wmn, wmx in wall_boxes
+        )
+        assert touching, f"{d.piece_id} touches no wall"
