@@ -28,6 +28,7 @@ from pae.solver import Volume
 _TOWER_STACK_GAP_CM = 0.5
 from pae.plan import CellRole, FloorPlan, StoreyGrid
 from pae.primitives.catalog import catalog_by_id, get as get_primitive
+from pae.primitives.plinth import ground_plinth_span_size_cm
 from pae.primitives.roofs import (
     local_slope_rise_cm,
     roof_eave_offset_cm,
@@ -247,6 +248,31 @@ def _massing_wing_roof_spans(
     if len(wings) > 1:
         return [(v.x0, v.y0, v.x1, v.y1) for v in wings]
     return None
+
+
+def _ground_spans(
+    floor_plan: FloorPlan,
+    grid: StoreyGrid,
+) -> List[Tuple[int, int, int, int]]:
+    """Inclusive cell spans for continuous ground slabs (§2.5).
+
+    Main/wing massing volumes only — tower attach cells can be DOOR roles that
+    widen ``_footprint_bbox`` without a walkable slab. Courtyard / multi-wing
+    uses the same per-wing splits as roofs.
+    """
+    wing_spans = _massing_wing_roof_spans(floor_plan, grid)
+    if wing_spans:
+        return wing_spans
+    if floor_plan.massing is not None:
+        wings = [
+            v
+            for v in floor_plan.massing.enclosed_volumes()
+            if v.role in ("main", "wing")
+        ]
+        if wings:
+            return [(v.x0, v.y0, v.x1, v.y1) for v in wings]
+    x0, y0, x1, y1 = _footprint_bbox(grid)
+    return [(x0, y0, x1, y1)]
 
 
 def _place_inhabited_inner_walls(
@@ -1313,22 +1339,20 @@ def assemble(
         for grid in floor_plan.storeys:
             if grid.level != 0:
                 continue
-            for (cx, cy), role in grid.cells.items():
-                if role not in _FLOOR_ROLES:
-                    continue
-                if (cx, cy) in tower_cells:
-                    continue
-                pid = _next_piece_id(counters, "ground", (cx, cy), 0)
+            for gx0, gy0, gx1, gy1 in _ground_spans(floor_plan, grid):
+                modules_x = gx1 - gx0 + 1
+                modules_y = gy1 - gy0 + 1
+                pid = _next_piece_id(counters, "ground", (gx0, gy0), 0)
                 placements.append(
                     SolidPlacement(
                         piece_id=pid,
                         asset_id=plinth.asset_id,
                         kind="ground",
-                        cell=(cx, cy),
+                        cell=(gx0, gy0),
                         level=0,
                         yaw=0,
                         offset_cm=(0.0, 0.0, ground_z),
-                        size_cm=plinth.size_cm,
+                        size_cm=ground_plinth_span_size_cm(modules_x, modules_y),
                         tags=plinth.tags,
                     )
                 )

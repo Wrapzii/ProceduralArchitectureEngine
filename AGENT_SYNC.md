@@ -116,3 +116,4 @@ Project root: `C:\Users\WhiteWidow\Documents\GitHub\ProceduralArchitectureEngine
 >>> DONE @OPEN_PROVE — build_m1_openings_proof() -> Saved/Screenshots/m1_openings_proof.png; SE-elevated ortho on south/west shell AABB; hides north/east walls + roof/floor; tools/pae_build_in_blender.py --openings-proof; headless tests in test_blender_build.py.
 >>> TRIGGER @WALL_READ — Ensure wall thickness WALL_T reads in gallery (not paper-thin illusion). Own walls size/assemble if needed.
 >>> TRIGGER @GROUND_SKIRT — Continuous ground under footprint (single slab or flush plinths) — no checkerboard gaps. Own assemble ground.
+>>> DONE @GROUND_SKIRT — `ground_plinth_span_size_cm()` + `_ground_spans()` (main/wing volumes; tower DOOR cells excluded); one spanning slab per wing/footprint like roof_flat. FLOATER_KILL tower floor skip preserved. M1 golden hash/n_placements updated (28). Suite: 320 passed.

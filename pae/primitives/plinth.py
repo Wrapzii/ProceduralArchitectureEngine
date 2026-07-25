@@ -8,6 +8,13 @@ from pae.contract import FLOOR_T_CM, MODULE_CM
 from pae.primitives.types import PrimitiveDescriptor, SocketDesc, module_tag
 
 
+def ground_plinth_span_size_cm(modules_x: int, modules_y: int) -> tuple[float, float, float]:
+    """Axis-aligned ground slab spanning *modules_x* × *modules_y* bays (no overhang)."""
+    if modules_x < 1 or modules_y < 1:
+        raise ValueError(f"ground span must be ≥ 1×1 modules, got {modules_x}×{modules_y}")
+    return (modules_x * MODULE_CM, modules_y * MODULE_CM, FLOOR_T_CM)
+
+
 def ground_plinth() -> PrimitiveDescriptor:
     tag = frozenset({module_tag(), "plinth"})
     sockets = (
@@ -29,8 +36,9 @@ def ground_plinth() -> PrimitiveDescriptor:
         tags=frozenset({"plinth", "ground", "foundation", module_tag()}),
         origin="min_corner",
         notes=(
-            "Assemble places origin at ground_plinth_z_cm() (−2×FLOOR_T) so the "
-            "slab top lands at z = −FLOOR_T, flush under the level-0 floor (§2.5)."
+            "Assemble scales XY via ground_plinth_span_size_cm(); origin at "
+            "ground_plinth_z_cm() (−2×FLOOR_T) so the slab top lands at z = −FLOOR_T "
+            "(§2.5)."
         ),
     )
 

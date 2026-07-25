@@ -2,8 +2,8 @@
   "building_id": "m1_box_house",
   "seed": 1,
   "asset_db_version": "0",
-  "n_placements": 39,
-  "placement_hash": "0a404b920f18c01f607e522615b4ddceaf2148dff82702efdc78dec1dc7399f9",
+  "n_placements": 28,
+  "placement_hash": "63426f7d88c25882e201853a2241ebf9912bdcf6c3820bea60f075d8ac9db6b7",
   "stub_png": {
     "path": "pae/tests/golden/baselines/box_house_m1_Cam_Front.png",
     "width": 64,

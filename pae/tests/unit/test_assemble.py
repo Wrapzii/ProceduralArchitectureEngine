@@ -20,6 +20,7 @@ from pae.contract import (
 )
 from pae.plan import plan
 from pae.primitives.catalog import get as get_primitive
+from pae.primitives.plinth import ground_plinth_span_size_cm
 from pae.primitives.roofs import (
     roof_flat_span_size_cm,
     roof_gable_end_size_cm,
@@ -121,6 +122,26 @@ def test_floor_and_ground_z_offsets_in_placements():
         assert f.offset_cm[2] == floor_placement_z_cm(f.level)
     for g in grounds:
         assert g.offset_cm[2] == ground_plinth_z_cm()
+
+
+def test_ground_plinth_descriptor_and_m1_span():
+    """ground_plinth catalog piece + assemble span helper for footprint foundation."""
+    plinth = get_primitive("ground_plinth")
+    assert plinth.kind == "plinth"
+    assert plinth.footprint_modules == (1, 1)
+    assert plinth.size_cm == (MODULE_CM, MODULE_CM, FLOOR_T_CM)
+    assert ground_plinth_span_size_cm(4, 3) == (
+        4 * MODULE_CM,
+        3 * MODULE_CM,
+        FLOOR_T_CM,
+    )
+
+    assembly, _ = _m1_assembly()
+    grounds = [p for p in assembly.placements if p.kind == "ground"]
+    assert len(grounds) == 1
+    assert grounds[0].asset_id == "ground_plinth"
+    assert grounds[0].size_cm == ground_plinth_span_size_cm(4, 3)
+    assert grounds[0].offset_cm == (0.0, 0.0, ground_plinth_z_cm())
 
 
 def test_m1_validate_passes():
@@ -496,13 +517,14 @@ def _placement_xy_center_cm(p) -> tuple[float, float]:
 
 
 def test_m3_no_disconnected_ground_plinth_far_from_hall_tower_union():
-    """M3 — no orphan ground/floor slabs at tower grid cell after drum XY offset."""
+    """M3 — one hall-spanning ground slab; no orphan at tower grid cell."""
     assembly, _, massing = _assembly_from_spec(m3_keep_tower_spec())
     union_min, union_max = _hall_tower_xy_union_cm(assembly, massing)
     margin = TOL_CM
 
     grounds = [p for p in assembly.placements if p.kind == "ground"]
-    assert len(grounds) == 16, "tower cell must not receive a ground plinth"
+    assert len(grounds) == 1, "hall footprint gets one spanning ground slab"
+    assert grounds[0].size_cm == ground_plinth_span_size_cm(4, 4)
 
     for p in grounds:
         cx, cy = _placement_xy_center_cm(p)
@@ -512,6 +534,10 @@ def test_m3_no_disconnected_ground_plinth_far_from_hall_tower_union():
     tower_cell = next(v for v in massing.volumes if v.role == "tower")
     tc = (tower_cell.x0, tower_cell.y0)
     assert not any(p.cell == tc for p in grounds)
+    assert not any(
+        p.kind == "floor" and p.level == 0 and p.cell == tc
+        for p in assembly.placements
+    )
     assert not any(
         p.kind == "floor" and p.level == 0 and p.cell == tc
         for p in assembly.placements
