@@ -498,9 +498,12 @@ def add_balconies(
             ))
 
         # Access doors: swap wall bays behind the gallery for door pieces.
+        # Only walls that already touch a deck cell at this level — never punch a
+        # doorway onto open air (aperture_reachability critical, roadmap 0.5).
         if bal.doors_per_range > 0:
+            deck_at = set(mine)
             for level in levels:
-                candidates = _court_facing_walls(assembly, name, set(mine), level)
+                candidates = _court_facing_walls(assembly, name, deck_at, level)
                 if not candidates:
                     continue
                 candidates.sort(key=lambda p: (p.cell, p.piece_id))
@@ -509,6 +512,15 @@ def add_balconies(
                 chosen = candidates[::step][:count]
                 door = catalog[bal.door_piece]
                 for w in chosen:
+                    # Refuse a door whose covered cells have no orthogonal neighbour
+                    # in the deck set (guards against stale gallery membership).
+                    wcells = covered_cells(w)
+                    if not any(
+                        (c[0] + dx, c[1] + dy) in deck_at
+                        for c in wcells
+                        for dx, dy in _NEIGHBOURS.values()
+                    ):
+                        continue
                     drop.add(w.piece_id)
                     extra.append(SolidPlacement(
                         piece_id=f"{w.piece_id}_balcony_door",

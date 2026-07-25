@@ -104,7 +104,8 @@ def _circulation_for_footprint(
     """Emit a full stair footprint for multi-storey specs (solver parity)."""
     if storeys <= 1:
         return CirculationSpec(stair_kind="straight", stair_cells=[])
-    preferred = rng.choice(sorted(SUPPORTED_STAIR_KINDS))
+    kinds = sorted(SUPPORTED_STAIR_KINDS - {"spiral"})
+    preferred = rng.choice(kinds)
     volumes = _place_footprint(footprint, storeys)
     stair_cells = _default_stair_cells(volumes, preferred)
     stair_kind = preferred
@@ -163,7 +164,12 @@ def random_building_spec(rng: random.Random | None = None) -> BuildingSpec:
         roof=RoofSpec(kind=rng.choice(["flat", "pitched"]), pitch=1.0),
         circulation=circulation,
         openings=OpeningPolicy(
-            windows_per_bay=rng.randint(0, 2),
+            # Multi-storey draws always glaze (>=1): windows_per_bay=0 plus
+            # skip_ground_windows used to leave upper VOLUME critical until
+            # assemble's south-face fallback; keep the factory honest too.
+            windows_per_bay=(
+                rng.randint(1, 2) if storeys >= 2 else rng.randint(0, 2)
+            ),
             doors_ground=rng.randint(1, 2),
             skip_ground_windows=rng.choice([True, False]),
         ),

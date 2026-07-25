@@ -27,6 +27,7 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Sequence, Set, Tuple
 
 from pae.assembly_types import Assembly, SolidPlacement
+from pae.contract import MODULE_CM
 from pae.primitives.catalog import catalog_by_id
 from pae.report import Failure, Report
 from pae.trim import covered_cells
@@ -78,32 +79,49 @@ def _rng(seed: int, key: str) -> random.Random:
     return random.Random(f"{seed}:{key}")
 
 
-def _walkable_outside(assembly: Assembly) -> Tuple[Dict[int, Set[Cell]], Dict[int, Set[Cell]]]:
+def _walkable_outside(
+    assembly: Assembly,
+) -> Tuple[Dict[int, Set[Cell]], Dict[int, Set[Cell]], Dict[int, Set[Cell]]]:
+    """Walkable cells, interior floors, and balcony/gallery landings per level.
+
+    Balcony decks are ``kind=floor`` so they land in *inside* as well as *walk*.
+    Without a separate landing set, every gallery door looks like it opens only
+    onto the room it already stands in and ``vary`` demotes it to a window —
+    the compound balcony-to-nothing false positive (roadmap 0.5).
+    """
     walk: Dict[int, Set[Cell]] = {}
     inside: Dict[int, Set[Cell]] = {}
+    balcony: Dict[int, Set[Cell]] = {}
     for p in assembly.placements:
         if p.kind in ("floor", "surface") and "hole" not in p.asset_id:
             walk.setdefault(p.level, set()).update(covered_cells(p))
         elif p.kind == "stair":
             walk.setdefault(p.level, set()).update(covered_cells(p))
         if p.kind == "floor" and "hole" not in p.asset_id:
-            inside.setdefault(p.level, set()).update(covered_cells(p))
-    return walk, inside
+            cells = covered_cells(p)
+            inside.setdefault(p.level, set()).update(cells)
+            if "balcony" in p.tags:
+                balcony.setdefault(p.level, set()).update(cells)
+    return walk, inside, balcony
 
 
 def _door_is_reachable(
     p: SolidPlacement,
     walk: Dict[int, Set[Cell]],
     inside: Dict[int, Set[Cell]],
+    balcony: Dict[int, Set[Cell]],
 ) -> bool:
     if p.level == 0:
         return True  # the site is outside a ground door
     deck = walk.get(p.level, set())
     room = inside.get(p.level, set())
+    landing = balcony.get(p.level, set())
     for c in covered_cells(p):
         for dx, dy in ((0, 1), (0, -1), (1, 0), (-1, 0)):
             n = (c[0] + dx, c[1] + dy)
-            if n in deck and n not in room:
+            # Match validate._check_aperture_reachability: a balcony-tagged
+            # deck counts even when it also appears in the interior floor set.
+            if n in deck and (n not in room or n in landing):
                 return True
     return False
 
@@ -148,7 +166,7 @@ def vary(
             )
         ])
 
-    walk, inside = _walkable_outside(assembly)
+    walk, inside, balcony = _walkable_outside(assembly)
 
     # One window family per storey, decided up front so the demotion and repair steps use
     # the SAME family as the choice step. Deciding it lazily let a demoted door introduce a
@@ -240,9 +258,20 @@ def vary(
 
         is_door = "door" in p.asset_id or "gate" in p.asset_id
         is_window = "window" in p.asset_id
+        # Drum / helical tower windows are authored by assemble for Phase 0.6 —
+        # blanking or retargeting them floats ends and plugs headroom.
+        if "drum_window" in p.tags or p.piece_id.startswith("tower_win_"):
+            out.append(p)
+            if is_window:
+                lights.setdefault(_elevation_key(p), []).append(len(out) - 1)
+            continue
 
         # 1. Legality — an upper door with nothing outside it is not a door.
-        if is_door and opts.fix_unreachable_doors and not _door_is_reachable(p, walk, inside):
+        if (
+            is_door
+            and opts.fix_unreachable_doors
+            and not _door_is_reachable(p, walk, inside, balcony)
+        ):
             out.append(_swap(p, storey_family.get(p.level, opts.demote_door_to),
                              "door_demoted"))
             key = _elevation_key(p)
@@ -388,11 +417,114 @@ def vary(
         floor_plan=assembly.floor_plan,
         circulation=assembly.circulation,
         wall_runs=assembly.wall_runs,
-        apertures=assembly.apertures,
+        apertures=_sync_apertures(assembly.apertures, out),
         storeys=assembly.storeys,
         aperture_policy=assembly.aperture_policy,
     )
     return varied, Report.from_failures([])
+
+
+def _yaw_to_face(yaw: int) -> str:
+    return {0: "south", 90: "west", 180: "north", 270: "east"}.get(yaw % 360, "south")
+
+
+def _naive_aperture_cells(
+    cell: Cell, yaw: int
+) -> Tuple[Cell, Cell]:
+    """Interior / exterior footprint cells from wall yaw (variation remap)."""
+    face = _yaw_to_face(yaw)
+    x, y = cell
+    if face == "west":
+        return (x + 1, y), (x, y)
+    if face == "east":
+        return (x - 1, y), (x, y)
+    if face == "south":
+        return (x, y + 1), (x, y)
+    return (x, y - 1), (x, y)
+
+
+def _aperture_world_from_wall(p: SolidPlacement, kind: str) -> Tuple[float, float, float]:
+    from pae.contract import STOREY_CM
+
+    sx, sy, sz = p.size_cm
+    ox, oy, oz = p.offset_cm
+    cx = p.cell[0] * MODULE_CM + ox + sx * 0.5
+    cy = p.cell[1] * MODULE_CM + oy + sy * 0.5
+    # Door sill near floor; window mid-band — enough for existence / reachability.
+    if kind == "door":
+        cz = p.level * STOREY_CM + oz + 20.0
+    else:
+        cz = p.level * STOREY_CM + oz + sz * 0.45
+    return (cx, cy, cz)
+
+
+def _sync_apertures(old, placements: Sequence[SolidPlacement]):
+    """Keep aperture records aligned with post-vary wall assets (Phase 1.5).
+
+    Door repositioning and unreachable-door demotion swap assets but keep piece
+    ids. Leaving the old ``kind=door`` aperture on a ``wall_plain`` host trips
+    ``no_bare_aperture``. Drop / retarget / synthesise so every door aperture
+    still has a door/gate leaf, and new door bays get a record.
+    """
+    from pae.assembly_types import Aperture
+    from pae.contract import STOREY_CM
+    from pae.existence import is_door_or_gate_asset
+
+    by_id = {p.piece_id: p for p in placements}
+    kept: List = []
+    claimed: Set[str] = set()
+
+    for ap in old:
+        wall = by_id.get(ap.wall_piece_id)
+        if wall is None:
+            continue
+        if ap.kind == "door":
+            if is_door_or_gate_asset(wall.asset_id):
+                kept.append(ap)
+                claimed.add(wall.piece_id)
+            elif "window" in wall.asset_id:
+                kept.append(
+                    Aperture(
+                        piece_id=f"win_{wall.piece_id}",
+                        kind="window",
+                        wall_piece_id=wall.piece_id,
+                        level=wall.level,
+                        sill_z_cm=ap.sill_z_cm,
+                        floor_z_cm=wall.level * STOREY_CM,
+                        interior_cell=ap.interior_cell,
+                        exterior_cell=ap.exterior_cell,
+                        world_xyz=_aperture_world_from_wall(wall, "window"),
+                    )
+                )
+                claimed.add(wall.piece_id)
+            # else blanked — drop the door aperture (breach closed)
+        elif ap.kind == "window":
+            if "window" in wall.asset_id or "arrowslit" in wall.asset_id:
+                kept.append(ap)
+                claimed.add(wall.piece_id)
+
+    for p in placements:
+        if p.kind != "wall" or p.piece_id in claimed:
+            continue
+        if not is_door_or_gate_asset(p.asset_id):
+            continue
+        interior, exterior = _naive_aperture_cells(p.cell, p.yaw)
+        kept.append(
+            Aperture(
+                piece_id=f"door_{p.piece_id}",
+                kind="door",
+                wall_piece_id=p.piece_id,
+                level=p.level,
+                sill_z_cm=_aperture_world_from_wall(p, "door")[2],
+                floor_z_cm=p.level * STOREY_CM,
+                interior_cell=interior,
+                exterior_cell=exterior,
+                world_xyz=_aperture_world_from_wall(p, "door"),
+            )
+        )
+        claimed.add(p.piece_id)
+
+    return kept
 
 
 def vary_spec(spec, seed: int):

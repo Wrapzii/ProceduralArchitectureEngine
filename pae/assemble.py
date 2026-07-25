@@ -524,17 +524,16 @@ def _primary_opening_face(
 def _window_cells_for_level(fp: FloorPlan, level: int) -> Set[Tuple[int, int]]:
     """Per-storey window bays.
 
-    Ground openings come from the plan. When ``skip_ground_windows`` is set, upper
-    storeys still need glazed perimeter bays (storey_egress VOLUME) without copying
-    an empty ground list onto every floor.
+    Ground openings come from the plan. Upper storeys always recompute exterior
+    glazing via ``_upper_storey_window_cells`` — copying ``fp.window_cells`` stamped
+    plan bays that only receive an *inner* wall (no ``_wall_asset_for_cell`` pass),
+    so storey_egress VOLUME stayed critical even when a window cell was "planned".
     """
     if level == 0:
         return set(fp.window_cells)
     if fp.massing is None:
         return set(fp.window_cells)
-    if fp.massing.openings_skip_ground_windows or not fp.window_cells:
-        return _upper_storey_window_cells(fp, level)
-    return set(fp.window_cells)
+    return _upper_storey_window_cells(fp, level)
 
 
 def _upper_storey_window_cells(fp: FloorPlan, level: int) -> Set[Tuple[int, int]]:
@@ -554,7 +553,11 @@ def _upper_storey_window_cells(fp: FloorPlan, level: int) -> Set[Tuple[int, int]
     wall_cells = sorted(
         (x, y) for (x, y), role in grid.cells.items() if role == CellRole.WALL_LINE
     )
-    south = sorted((x, y) for x, y in wall_cells if (x, y - 1) not in interior)
+    south = sorted(
+        (x, y)
+        for x, y in wall_cells
+        if (x, y - 1) not in interior and (x, y + 1) in interior
+    )
     # Other exterior faces as fallback when the south run is all door bays.
     exterior = south + sorted(
         c
