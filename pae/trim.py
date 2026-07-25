@@ -38,6 +38,7 @@ from pae.contract import (
     MODULE_CM,
     STOREY_CM,
     TOL_CM,
+    WALL_T_CM,
     placement_world_aabb,
 )
 from pae.primitives.catalog import catalog_by_id
@@ -75,7 +76,8 @@ class TrimOptions:
     chimney_piece: str = "chimney_stack"
     spire_piece: str = "spire_octagonal"
     finial_piece: str = "finial"
-    arcade_piece: str = "arch_freestanding"
+    arcade_piece: str = "wall_arcade"
+    arcade_pier_piece: str = "pier_square"
     exterior_steps: bool = False
     steps_piece: str = "steps_external"
     buttress_min_storeys: Optional[int] = None
@@ -292,6 +294,76 @@ def _stair_landing_edges(assembly: Assembly) -> Set[Tuple[int, Cell, Cell]]:
     return edges
 
 
+def _courtyard_cells_from_plan(assembly: Assembly) -> Set[Cell]:
+    """Ground-level courtyard cells from the floor plan (open court void)."""
+    from pae.plan import CellRole
+
+    layer = assembly.floor_plan.get(0)
+    if layer is None:
+        return set()
+    court: Set[Cell] = set()
+    ox, oy = layer.origin_cell
+    role = getattr(CellRole, "COURTYARD", None)
+    for ly in range(layer.height):
+        for lx in range(layer.width):
+            if layer.cells[ly][lx] == role:
+                court.add((ox + lx, oy + ly))
+    return court
+
+
+def _barrier_edges_by_level(assembly: Assembly) -> Dict[int, Set[Tuple[Cell, str]]]:
+    """``(cell, face)`` pairs already guarded by a barrier piece."""
+    out: Dict[int, Set[Tuple[Cell, str]]] = {}
+    for p in _by_kind(assembly, "barrier"):
+        cell = p.cell
+        face = {0: "south", 90: "west", 180: "north", 270: "east"}.get(p.yaw, "")
+        if face:
+            out.setdefault(p.level, set()).add((cell, face))
+    return out
+
+
+def _gallery_court_railings(assembly: Assembly, opts: TrimOptions) -> List[SolidPlacement]:
+    """Balustrades on upper decks that overlook the open courtyard (gallery walk).
+
+    Generic ``_open_edges`` misses some cloister galleries when interior walls
+    register on the court face; this pass keys off the ground court footprint.
+    """
+    court = _courtyard_cells_from_plan(assembly)
+    if not court:
+        return []
+    decks = _deck_cells_by_level(assembly)
+    walls = _wall_cells_by_level(assembly)
+    guarded = _barrier_edges_by_level(assembly)
+    bal_desc = catalog_by_id()[opts.balustrade_piece]
+    thick = bal_desc.size_cm
+    out: List[SolidPlacement] = []
+
+    for level, cells in decks.items():
+        if level <= 0:
+            continue
+        wall_cells = walls.get(level, set())
+        for cx, cy in sorted(cells):
+            for face, (dx, dy) in _NEIGHBOURS.items():
+                n = (cx + dx, cy + dy)
+                if n not in court:
+                    continue
+                if n in cells or n in wall_cells:
+                    continue
+                if ((cx, cy), face) in guarded.get(level, set()):
+                    continue
+                out.append(
+                    _placement(
+                        opts.balustrade_piece,
+                        (cx, cy),
+                        level,
+                        yaw=_FACE_YAW[face],
+                        offset_cm=_face_offset(face, thick),
+                        suffix=f"gallery_{face}",
+                    )
+                )
+    return out
+
+
 def _railings(assembly: Assembly, opts: TrimOptions) -> List[SolidPlacement]:
     """Railings on open upper-deck edges and around every floor hole."""
     out: List[SolidPlacement] = []
@@ -349,10 +421,70 @@ def _railings(assembly: Assembly, opts: TrimOptions) -> List[SolidPlacement]:
                         suffix=f"hole_{face}",
                     )
                 )
+    out.extend(_gallery_court_railings(assembly, opts))
     return out
 
 
-def _buttresses(assembly: Assembly, opts: TrimOptions) -> List[SolidPlacement]:
+def _interior_deck_cells(assembly: Assembly) -> Set[Cell]:
+    """Walkable / structural deck cells — must match ``fortress_validate.check_buttress_outward``."""
+    interior: Set[Cell] = set()
+    for p in assembly.placements:
+        if p.kind in ("floor", "ground", "plinth"):
+            interior |= covered_cells(p)
+    return interior
+
+
+def _building_tags(p: SolidPlacement) -> Set[str]:
+    return {t for t in p.tags if t.startswith("building:")}
+
+
+def _inherit_buttress_tags(wall: SolidPlacement, base: frozenset) -> frozenset:
+    """Copy range identity from the braced wall so freestanding groups by building."""
+    extra = {t for t in wall.tags if t.startswith("building:")}
+    for t in wall.tags:
+        if t.endswith("_curtain") or t in ("north_keep", "gatehouse", "curtain"):
+            extra.add(t)
+    return base | extra
+
+
+def _buttress_placement(
+    wall: SolidPlacement,
+    opts: TrimOptions,
+    cell: Cell,
+    *,
+    level: int,
+    yaw: int,
+    offset_cm: Tuple[float, float, float],
+    suffix: str,
+) -> SolidPlacement:
+    p = _placement(
+        opts.buttress_piece,
+        cell,
+        level,
+        yaw=yaw,
+        offset_cm=offset_cm,
+        suffix=suffix,
+    )
+    return SolidPlacement(
+        piece_id=p.piece_id,
+        asset_id=p.asset_id,
+        kind=p.kind,
+        cell=p.cell,
+        level=p.level,
+        yaw=p.yaw,
+        offset_cm=p.offset_cm,
+        size_cm=p.size_cm,
+        rotates_about_center=p.rotates_about_center,
+        tags=_inherit_buttress_tags(wall, p.tags),
+    )
+
+
+def _buttresses(
+    assembly: Assembly,
+    opts: TrimOptions,
+    *,
+    range_names: Optional[Set[str]] = None,
+) -> List[SolidPlacement]:
     """Buttresses on the exterior faces of tall ranges, on a bay rhythm.
 
     Works from WALL PLACEMENTS, not from the set of cells that contain walls. The first
@@ -375,19 +507,20 @@ def _buttresses(assembly: Assembly, opts: TrimOptions) -> List[SolidPlacement]:
 
     walls = [
         p for p in _by_kind(assembly, "wall")
-        if p.level == 0 and not (covered_cells(p) & drum_cells)
+        if p.level == 0
+        and not (covered_cells(p) & drum_cells)
+        and (
+            range_names is None
+            or any(f"building:{n}" in p.tags for n in range_names)
+        )
     ]
     if not walls:
         return out
 
-    # The whole plan ENVELOPE, every level — not just level 0's deck. Where an upper
-    # storey oversails the ground floor, the cell beneath it is still building, and a
-    # ground-bearing pier planted there stands in the space under the overhang rather
-    # than against the outside of the wall.
-    decks = _deck_cells_by_level(assembly)
-    interior: Set[Cell] = set()
-    for _cells in decks.values():
-        interior |= _cells
+    # Global deck footprint — same source as ``buttress_outward``. Per-range trim cannot
+    # see neighbouring ranges; post-merge ``apply_buttresses`` re-runs with this set so
+    # piers never land on cloister/court slabs (fortress campus defect).
+    interior = _interior_deck_cells(assembly)
     depth = catalog_by_id()[opts.buttress_piece].size_cm
 
     for i, wall in enumerate(sorted(walls, key=lambda p: (p.cell, p.piece_id))):
@@ -397,9 +530,6 @@ def _buttresses(assembly: Assembly, opts: TrimOptions) -> List[SolidPlacement]:
             wall.cell[0], wall.cell[1], wall.level, wall.yaw, wall.size_cm,
             wall.offset_cm, rotates_about_center=wall.rotates_about_center,
         )
-        # Which boundary line does this wall actually SIT on? Deriving the face from the
-        # cell's neighbours instead put a west buttress against a wall standing on the
-        # cell's east edge — 340 cm of masonry braced against thin air.
         cell = wall.cell
         cx0, cy0 = cell[0] * MODULE_CM, cell[1] * MODULE_CM
         near = MODULE_CM * 0.5
@@ -407,22 +537,23 @@ def _buttresses(assembly: Assembly, opts: TrimOptions) -> List[SolidPlacement]:
             face = "west" if (bb_min[0] - cx0) < near else "east"
         else:
             face = "south" if (bb_min[1] - cy0) < near else "north"
-        # VERIFY, do not assume. The derived face is a good first guess, but the wall's
-        # own AABB is what a buttress has to bear against, and ``outward_offset_cm`` is
-        # cell-relative — where the two disagree you get masonry braced against air, or
-        # a pier standing inside the room. User: "they're not facing properly and
-        # they're implemented incorrectly." So build the candidate, MEASURE it, and keep
-        # it only if it really touches this wall and stays out of the interior.
         cand: Optional[SolidPlacement] = None
         for f in [face] + [g for g in _NEIGHBOURS if g != face]:
             dx, dy = _NEIGHBOURS[f]
-            if (cell[0] + dx, cell[1] + dy) in interior:
-                continue  # that face looks inward — bracing there would be in a room
-            if (cell[0] + dx, cell[1] + dy) in drum_cells:
+            outward = (cell[0] + dx, cell[1] + dy)
+            if outward in interior:
+                continue  # pier would stand on a deck slab
+            if outward in drum_cells:
                 continue  # projecting into the tower drum
             yaw, off = _pier_pose(f, depth)
-            trial = _placement(
-                opts.buttress_piece, cell, 0, yaw=yaw, offset_cm=off, suffix=f,
+            trial = _buttress_placement(
+                wall,
+                opts,
+                cell,
+                level=0,
+                yaw=yaw,
+                offset_cm=off,
+                suffix=f,
             )
             if not _buttress_is_sound(trial, (bb_min, bb_max), interior):
                 continue
@@ -431,23 +562,81 @@ def _buttresses(assembly: Assembly, opts: TrimOptions) -> List[SolidPlacement]:
         if cand is None:
             continue  # no sound face on this bay — a missing buttress beats a wrong one
         out.append(cand)
-        # STACK IT UP THE WALL. One storey of buttress against a three-storey elevation
-        # is a lump sitting on the ground, not masonry taking thrust — it stops at
-        # first-floor level and reads as an object rather than as part of the building.
-        # A buttress rises with the wall it braces, stopping a storey short of the head
-        # so the roofline and its parapet stay clear.
         for lvl in range(1, max(1, assembly.storeys - 1)):
             out.append(
-                _placement(
-                    opts.buttress_piece,
+                _buttress_placement(
+                    wall,
+                    opts,
                     cand.cell,
-                    lvl,
+                    level=lvl,
                     yaw=cand.yaw,
                     offset_cm=cand.offset_cm,
                     suffix=f"{cand.piece_id.rsplit('_', 1)[-1]}_l{lvl}",
                 )
             )
     return out
+
+
+def _strip_buttress_trim(assembly: Assembly, piece_id: str = "buttress") -> Assembly:
+    """Remove prior buttress trim so a post-merge pass can re-place outward piers."""
+    kept = [
+        p
+        for p in assembly.placements
+        if not (p.asset_id == piece_id and "trim" in p.tags)
+    ]
+    if len(kept) == len(assembly.placements):
+        return assembly
+    return Assembly(
+        placements=kept,
+        floor_plan=assembly.floor_plan,
+        circulation=assembly.circulation,
+        wall_runs=assembly.wall_runs,
+        apertures=assembly.apertures,
+        storeys=assembly.storeys,
+        aperture_policy=assembly.aperture_policy,
+        room_specs=list(getattr(assembly, "room_specs", []) or []),
+        building_class=getattr(assembly, "building_class", "generic"),
+        stair_kind=getattr(assembly, "stair_kind", "straight"),
+        wide_stair_well_available=getattr(
+            assembly, "wide_stair_well_available", False
+        ),
+    )
+
+
+def apply_buttresses(
+    assembly: Assembly,
+    opts: TrimOptions,
+    *,
+    range_names: Optional[Set[str]] = None,
+) -> Tuple[Assembly, List[SolidPlacement]]:
+    """Post-merge buttress pass — global interior, optional per-range filter.
+
+    Per-range ``trim(..., buttresses=True)`` runs before ``place_buildings`` and cannot
+    see adjacent ranges; merged campuses must call this after merge so
+    ``buttress_outward`` stays green.
+    """
+    if not opts.buttresses:
+        return assembly, []
+    base = _strip_buttress_trim(assembly, opts.buttress_piece)
+    extra = _buttresses(base, opts, range_names=range_names)
+    if not extra:
+        return base, []
+    merged = Assembly(
+        placements=list(base.placements) + extra,
+        floor_plan=base.floor_plan,
+        circulation=base.circulation,
+        wall_runs=base.wall_runs,
+        apertures=base.apertures,
+        storeys=base.storeys,
+        aperture_policy=base.aperture_policy,
+        room_specs=list(getattr(base, "room_specs", []) or []),
+        building_class=getattr(base, "building_class", "generic"),
+        stair_kind=getattr(base, "stair_kind", "straight"),
+        wide_stair_well_available=getattr(
+            base, "wide_stair_well_available", False
+        ),
+    )
+    return merged, extra
 
 
 #: Which yaw puts a piece's local +X face against the wall on each face. A buttress
@@ -505,6 +694,8 @@ def _buttress_is_sound(
 
 def _roofline(assembly: Assembly, opts: TrimOptions) -> List[SolidPlacement]:
     """Parapets on flat decks, chimneys and dormers on pitched roofs, spires on towers."""
+    from pae.roof_edging import claimed_roof_edges, edge_is_claimed
+
     out: List[SolidPlacement] = []
     roofs = _by_kind(assembly, "roof")
     if not roofs:
@@ -515,12 +706,23 @@ def _roofline(assembly: Assembly, opts: TrimOptions) -> List[SolidPlacement]:
 
     if opts.parapets and flat:
         cells = _cells_of(flat)
+        # Never plant parapets inside a round drum — crown/rampart owns that rim.
+        drum_cells: Set[Cell] = set()
+        for p in assembly.placements:
+            if p.kind in ("tower_arc", "tower_cap") or "tower_arc" in p.asset_id:
+                drum_cells |= covered_cells(p)
+        cells -= drum_cells
+        claimed = claimed_roof_edges(assembly)
         thick = catalog_by_id()[opts.parapet_piece].size_cm
         level = max(p.level for p in flat)
         # Stand the parapet on the roof's TOP surface. Using the level datum puts it at
         # the storey floor instead — a parapet round the ankles of the building.
         deck_top = max(p.offset_cm[2] + p.size_cm[2] for p in flat if p.level == level)
         for cell, face in _open_edges(cells, set()):
+            if cell in drum_cells:
+                continue
+            if edge_is_claimed(claimed, level=level, cell=cell, face=face):
+                continue
             out.append(
                 _placement(
                     opts.parapet_piece,
@@ -616,6 +818,8 @@ def _tower_spiral_stairs(
         return out
     rise = catalog["stair_spiral_quarter"].size_cm[2]
     per_storey = max(1, int(round(STOREY_CM / rise)))
+    # Clear bore of the drum: the module less the masonry on both sides.
+    inner_d = MODULE_CM - 2.0 * WALL_T_CM
 
     already = {
         p.cell
@@ -706,6 +910,24 @@ def _tower_spiral_stairs(
                     offset_cm=(cap_xy[0], cap_xy[1], q * rise),
                     suffix=f"helix{level}_{q}",
                 )
+                # FIT THE TREADS INSIDE THE DRUM. Both the arc and the stair quarter are
+                # nominally one module square, but the arc is a RING with WALL_T of
+                # masonry at its outer radius — so a full-module tread runs straight
+                # through the tower wall. On the fortress that was 213 of 524
+                # interpenetrations, by far the largest single cause. The treads land on
+                # the drum's inner face instead.
+                step = SolidPlacement(
+                    piece_id=step.piece_id,
+                    asset_id=step.asset_id,
+                    kind=step.kind,
+                    cell=step.cell,
+                    level=step.level,
+                    yaw=step.yaw,
+                    offset_cm=step.offset_cm,
+                    size_cm=(inner_d, inner_d, step.size_cm[2]),
+                    rotates_about_center=step.rotates_about_center,
+                    tags=step.tags,
+                )
                 # Headroom, measured. Anything that would tuck under a roof slope is
                 # dropped rather than shipped as a tread you cannot stand on.
                 mn, mx = placement_world_aabb(
@@ -759,6 +981,7 @@ def _tower_spiral_stairs(
 def _colonnade(assembly: Assembly, opts: TrimOptions) -> List[SolidPlacement]:
     """Free-standing arcade along ground-level faces that look onto a courtyard."""
     from pae.plan import CellRole
+    from pae.wall_faces import claimed_wall_arcade_faces, face_is_claimed_for_arcade
 
     layer = assembly.floor_plan.get(0)
     if layer is None:
@@ -781,8 +1004,11 @@ def _colonnade(assembly: Assembly, opts: TrimOptions) -> List[SolidPlacement]:
     thick = catalog[piece_id].size_cm
     out: List[SolidPlacement] = []
     seen: Set[Tuple[Cell, str]] = set()
+    claimed = claimed_wall_arcade_faces(assembly)
 
     # ``wall_arcade`` mates to the courtyard-facing wall cell (cloister walk language).
+    pier_id = opts.arcade_pier_piece
+    pier_desc = catalog.get(pier_id) if pier_id else None
     if piece_id.startswith("wall_"):
         for cx, cy in sorted(court):
             for face, (dx, dy) in _NEIGHBOURS.items():
@@ -793,14 +1019,41 @@ def _colonnade(assembly: Assembly, opts: TrimOptions) -> List[SolidPlacement]:
                 if key in seen:
                     continue
                 seen.add(key)
+                outward = _OPPOSITE[face]
+                if face_is_claimed_for_arcade(
+                    claimed, level=0, cell=wall_cell, face=outward
+                ):
+                    continue
                 out.append(
                     _placement(
                         piece_id,
                         wall_cell,
                         0,
-                        yaw=_FACE_YAW[_OPPOSITE[face]],
-                        offset_cm=_face_offset(_OPPOSITE[face], thick),
+                        yaw=_FACE_YAW[outward],
+                        offset_cm=_face_offset(outward, thick),
                         suffix=f"cloister_{face}",
+                    )
+                )
+        if pier_desc is not None:
+            pier_seen: Set[Cell] = set()
+            for cx, cy in sorted(court):
+                wall_neighbors = sorted(
+                    (cx + dx, cy + dy)
+                    for face, (dx, dy) in _NEIGHBOURS.items()
+                    if (cx + dx, cy + dy) in walls
+                )
+                if len(wall_neighbors) < 2:
+                    continue
+                cell = wall_neighbors[0]
+                if cell in pier_seen:
+                    continue
+                pier_seen.add(cell)
+                out.append(
+                    _placement(
+                        pier_id,
+                        cell,
+                        0,
+                        suffix="arcade_corner",
                     )
                 )
         return out
@@ -828,59 +1081,19 @@ def _colonnade(assembly: Assembly, opts: TrimOptions) -> List[SolidPlacement]:
 
 
 def _exterior_steps(assembly: Assembly, opts: TrimOptions) -> List[SolidPlacement]:
-    """Grand approach steps outside ground-level entrance doors."""
-    catalog = catalog_by_id()
-    if opts.steps_piece not in catalog:
-        return []
+    """Grand approach steps outside ground-level entrance doors.
 
-    step_desc = catalog[opts.steps_piece]
-    decks = _deck_cells_by_level(assembly).get(0, set())
-    drum_cells: Set[Cell] = set()
-    for p in assembly.placements:
-        if p.kind in ("tower_arc", "tower_cap"):
-            drum_cells |= covered_cells(p)
+    Gate / arch leaves get **flanking** flights beside the opening (never a solid
+    apron in the passage column — ``gate_passage_clear``). Heights mate to the
+    gate / L0 floor threshold, not a fixed catalog rise.
+    """
+    from pae.approach_stairs import plan_gate_approach_steps
 
-    out: List[SolidPlacement] = []
-    seen: Set[Cell] = set()
-    for wall in sorted(
-        (p for p in _by_kind(assembly, "wall") if p.level == 0),
-        key=lambda p: (p.cell, p.piece_id),
-    ):
-        if "door" not in wall.asset_id and "gate" not in wall.asset_id:
-            continue
-        if "entrance_role" not in wall.tags and "gate" not in wall.asset_id:
-            # Ensemble / gate arches always get steps; ordinary doors need a role tag.
-            if not any(t.startswith("entrance_role") for t in wall.tags):
-                continue
-        cell = wall.cell
-        if cell in seen or cell in drum_cells:
-            continue
-        bb_min, bb_max = placement_world_aabb(
-            wall.cell[0], wall.cell[1], wall.level, wall.yaw, wall.size_cm,
-            wall.offset_cm, rotates_about_center=wall.rotates_about_center,
-        )
-        cx0, cy0 = cell[0] * MODULE_CM, cell[1] * MODULE_CM
-        near = MODULE_CM * 0.5
-        if (bb_max[0] - bb_min[0]) < (bb_max[1] - bb_min[1]):
-            face = "west" if (bb_min[0] - cx0) < near else "east"
-        else:
-            face = "south" if (bb_min[1] - cy0) < near else "north"
-        dx, dy = _NEIGHBOURS[face]
-        if (cell[0] + dx, cell[1] + dy) in decks:
-            continue
-        yaw, off = outward_offset_cm(face, step_desc.size_cm)
-        out.append(
-            _placement(
-                opts.steps_piece,
-                cell,
-                0,
-                yaw=yaw,
-                offset_cm=off,
-                suffix=f"approach_{face}",
-            )
-        )
-        seen.add(cell)
-    return out
+    return plan_gate_approach_steps(
+        assembly,
+        steps_piece=opts.steps_piece,
+        clearance_bays=1,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -929,8 +1142,6 @@ def trim(
         extra.extend(_roofline(assembly, opts))
     if opts.colonnade:
         extra.extend(_colonnade(assembly, opts))
-    if opts.exterior_steps:
-        extra.extend(_exterior_steps(assembly, opts))
 
     # Deterministic order — the assembly hash must not depend on dict iteration.
     extra.sort(key=lambda p: (p.level, p.cell, p.asset_id, p.piece_id))
@@ -950,4 +1161,16 @@ def trim(
             assembly, 'wide_stair_well_available', False
         ),
     )
+    if opts.colonnade and opts.arcade_piece.startswith("wall_"):
+        from pae.wall_faces import repair_wall_face_stacks
+
+        out = repair_wall_face_stacks(out)
+    if opts.exterior_steps:
+        from pae.approach_stairs import repair_approach_stairs
+
+        out = repair_approach_stairs(
+            out,
+            steps_piece=opts.steps_piece,
+            clearance_bays=1,
+        )
     return out, Report.from_failures([])

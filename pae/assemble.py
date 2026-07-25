@@ -21,10 +21,21 @@ from pae.contract import (
     TOL_CM,
     WALL_T_CM,
     cell_to_world_cm,
+    drum_window_chord_cm,
+    drum_window_height_cm,
+    gate_span_min_storeys,
     ground_plinth_z_cm,
+    height_cm_from_storeys,
     placement_world_aabb,
     rotation_offset_cm,
+    storey_datum_z_cm,
 )
+
+# Stair kinds that use ``_monumental_flight_pads`` when the well is large enough.
+_MONUMENTAL_PAD_KINDS = frozenset({"switchback", "wide", "straight"})
+
+# Tag on walls that span more than one storey (gates / grand arches).
+WALL_HEIGHT_SPAN_TAG = "wall_height_span"
 from pae.solver import Volume
 
 # Soft separation between stacked tower roof pieces (visual only; junction owns the joint).
@@ -35,8 +46,17 @@ _TOWER_QUARTER_YAWS = (0, 90, 180, 270)
 # must be baked per yaw. Outer drum half-extent is ``MODULE/2`` (arc size MODULE).
 # Push to the rim and bias away from the attach kiss so overlays do not slice the
 # hall wall (interpenetration / headroom / roof_penetration). Rim thickness = WALL_T_CM.
-_TOWER_WIN_CHORD_CM = MODULE_CM * 0.45
-_TOWER_WIN_HEIGHT_CM = 160.0  # under storey / roof; aperture sill stays on the piece
+_TOWER_WIN_CHORD_CM = drum_window_chord_cm()
+
+
+def _spiral_quarter_yaws(skip_yaw: Optional[int]) -> Tuple[int, ...]:
+    """Helix tread yaws — attach face stays open for ``tower_entry``."""
+    if skip_yaw is None:
+        return _TOWER_QUARTER_YAWS
+    sy = int(skip_yaw) % 360
+    return tuple(y for y in _TOWER_QUARTER_YAWS if y != sy)
+
+
 from pae.plan import CellRole, FloorPlan, StoreyGrid
 from pae.solver import WING_ROLES
 from pae.primitives.catalog import catalog_by_id, get as get_primitive
@@ -182,7 +202,10 @@ def _door_asset_for_role(role: Optional[str], style: StyleLike) -> str:
         return _style_door_asset(style)
     role = role.lower()
     gothic = _style_is_gothic(style)
-    if role in ("grand", "gate"):
+    if role == "gate":
+        # Fortress / curtain twin leaves — max clear bay (@GATEHOUSE_MONUMENTAL).
+        return "wall_door_gothic" if gothic else "wall_gate_arch_grand"
+    if role == "grand":
         return "wall_door_gothic" if gothic else "wall_gate_arch"
     if role == "main":
         return "wall_door_gothic" if gothic else "wall_door"
@@ -371,10 +394,18 @@ def _place_inhabited_inner_walls(
     catalog: _PieceCatalog,
     placements: List[SolidPlacement],
     counters: Dict[str, int],
+    tower_cells: Optional[Set[Tuple[int, int]]] = None,
 ) -> None:
-    """Inhabited wall ranges on re-entrant / courtyard boundaries (§11 M4)."""
+    """Inhabited wall ranges on re-entrant / courtyard boundaries (§11 M4).
+
+    Tower drum cells are skipped — the round ``tower_arc`` shell is the enclosure;
+    a rectangular inner wall through the drum is junk (user: crap inside keeps).
+    """
+    owned = tower_cells or set()
     for (cx, cy), role in grid.cells.items():
         if role != CellRole.WALL_LINE:
+            continue
+        if (cx, cy) in owned:
             continue
         for face in _inner_wall_faces(grid, cx, cy, bbox):
             yaw = _YAW_FOR_VOID_FACE[face]
@@ -614,6 +645,15 @@ def _opening_probe_cell(cell: Tuple[int, int], face: str) -> Tuple[int, int]:
     return cell
 
 
+def _gate_passage_footprint_columns(fp: FloorPlan) -> Set[int]:
+    """Footprint X columns of south (or any) gate leaves — through-passage corridor."""
+    return {
+        cell[0]
+        for cell, role in fp.entrance_by_cell.items()
+        if role == "gate"
+    }
+
+
 def _wall_asset_for_cell(
     fp: FloorPlan,
     cell: Tuple[int, int],
@@ -786,8 +826,56 @@ def _aperture_world(
     cx, cy = piece.cell
     world_x = cx * MODULE_CM + wx + rx
     world_y = cy * MODULE_CM + wy + ry
-    world_z = piece.level * STOREY_CM + wz + mid_local[2]
+    world_z = storey_datum_z_cm(piece.level) + wz + mid_local[2]
     return (world_x, world_y, world_z)
+
+
+def _declared_wall_height_storeys(fp: FloorPlan) -> float:
+    """Building envelope height in storeys — gates/arches span this."""
+    wh = getattr(fp, "wall_height_storeys", None)
+    if wh is not None:
+        return float(max(1.0, float(wh)))
+    if fp.massing is not None:
+        mwh = getattr(fp.massing, "wall_height_storeys", None)
+        if mwh is not None:
+            return float(max(1.0, float(mwh)))
+        return float(max(1, int(fp.massing.storeys)))
+    return float(max(1, len(fp.storeys)))
+
+
+def _wall_piece_height_storeys(
+    fp: FloorPlan,
+    level: int,
+    asset_id: str,
+    entrance_role: Optional[str],
+) -> float:
+    """How many storeys a wall leaf should span (1.0 = one MODULE storey stub)."""
+    if level != 0:
+        return 1.0
+    role = (entrance_role or "").lower()
+    monumental = (
+        role in ("gate", "grand")
+        or "gate" in asset_id
+        or asset_id
+        in (
+            "wall_gate_arch",
+            "wall_gate_arch_grand",
+            "wall_arcade_monumental",
+        )
+    )
+    if not monumental:
+        return 1.0
+    # Span the declared envelope, but never shorter than the leaf needed for a
+    # one-storey clear opening (profile height_frac < 1.0).
+    return max(_declared_wall_height_storeys(fp), gate_span_min_storeys())
+
+
+def _wall_size_for_height_storeys(
+    piece: _ResolvedPiece, height_storeys: float
+) -> Tuple[float, float, float]:
+    """Keep XY kit size; set Z from declared storeys × ``STOREY_CM``."""
+    sx, sy, _sz = piece.size_cm
+    return (sx, sy, height_cm_from_storeys(height_storeys))
 
 
 def _place_wall_run(
@@ -803,6 +891,7 @@ def _place_wall_run(
     apertures: List[Aperture],
     piece_ids: List[str],
     counters: Dict[str, int],
+    spanning_keys: Optional[Set[Tuple[str, Tuple[int, int]]]] = None,
 ) -> None:
     yaw_by_face = {"west": 0, "east": 180, "south": 270, "north": 90}
     yaw = yaw_by_face[face]
@@ -811,23 +900,51 @@ def _place_wall_run(
     # to wrap through the building, with windows opening into the tower's interior and
     # no way in or out. The drum arcs are the enclosure on these cells; the box is not.
     tower_owned = _tower_cells(fp)
+    span_keys = spanning_keys if spanning_keys is not None else set()
+    gate_passage_xs = _gate_passage_footprint_columns(fp)
     for cell in cells:
         if cell in tower_owned:
             continue
+        # Tall gate/arch already spans upper storeys — do not stack a second stub.
+        if level > 0 and (face, cell) in span_keys:
+            continue
+        probe = _opening_probe_cell(cell, face)
+        north_gate_through = (
+            face == "north"
+            and level == 0
+            and probe[0] in gate_passage_xs
+        )
 
         piece_def = _wall_asset_for_cell(
             fp, cell, face, catalog, style, bbox, level
         )
+        entrance_role = fp.entrance_by_cell.get(probe)
+        if north_gate_through:
+            piece_def = catalog.pick_wall(
+                is_door=True,
+                is_window=False,
+                style=style,
+                entrance_role="gate",
+            )
+            entrance_role = "gate"
         offset = _boundary_wall_offset_cm(face, yaw, piece_def)
         pid = _next_piece_id(counters, f"wall_{face}", cell, level)
-        tags = piece_def.tags
-        probe = _opening_probe_cell(cell, face)
-        entrance_role = fp.entrance_by_cell.get(probe)
+        tags = set(piece_def.tags)
+        if entrance_role is None:
+            entrance_role = fp.entrance_by_cell.get(probe)
         aid = piece_def.asset_id
         if entrance_role and ("door" in aid or "gate" in aid):
             from pae.existence import entrance_role_tag
 
-            tags = tags | frozenset({entrance_role_tag(entrance_role)})
+            tags.add(entrance_role_tag(entrance_role))
+        height_storeys = _wall_piece_height_storeys(
+            fp, level, aid, entrance_role
+        )
+        size_cm = _wall_size_for_height_storeys(piece_def, height_storeys)
+        if height_storeys > 1.0 + 1e-9:
+            tags.add(WALL_HEIGHT_SPAN_TAG)
+            tags.add(f"height_storeys:{height_storeys:g}")
+            span_keys.add((face, cell))
         sp = SolidPlacement(
             piece_id=pid,
             asset_id=piece_def.asset_id,
@@ -836,9 +953,9 @@ def _place_wall_run(
             level=level,
             yaw=yaw,
             offset_cm=offset,
-            size_cm=piece_def.size_cm,
+            size_cm=size_cm,
             rotates_about_center=piece_def.rotates_about_center,
-            tags=tags,
+            tags=frozenset(tags),
         )
         placements.append(sp)
         piece_ids.append(pid)
@@ -847,7 +964,7 @@ def _place_wall_run(
         if "door" in aid or "gate" in aid:
             layer = _layer_from_grid(next(g for g in fp.storeys if g.level == level))
             interior, exterior = _resolved_aperture_cells(face, cell, layer)
-            floor_z = level * STOREY_CM
+            floor_z = storey_datum_z_cm(level)
             sill = _aperture_world(sp, "door")[2]
             apertures.append(
                 Aperture(
@@ -865,7 +982,7 @@ def _place_wall_run(
         elif "window" in aid or aid == "wall_arrowslit":
             layer = _layer_from_grid(next(g for g in fp.storeys if g.level == level))
             interior, exterior = _resolved_aperture_cells(face, cell, layer)
-            floor_z = level * STOREY_CM
+            floor_z = storey_datum_z_cm(level)
             sill = _aperture_world(sp, "window")[2]
             apertures.append(
                 Aperture(
@@ -941,7 +1058,7 @@ def _place_interior_partitions(
 
         if is_door:
             interior, exterior = _partition_aperture_cells(face, (cx, cy))
-            floor_z = level * STOREY_CM
+            floor_z = storey_datum_z_cm(level)
             sill = _aperture_world(sp, "door")[2]
             apertures.append(
                 Aperture(
@@ -1045,7 +1162,7 @@ def _stair_occupied_cells(fp: FloorPlan) -> Set[Tuple[int, int, int]]:
         return occupied
     if len(run_cells) < 2:
         return occupied
-    pads = _monumental_flight_pads(run_cells) if kind in ("switchback", "wide") else None
+    pads = _monumental_flight_pads(run_cells) if kind in _MONUMENTAL_PAD_KINDS else None
     for level in range(len(fp.storeys) - 1):
         grid = fp.storeys[level]
         if pads is not None:
@@ -1120,17 +1237,27 @@ def _place_stairs(
         cell = run_cells[0]
         quarter_rise = spiral_def.size_cm[2]
         xy_offset = (0.0, 0.0)
+        skip_yaw: Optional[int] = None
         if fp.massing is not None:
             bodies = [v for v in fp.massing.volumes if v.role in WING_ROLES]
             for vol in fp.massing.volumes:
                 if vol.role == "tower" and (vol.x0, vol.y0) == cell:
                     xy_offset = _tower_drum_xy_offset_cm(vol, bodies)
+                    skip_yaw = _tower_attach_skip_yaw(vol, bodies)
                     break
+        spiral_yaws = _spiral_quarter_yaws(skip_yaw)
+        step_rise = STOREY_CM / len(spiral_yaws)
+        # FIT THE TREADS INSIDE THE DRUM. The arc and the stair quarter are both
+        # nominally one module square, but the arc is a RING carrying WALL_T of masonry
+        # at its outer radius — so a full-module tread runs straight THROUGH the tower
+        # wall. On the fortress that was 213 of 524 interpenetration warnings, the
+        # single largest cause, and it reads as the stair escaping the tower.
+        _bore = MODULE_CM - 2.0 * WALL_T_CM
         for level in range(len(fp.storeys) - 1):
             grid = fp.storeys[level]
             if grid.get(*cell) != CellRole.STAIR:
                 continue
-            for qi, yaw in enumerate((0, 90, 180, 270)):
+            for qi, yaw in enumerate(spiral_yaws):
                 pid = _next_piece_id(counters, f"stair_spiral_{yaw}", cell, level)
                 placements.append(
                     SolidPlacement(
@@ -1140,8 +1267,8 @@ def _place_stairs(
                         cell=cell,
                         level=level,
                         yaw=yaw,
-                        offset_cm=(xy_offset[0], xy_offset[1], qi * quarter_rise),
-                        size_cm=spiral_def.size_cm,
+                        offset_cm=(xy_offset[0], xy_offset[1], qi * step_rise),
+                        size_cm=(_bore, _bore, spiral_def.size_cm[2]),
                         rotates_about_center=True,
                         tags=spiral_def.tags,
                     )
@@ -1179,12 +1306,12 @@ def _place_stairs(
 
     pads = (
         _monumental_flight_pads(run_cells)
-        if asset_id in ("stair_switchback", "stair_wide")
+        if kind in _MONUMENTAL_PAD_KINDS
         else None
     )
     climbed = len(fp.storeys) - 1
     if (
-        asset_id in ("stair_switchback", "stair_wide")
+        kind in _MONUMENTAL_PAD_KINDS
         and climbed >= 2
         and pads is None
     ):
@@ -1205,6 +1332,8 @@ def _place_stairs(
                 critical=True,
             )
         )
+        # Fail-closed — do not emit stacked flights after reporting (D3-3).
+        return
 
     if asset_id == "stair_straight":
         anchor, yaw = _stair_run_anchor_and_yaw(run_cells)
@@ -1277,7 +1406,7 @@ def _place_stairs(
                         world_xyz=(
                             lvl_anchor[0] * MODULE_CM + MODULE_CM * 0.5,
                             lvl_anchor[1] * MODULE_CM + MODULE_CM * 0.5,
-                            float(level * STOREY_CM),
+                            float(storey_datum_z_cm(level)),
                         ),
                         critical=True,
                     )
@@ -1373,11 +1502,17 @@ def _punch_stair_exit_holes(
             continue
         for cell in covered_cells(p):
             existing.add((p.level, cell))
+    # Prefer existing floor/tower_deck levels so taller keep drums can open the
+    # crown slab even when the hall FloorPlan has fewer storeys.
+    max_floor_level = max(
+        (p.level for p in placements if p.kind == "floor"),
+        default=len(fp.storeys) - 1,
+    )
     for stair in placements:
         if stair.kind != "stair":
             continue
         top_level = stair.level + 1
-        if top_level >= len(fp.storeys):
+        if top_level > max_floor_level:
             continue
         # ONE opening matching the run's own footprint. Punching a 1x1 hole per covered
         # cell gave a 2x1 stairwell two separate square holes instead of the single 2x1
@@ -1815,13 +1950,112 @@ def _tower_attach_skip_yaw(
     return None
 
 
-def _tower_has_spiral_stair(fp: FloorPlan, cell: Tuple[int, int]) -> bool:
+def _spiral_tower_drum_cells(fp: FloorPlan) -> Set[Tuple[int, int]]:
+    """Tower cells that own a helical drum stair (TowerSpec or building spiral)."""
+    cells: Set[Tuple[int, int]] = set()
     if fp.massing is None:
-        return False
+        return cells
     kind = str(getattr(fp.massing, "stair_kind", "") or "").lower()
-    if kind != "spiral":
-        return False
-    return cell in set(fp.stair_cells)
+    if kind == "spiral":
+        cells |= set(fp.stair_cells)
+    for vol in fp.massing.volumes:
+        if vol.role != "tower":
+            continue
+        if str(getattr(vol, "stair_kind", "") or "").lower() == "spiral":
+            cells |= vol.cells()
+    return cells
+
+
+def _tower_has_spiral_stair(
+    fp: FloorPlan,
+    cell: Tuple[int, int],
+    placements: Optional[Sequence[SolidPlacement]] = None,
+) -> bool:
+    if placements is not None:
+        if any(
+            p.asset_id == "stair_spiral_quarter" and p.cell == cell for p in placements
+        ):
+            return True
+    return cell in _spiral_tower_drum_cells(fp)
+
+
+def _place_habitable_tower_spirals(
+    *,
+    floor_plan: FloorPlan,
+    catalog: _PieceCatalog,
+    placements: List[SolidPlacement],
+    counters: Dict[str, int],
+) -> None:
+    """Helical climb inside every TowerSpec with ``stair_kind=spiral``.
+
+    Hall may keep switchback/straight; each multi-storey keep drum still needs
+    its own vertical circulation (Phase 4.7 / @TOWER_KEEP_HABITABLE). Skips cells
+    that already have ``stair_spiral_quarter`` (building-level spiral path).
+    """
+    if floor_plan.massing is None:
+        return
+    spiral_def = catalog.get("stair_spiral_quarter")
+    quarter_rise = spiral_def.size_cm[2]
+    bodies = [v for v in floor_plan.massing.volumes if v.role in WING_ROLES]
+    already = {
+        p.cell
+        for p in placements
+        if p.asset_id == "stair_spiral_quarter"
+    }
+    for vol in floor_plan.massing.volumes:
+        if vol.role != "tower":
+            continue
+        if str(getattr(vol, "stair_kind", "") or "").lower() != "spiral":
+            continue
+        if vol.storeys < 2:
+            continue
+        cell = (vol.x0, vol.y0)
+        if cell in already:
+            continue
+        xy_offset = _tower_drum_xy_offset_cm(vol, bodies)
+        body = _tower_attached_body(vol, bodies)
+        skip_yaw = _tower_attach_skip_yaw(vol, bodies)
+        spiral_yaws = _spiral_quarter_yaws(skip_yaw)
+        step_rise = STOREY_CM / len(spiral_yaws)
+        # Climb every shaft storey to the crown landing under ``tower_deck``.
+        climb = max(0, vol.storeys - 1)
+        for level in range(climb):
+            for qi, yaw in enumerate(spiral_yaws):
+                pid = _next_piece_id(
+                    counters, f"stair_spiral_{yaw}", cell, level
+                )
+                placements.append(
+                    SolidPlacement(
+                        piece_id=pid,
+                        asset_id=spiral_def.asset_id,
+                        kind="stair",
+                        cell=cell,
+                        level=level,
+                        yaw=yaw,
+                        offset_cm=(xy_offset[0], xy_offset[1], qi * step_rise),
+                        # Clear bore, not the full module — see the note in
+                        # ``_place_stairs``: the drum arc is a RING with WALL_T of
+                        # masonry, so a full-module tread runs through the tower wall.
+                        size_cm=(
+                            MODULE_CM - 2.0 * WALL_T_CM,
+                            MODULE_CM - 2.0 * WALL_T_CM,
+                            spiral_def.size_cm[2],
+                        ),
+                        rotates_about_center=True,
+                        tags=spiral_def.tags | frozenset({"tower", "habitable_drum"}),
+                    )
+                )
+            from pae.spiral_shell import place_spiral_newels
+
+            place_spiral_newels(
+                placements=placements,
+                counters=counters,
+                cell=cell,
+                levels=(level,),
+                xy_offset=xy_offset,
+                next_piece_id=_next_piece_id,
+            )
+        already.add(cell)
 
 
 def _tower_window_slots(
@@ -1844,6 +2078,38 @@ def _tower_window_slots(
     if skip_yaw is None:
         return slots
     return [(qi, yaw) for qi, yaw in slots if yaw != skip_yaw]
+
+
+def _clamp_tower_window_tangential_offset(
+    ox: float,
+    oy: float,
+    *,
+    yaw: int,
+    size_xy: Tuple[float, float],
+) -> Tuple[float, float]:
+    """Keep the chord's tangential centre inside the host tower cell.
+
+    Attach-face bias may flush a N/S (or E/W) rim shell fully into a side-neighbour
+    cell. After compound merge that neighbour often carries another building's roof,
+    so ``covered_cells`` falsely reports ``roof_penetration`` on tall gatehouse
+    arrowslits. Radial (outward) offset is left alone so hall-kiss clearance stays.
+    """
+    sx, sy = size_xy
+    hx, hy = sx * 0.5, sy * 0.5
+    if yaw in (90, 270):
+        # Chord runs in X — clamp X only.
+        lo, hi = hx, MODULE_CM - hx
+        if lo <= hi:
+            ox = min(max(ox, lo), hi)
+        else:
+            ox = MODULE_CM * 0.5
+    elif yaw in (0, 180):
+        lo, hi = hy, MODULE_CM - hy
+        if lo <= hi:
+            oy = min(max(oy, lo), hi)
+        else:
+            oy = MODULE_CM * 0.5
+    return ox, oy
 
 
 def _tower_window_shell_pose(
@@ -1887,6 +2153,9 @@ def _tower_window_shell_pose(
     else:  # 270 south face
         size = (chord_cm, thick, height_cm)
         ox, oy = dx + bias_x, dy - radial + bias_y
+    ox, oy = _clamp_tower_window_tangential_offset(
+        ox, oy, yaw=yaw, size_xy=(size[0], size[1])
+    )
     return size, (ox, oy, z_off)
 
 
@@ -1914,6 +2183,7 @@ def _place_tower_windows(
     placements: List[SolidPlacement],
     apertures: List[Aperture],
     counters: Dict[str, int],
+    max_glazed_storeys: Optional[int] = None,
 ) -> None:
     """Helical / perimeter drum windows (Phase 0.6 / 4.7).
 
@@ -1932,6 +2202,13 @@ def _place_tower_windows(
         wall_win = catalog.get("wall_window")
     quarter_rise = catalog.get("stair_spiral_quarter").size_cm[2]
 
+    # Crown / above-hall storeys stay solid arcs — glazing there pokes through
+    # abutting hall/curtain roofs after compound merge (roof_penetration).
+    glazed_storeys = (
+        max(1, vol.storeys - 1)
+        if max_glazed_storeys is None
+        else max(1, int(max_glazed_storeys))
+    )
     for level in range(vol.storeys):
         window_yaws = {
             yaw
@@ -1939,6 +2216,8 @@ def _place_tower_windows(
                 level=level, helical=helical, skip_yaw=skip_yaw
             )
         }
+        if level >= glazed_storeys:
+            window_yaws = set()
         for yaw in _TOWER_QUARTER_YAWS:
             use_window = yaw in window_yaws
             piece = win_arc if use_window else solid_arc
@@ -1963,17 +2242,22 @@ def _place_tower_windows(
                 )
             )
 
+        if level >= glazed_storeys:
+            continue
         for qi, yaw in _tower_window_slots(
             level=level, helical=helical, skip_yaw=skip_yaw
         ):
             if helical:
                 z_off = float(qi * quarter_rise)
-                height = min(quarter_rise * 0.9, STOREY_CM * 0.4)
-                chord = min(_TOWER_WIN_CHORD_CM, wall_win.size_cm[1] * 0.55)
+                height = min(
+                    drum_window_height_cm(helical=True),
+                    quarter_rise * 0.95,
+                )
+                chord = _TOWER_WIN_CHORD_CM
             else:
                 # z=0 keeps wall_window aperture sill (~98 cm) inside [80, 120].
                 z_off = 0.0
-                height = _TOWER_WIN_HEIGHT_CM
+                height = drum_window_height_cm(helical=False)
                 chord = _TOWER_WIN_CHORD_CM
             size, offset = _tower_window_shell_pose(
                 drum_xy,
@@ -1999,7 +2283,7 @@ def _place_tower_windows(
                 tags=tags,
             )
             placements.append(sp)
-            floor_z = level * STOREY_CM
+            floor_z = storey_datum_z_cm(level)
             world = _aperture_world(sp, "window")
             apertures.append(
                 Aperture(
@@ -2072,7 +2356,7 @@ def _tower_rampart_junction_z_cm(
     roof_top = _hall_roof_top_over_tower_cm(cell, placements)
     if roof_top is None:
         return base
-    level_base = top_level * STOREY_CM
+    level_base = storey_datum_z_cm(top_level)
     # Deck bottom = level_base + junction_z - FLOOR_T; clear roof top by TOL.
     needed = roof_top - level_base + FLOOR_T_CM + TOL_CM
     return max(base, needed)
@@ -2105,7 +2389,13 @@ def _place_tower_arcs(
         cell = (vol.x0, vol.y0)
         drum_xy = _tower_drum_xy_offset_cm(vol, bodies)
         skip_yaw = _tower_attach_skip_yaw(vol, bodies)
-        helical = _tower_has_spiral_stair(floor_plan, cell)
+        helical = _tower_has_spiral_stair(floor_plan, cell, placements)
+        body = _tower_attached_body(vol, bodies)
+        # Glaze hall-overlapping storeys only — shaft above the hall (taller
+        # drums) stays solid arcs so compound neighbour roofs are not pierced.
+        max_glaze = vol.storeys - 1
+        if body is not None:
+            max_glaze = min(max_glaze, body.storeys)
         _place_tower_windows(
             vol=vol,
             cell=cell,
@@ -2117,6 +2407,7 @@ def _place_tower_arcs(
             placements=placements,
             apertures=apertures,
             counters=counters,
+            max_glazed_storeys=max_glaze,
         )
         # @VAL_TOWER_DOOR — hall↔drum doorway on attach face (owned module).
         from pae.tower_entry import place_tower_entry_doors
@@ -2220,14 +2511,16 @@ def _ensure_spiral_drum_enclosure(
     """
     if floor_plan.massing is None:
         return
-    kind = str(getattr(floor_plan.massing, "stair_kind", "") or "").lower()
-    if kind != "spiral":
-        return
     from pae.spiral_shell import DESIGNED_DOOR_BAY_TAGS, ensure_spiral_drum_quarters
 
     solid = catalog.get("tower_arc_quarter")
     bodies = [v for v in floor_plan.massing.volumes if v.role in WING_ROLES]
-    for cell in floor_plan.stair_cells:
+    spiral_cells = {
+        p.cell
+        for p in placements
+        if p.asset_id == "stair_spiral_quarter"
+    } | _spiral_tower_drum_cells(floor_plan)
+    for cell in sorted(spiral_cells):
         levels = {
             p.level
             for p in placements
@@ -2285,6 +2578,8 @@ def assemble(
     storeys = len(floor_plan.storeys)
     stair_occupied = _stair_occupied_cells(floor_plan)
     tower_cells = _tower_cells(floor_plan)
+    # Gate/grand leaves that span N storeys — upper levels skip these (face, cell).
+    spanning_wall_keys: Set[Tuple[str, Tuple[int, int]]] = set()
 
     for grid in floor_plan.storeys:
         level = grid.level
@@ -2320,6 +2615,7 @@ def assemble(
                 apertures=apertures,
                 piece_ids=run_piece_ids[face],
                 counters=counters,
+                spanning_keys=spanning_wall_keys,
             )
             run_piece_ids[face] = [p.piece_id for p in placements[before:]]
 
@@ -2330,6 +2626,7 @@ def assemble(
             catalog=catalog,
             placements=placements,
             counters=counters,
+            tower_cells=tower_cells,
         )
 
         floor_piece = catalog.get("floor")
@@ -2359,35 +2656,51 @@ def assemble(
             # Upper storeys: one spanning deck (perimeter walls carry the span).
             # VOID bays also get floor_hole rims; the Blender mesh punches those
             # openings out of the deck so the stair top is not a solid ceiling.
-            modules_x = x1 - x0 + 1
-            modules_y = y1 - y0 + 1
-            pid = _next_piece_id(counters, "floor_deck", (x0, y0), level)
-            placements.append(
-                SolidPlacement(
-                    piece_id=pid,
-                    asset_id=floor_piece.asset_id,
-                    kind="floor",
-                    cell=(x0, y0),
-                    level=level,
-                    yaw=0,
-                    offset_cm=(0.0, 0.0, floor_z_off),
-                    # Exact module span — no roof eaves (those belong on roof_flat only).
-                    size_cm=(
-                        modules_x * MODULE_CM,
-                        modules_y * MODULE_CM,
-                        FLOOR_T_CM,
-                    ),
-                    tags=floor_piece.tags,
+            # Use real floor-role cells only — bbox fill around outboard turrets
+            # invented empty bays that spanned under neighbour compound roofs
+            # (gatehouse L2 × cloister hip headroom).
+            deck_cells = [
+                (cx, cy)
+                for (cx, cy), role in grid.cells.items()
+                if role in _FLOOR_ROLES and (cx, cy) not in tower_cells
+            ]
+            if deck_cells:
+                dx0 = min(c[0] for c in deck_cells)
+                dy0 = min(c[1] for c in deck_cells)
+                dx1 = max(c[0] for c in deck_cells)
+                dy1 = max(c[1] for c in deck_cells)
+                modules_x = dx1 - dx0 + 1
+                modules_y = dy1 - dy0 + 1
+                pid = _next_piece_id(counters, "floor_deck", (dx0, dy0), level)
+                placements.append(
+                    SolidPlacement(
+                        piece_id=pid,
+                        asset_id=floor_piece.asset_id,
+                        kind="floor",
+                        cell=(dx0, dy0),
+                        level=level,
+                        yaw=0,
+                        offset_cm=(0.0, 0.0, floor_z_off),
+                        # Exact module span — no roof eaves (those belong on roof_flat only).
+                        size_cm=(
+                            modules_x * MODULE_CM,
+                            modules_y * MODULE_CM,
+                            FLOOR_T_CM,
+                        ),
+                        tags=floor_piece.tags,
+                    )
                 )
-            )
             # Punch stairwell openings: plan VOIDs, and any stair-run cell on upper
             # decks (multi-storey wells keep STAIR on intermediate floors).
+            # Habitable keep drums (TowerSpec.stair_kind=spiral): exclude the drum
+            # from the hall spanning slab so the helix is not a ceiling plug.
+            spiral_drum_cells = _spiral_tower_drum_cells(floor_plan)
             hole_cells = {
                 (cx, cy)
                 for (cx, cy), role in grid.cells.items()
                 if role in (CellRole.VOID, CellRole.DOUBLE_VOID)
                 or (level > 0 and (cx, cy) in floor_plan.stair_cells)
-            }
+            } | spiral_drum_cells
             # Merge into RECTANGLES. One hole per cell gave a 2x1 stairwell two separate
             # square openings instead of the single 2x1 well the run needs — the deck
             # read as two punched squares with a rib of floor left between them.
@@ -2419,21 +2732,35 @@ def assemble(
                 wing_spans = _massing_wing_roof_spans(floor_plan, grid)
                 roof_spans = wing_spans if wing_spans else [(x0, y0, x1, y1)]
                 for rx0, ry0, rx1, ry1 in roof_spans:
-                    modules_x = rx1 - rx0 + 1
-                    modules_y = ry1 - ry0 + 1
+                    # Exclude tower drums (same as pitched) — a flat deck through the
+                    # helix kills headroom / stair_exit on habitable keep towers.
+                    cells = [
+                        (x, y)
+                        for x in range(rx0, rx1 + 1)
+                        for y in range(ry0, ry1 + 1)
+                        if (x, y) not in tower_cells
+                    ]
+                    if not cells:
+                        continue
+                    sx0 = min(c[0] for c in cells)
+                    sy0 = min(c[1] for c in cells)
+                    sx1 = max(c[0] for c in cells)
+                    sy1 = max(c[1] for c in cells)
+                    modules_x = sx1 - sx0 + 1
+                    modules_y = sy1 - sy0 + 1
                     west, east, south, north = roof_eave_overhang_per_side(
-                        rx0, ry0, rx1, ry1, roof_spans
+                        sx0, sy0, sx1, sy1, roof_spans
                     )
                     eave_ox, eave_oy, _ = roof_eave_offset_cm(
                         overhang_west=west, overhang_south=south
                     )
-                    pid = _next_piece_id(counters, "roof", (rx0, ry0), level)
+                    pid = _next_piece_id(counters, "roof", (sx0, sy0), level)
                     placements.append(
                         SolidPlacement(
                             piece_id=pid,
                             asset_id=roof_piece.asset_id,
                             kind="roof",
-                            cell=(rx0, ry0),
+                            cell=(sx0, sy0),
                             level=level,
                             yaw=0,
                             offset_cm=(eave_ox, eave_oy, roof_z),
@@ -2495,8 +2822,10 @@ def assemble(
         failures=failures,
     )
 
-    _punch_stair_exit_holes(
-        fp=floor_plan,
+    # Per-tower drum helixes (keep/gatehouse) — before arcs so windows go helical
+    # and before hole punch so wells cover the full spiral footprint (Rule 5.1).
+    _place_habitable_tower_spirals(
+        floor_plan=floor_plan,
         catalog=catalog,
         placements=placements,
         counters=counters,
@@ -2516,6 +2845,14 @@ def assemble(
     # Door bay gaps are exempted by tag (@VAL_TOWER_DOOR); ramparts @VAL_TOWER_RAMPART.
     _ensure_spiral_drum_enclosure(
         floor_plan=floor_plan,
+        catalog=catalog,
+        placements=placements,
+        counters=counters,
+    )
+
+    # Punch after tower decks/spirals so crown arrival wells are covered too.
+    _punch_stair_exit_holes(
+        fp=floor_plan,
         catalog=catalog,
         placements=placements,
         counters=counters,
@@ -2618,6 +2955,10 @@ def assemble(
                 check_entrance_ensemble_existence(entrances, assembly)
             )
         failures.extend(check_entrance_existence(entrances, assembly))
+    # Autofix stair landing solid-wall blockers (CRITICAL stair_landing_clear).
+    from pae.stair_occupancy import repair_stair_landing_walls
+
+    assembly = repair_stair_landing_walls(assembly)
     return assembly, Report.from_failures(failures)
 
 

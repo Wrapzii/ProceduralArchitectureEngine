@@ -7,7 +7,7 @@ Export must refuse to run when critical defects exist.
 from __future__ import annotations
 
 import math
-from typing import Dict, Iterable, List, Set, Tuple
+from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 from pae.assembly_types import (
     Assembly,
@@ -25,7 +25,11 @@ from pae.contract import (
     WALL_T_CM,
     aabb_intersects,
     aabb_overlap,
+    gate_clear_min_cm,
+    height_cm_from_storeys,
     placement_world_aabb,
+    storeys_from_height_cm,
+    storey_datum_z_cm,
 )
 from pae.plan import CellRole
 from pae.report import Failure, Report
@@ -52,7 +56,11 @@ def validate(assembly: Assembly) -> Tuple[Assembly, Report]:
     failures.extend(_check_room_specs(assembly))
     failures.extend(_check_stair_reachability(assembly))
     failures.extend(_check_stair_exit_clearance(assembly))
+    failures.extend(_check_stair_run_floor_clear(assembly))
     failures.extend(_check_stair_flight_stack(assembly))
+    failures.extend(_check_approach_stairs(assembly))
+    failures.extend(_check_roof_edging_exclusive(assembly))
+    failures.extend(_check_wall_face_exclusive(assembly))
     failures.extend(_check_classroom_corridor_connectivity(assembly))
     failures.extend(_check_corridor_stair_connectivity(assembly))
     failures.extend(_check_run_fit(assembly))
@@ -60,6 +68,7 @@ def validate(assembly: Assembly) -> Tuple[Assembly, Report]:
     failures.extend(_check_no_bare_aperture_holes(assembly))
     failures.extend(_check_aperture_alignment(assembly))
     failures.extend(_check_structural_islands(assembly))
+    failures.extend(_check_structure_identity(assembly))
     failures.extend(_check_canopy_attachment(assembly))
     failures.extend(_check_roof_bears_on_wall(assembly))
     failures.extend(_check_roof_penetration(assembly))
@@ -67,15 +76,22 @@ def validate(assembly: Assembly) -> Tuple[Assembly, Report]:
     failures.extend(_check_band_attachment(assembly))
     failures.extend(_check_aperture_reachability(assembly))
     failures.extend(_check_tower_entry_door(assembly))
+    failures.extend(_check_tower_entry_clears_stair(assembly))
+    failures.extend(_check_spiral_reaches_top(assembly))
     failures.extend(_check_upper_entrance_landing(assembly))
     failures.extend(_check_storey_egress(assembly))
     failures.extend(_check_stair_landing_clearance(assembly))
+    failures.extend(_check_stair_landing_strip_scope(assembly))
     failures.extend(_check_stair_typology_match(assembly))
     failures.extend(_check_headroom(assembly))
     failures.extend(_check_roof_covers_enclosed(assembly))
     failures.extend(_check_spiral_shell(assembly))
     failures.extend(_check_tower_ramparts(assembly))
     failures.extend(_check_fortress_compound(assembly))
+    failures.extend(_check_arcade_gallery(assembly))
+    failures.extend(_check_building_height(assembly))
+    failures.extend(_check_compound_circulation(assembly))
+    failures.extend(_check_storey_datum_consistent(assembly))
     failures = _sort_failures(failures)
     return assembly, Report.from_failures(failures)
 
@@ -306,6 +322,10 @@ def _check_vertical_support(assembly: Assembly) -> List[Failure]:
             # band_attachment check replaces this one for this kind, with four conditions
             # rather than one, so "attached" means attached, not merely "touching".
             continue
+        if p.kind == "light_anchor":
+            # DOCUMENTED EXEMPTION (Handbook §3). UE spawn markers — not structural
+            # envelope. Same family as ``ISLAND_EXEMPT_KINDS`` / ``anchors.py`` contract.
+            continue
         bb_min, bb_max = _placement_aabb(p)
         bottom_z = bb_min[2]
         if bottom_z <= tol:
@@ -433,9 +453,9 @@ def _emit_collinear_span_gaps(
         if gap > TOL_CM:
             mid = (end_a + start_b) * 0.5
             if axis == "y":
-                xyz = (plane, mid, level * STOREY_CM + STOREY_CM * 0.5)
+                xyz = (plane, mid, storey_datum_z_cm(level) + STOREY_CM * 0.5)
             else:
-                xyz = (mid, plane, level * STOREY_CM + STOREY_CM * 0.5)
+                xyz = (mid, plane, storey_datum_z_cm(level) + STOREY_CM * 0.5)
             where = f"in run {run_id}" if run_id else f"on level {level}"
             failures.append(
                 Failure(
@@ -529,6 +549,10 @@ def _check_tower_hall_kiss(assembly: Assembly) -> List[Failure]:
     but a drum that sits near the hall with an air gap can still join the touch graph
     via stairs/floors. Engineering continuity requires the attach *kiss* itself.
     Freestanding drums fail; wall-attached drums (M3) pass.
+
+    Tall gatehouse / keep drums continue above the hall eaves — crown storeys have
+    no hall wall in their Z band. Kiss applies only where the arc Z-range overlaps
+    at least one hall wall (not demoted; scoped to the attach contract).
     """
     arcs = [p for p in assembly.placements if p.kind == "tower_arc"]
     if not arcs:
@@ -541,7 +565,14 @@ def _check_tower_hall_kiss(assembly: Assembly) -> List[Failure]:
     failures: List[Failure] = []
     for arc in arcs:
         amin, amax = _placement_aabb(arc)
-        if any(aabb_intersects(amin, amax, h[0], h[1]) for h in hall_boxes):
+        z_peers = [
+            (hmin, hmax)
+            for hmin, hmax in hall_boxes
+            if min(amax[2], hmax[2]) - max(amin[2], hmin[2]) >= -TOL_CM
+        ]
+        if not z_peers:
+            continue
+        if any(aabb_intersects(amin, amax, hmin, hmax) for hmin, hmax in z_peers):
             continue
         failures.append(
             Failure(
@@ -782,7 +813,53 @@ def _interpenetration_pair_allowed(
 
     if designed_spiral_newel_pair(a, b):
         return True
+    if _designed_drum_bore_pair(a, b, a_min, a_max, b_min, b_max):
+        return True
     return False
+
+
+#: Assets that are RINGS — hollow in the middle, but whose AABB is a solid box.
+_RING_ASSETS = ("tower_arc_quarter", "tower_arc_quarter_window")
+
+
+def _designed_drum_bore_pair(
+    a: SolidPlacement,
+    b: SolidPlacement,
+    a_min: Tuple[float, float, float],
+    a_max: Tuple[float, float, float],
+    b_min: Tuple[float, float, float],
+    b_max: Tuple[float, float, float],
+) -> bool:
+    """A piece standing INSIDE a drum is not overlapping the drum.
+
+    WHY: a tower arc is a ring carrying ``WALL_T`` of masonry at its outer radius, but
+    its AABB is the full module box. So every stair tread, newel, floor and rail that
+    legitimately occupies the tower's clear bore reported as interpenetrating the wall
+    around it — 213 of 524 warnings on the fortress compound, every one of them false.
+
+    That mattered more than the false positives themselves: the real defects were
+    invisible inside the noise, which is how a build reporting "0 critical" could look
+    as wrong as it did.
+
+    This is a limit of AABB testing against ring geometry, NOT a licence to ignore
+    overlaps. The piece must lie *within the bore* on both plan axes, so a wall driven
+    through the tower from outside still fails. Written in code with its reason,
+    per Handbook §3.
+    """
+    if any(t in (a.asset_id or "") for t in _RING_ASSETS):
+        ring_min, ring_max, o_min, o_max, other = a_min, a_max, b_min, b_max, b
+    elif any(t in (b.asset_id or "") for t in _RING_ASSETS):
+        ring_min, ring_max, o_min, o_max, other = b_min, b_max, a_min, a_max, a
+    else:
+        return False
+    if other.kind == "roof":
+        return False
+    return (
+        o_min[0] >= ring_min[0] + WALL_T_CM - TOL_CM
+        and o_min[1] >= ring_min[1] + WALL_T_CM - TOL_CM
+        and o_max[0] <= ring_max[0] - WALL_T_CM + TOL_CM
+        and o_max[1] <= ring_max[1] - WALL_T_CM + TOL_CM
+    )
 
 
 def _check_interpenetration(assembly: Assembly) -> List[Failure]:
@@ -866,7 +943,7 @@ def _flood_interior_leaks(
     level: int,
 ) -> List[Tuple[Tuple[int, int], Tuple[float, float, float]]]:
     """Return interior cells reached from outside at chest height."""
-    z_probe = level * STOREY_CM + CHEST_HEIGHT_CM
+    z_probe = storey_datum_z_cm(level) + CHEST_HEIGHT_CM
     blocked: set[Tuple[int, int]] = set()
     for p in assembly.placements:
         if not _is_wall(p) and p.kind not in ("tower_arc",):
@@ -965,33 +1042,53 @@ def _check_fitout_containment(assembly: Assembly) -> List[Failure]:
 
     Applies only to props tagged ``fitout_greybox`` (M5 AssetDB props are unaffected).
     """
-    from pae.fitout import _has_declared_hall, is_fitout_cell
+    from pae.fitout import (
+        _has_declared_hall,
+        _is_castle_fitout_target,
+        fitout_placement_allowed,
+    )
 
     failures: List[Failure] = []
     if not assembly.floor_plan:
         return failures
 
     hall_declared = _has_declared_hall(assembly)
+    castle_fitout = _is_castle_fitout_target(assembly)
+    drum_cells: Set[Tuple[int, int]] = set()
+    try:
+        from pae.drum import drum_cells as _drum_cells
+
+        drum_cells = _drum_cells(assembly)
+    except Exception:
+        drum_cells = {
+            p.cell
+            for p in assembly.placements
+            if p.kind in ("tower_arc", "tower_cap")
+        }
 
     for p in assembly.placements:
         if "fitout_greybox" not in p.tags:
             continue
         level = p.level
         cell = p.cell
-        if not is_fitout_cell(
-            assembly.floor_plan, level, cell, hall_declared=hall_declared
+        if not fitout_placement_allowed(
+            assembly,
+            p,
+            hall_declared=hall_declared,
+            castle_fitout=castle_fitout,
+            drum_cells=drum_cells,
         ):
             failures.append(
                 Failure(
                     check="fitout_containment",
                     message=(
                         f"fit-out prop {p.piece_id} at cell {cell} level {level} "
-                        "is not in a CLASSROOM or great_hall cell"
+                        "is not in a CLASSROOM, great_hall, or castle interior cell"
                     ),
                     world_xyz=(
                         cell[0] * MODULE_CM + MODULE_CM * 0.5,
                         cell[1] * MODULE_CM + MODULE_CM * 0.5,
-                        level * STOREY_CM,
+                        storey_datum_z_cm(level),
                     ),
                     piece_id=p.piece_id,
                     critical=True,
@@ -999,7 +1096,7 @@ def _check_fitout_containment(assembly: Assembly) -> List[Failure]:
             )
             continue
 
-        floor_z = level * STOREY_CM
+        floor_z = storey_datum_z_cm(level)
         pmin, pmax = _placement_aabb(p)
         if abs(pmin[2] - floor_z) > TOL_CM:
             failures.append(
@@ -1045,7 +1142,7 @@ def _check_floor_coverage(assembly: Assembly) -> List[Failure]:
 
     for level, layer in sorted(assembly.floor_plan.items()):
         ox, oy = layer.origin_cell
-        floor_z = level * STOREY_CM
+        floor_z = storey_datum_z_cm(level)
         for ly in range(layer.height):
             for lx in range(layer.width):
                 role = layer.cells[ly][lx]
@@ -1126,7 +1223,7 @@ def _check_double_height_no_floor(assembly: Assembly) -> List[Failure]:
     for level, layer in sorted(assembly.floor_plan.items()):
         if level == 0:
             continue
-        floor_z = level * STOREY_CM
+        floor_z = storey_datum_z_cm(level)
         holes = hole_cells_by_level.get(level, set())
         ox, oy = layer.origin_cell
         for ly in range(layer.height):
@@ -1259,7 +1356,7 @@ def _check_stair_reachability(assembly: Assembly) -> List[Failure]:
                 Failure(
                     check="stair_reachability",
                     message=f"storey {level} unreachable from ground via circulation graph",
-                    world_xyz=(0.0, 0.0, level * STOREY_CM),
+                    world_xyz=(0.0, 0.0, storey_datum_z_cm(level)),
                     piece_id=None,
                     critical=True,
                 )
@@ -1341,7 +1438,7 @@ def _check_classroom_corridor_connectivity(assembly: Assembly) -> List[Failure]:
                 Failure(
                     check="classroom_corridor",
                     message=f"storey {level} has classrooms but no corridor cells",
-                    world_xyz=(0.0, 0.0, float(level * STOREY_CM)),
+                    world_xyz=(0.0, 0.0, float(storey_datum_z_cm(level))),
                     critical=True,
                 )
             )
@@ -1363,7 +1460,7 @@ def _check_classroom_corridor_connectivity(assembly: Assembly) -> List[Failure]:
                         world_xyz=(
                             cx * MODULE_CM + MODULE_CM * 0.5,
                             cy * MODULE_CM + MODULE_CM * 0.5,
-                            float(level * STOREY_CM),
+                            float(storey_datum_z_cm(level)),
                         ),
                         critical=True,
                     )
@@ -1385,7 +1482,7 @@ def _check_classroom_corridor_connectivity(assembly: Assembly) -> List[Failure]:
                         world_xyz=(
                             cx * MODULE_CM + MODULE_CM * 0.5,
                             cy * MODULE_CM + MODULE_CM * 0.5,
-                            float(level * STOREY_CM),
+                            float(storey_datum_z_cm(level)),
                         ),
                         critical=True,
                     )
@@ -1474,7 +1571,7 @@ def _check_corridor_stair_connectivity(assembly: Assembly) -> List[Failure]:
                         f"storey {level} has corridor cells but no stair/void "
                         "well cells to reach"
                     ),
-                    world_xyz=(0.0, 0.0, float(level * STOREY_CM)),
+                    world_xyz=(0.0, 0.0, float(storey_datum_z_cm(level))),
                     critical=True,
                 )
             )
@@ -1491,7 +1588,7 @@ def _check_corridor_stair_connectivity(assembly: Assembly) -> List[Failure]:
                     world_xyz=(
                         sample[0] * MODULE_CM + MODULE_CM * 0.5,
                         sample[1] * MODULE_CM + MODULE_CM * 0.5,
-                        float(level * STOREY_CM),
+                        float(storey_datum_z_cm(level)),
                     ),
                     critical=True,
                 )
@@ -1546,7 +1643,7 @@ def _hole_inner_world_aabb(
     # Hole placements use min-corner origin + yaw 0 in assemble.
     ox = hole.cell[0] * MODULE_CM + hole.offset_cm[0]
     oy = hole.cell[1] * MODULE_CM + hole.offset_cm[1]
-    oz = hole.level * STOREY_CM + hole.offset_cm[2]
+    oz = storey_datum_z_cm(hole.level) + hole.offset_cm[2]
     return (
         (ox + local_min[0], oy + local_min[1], oz + local_min[2]),
         (ox + local_max[0], oy + local_max[1], oz + local_max[2]),
@@ -1616,14 +1713,45 @@ def _solid_blocks_headroom(
     return ox > TOL_CM and oy > TOL_CM and oz > TOL_CM
 
 
+def _check_approach_stairs(assembly: Assembly) -> List[Failure]:
+    """Exterior approach steps — height mate + per-gate alignment (fail-closed)."""
+    from pae.approach_stairs import (
+        check_approach_stair_aligned_to_gate,
+        check_approach_stair_height_mate,
+        is_approach_step,
+    )
+
+    if not any(is_approach_step(p) for p in assembly.placements):
+        return []
+    failures: List[Failure] = []
+    failures.extend(check_approach_stair_height_mate(assembly))
+    failures.extend(check_approach_stair_aligned_to_gate(assembly))
+    return failures
+
+
+def _check_roof_edging_exclusive(assembly: Assembly) -> List[Failure]:
+    """No roof edge carries parapet and crenellation together (D3-4 / Handbook §11d)."""
+    from pae.roof_edging import check_roof_edging_exclusive
+
+    return check_roof_edging_exclusive(assembly)
+
+
+def _check_wall_face_exclusive(assembly: Assembly) -> List[Failure]:
+    """No coplanar duplicate wall skins on one bay/face (cloister arcade stack / D3-9)."""
+    from pae.wall_faces import check_wall_face_exclusive
+
+    return check_wall_face_exclusive(assembly)
+
 
 def _check_stair_flight_stack(assembly: Assembly) -> List[Failure]:
-    """Monumental flights on consecutive storeys must not share the same XY footprint.
+    """Multi-flight stairs on consecutive storeys must not share the same XY footprint.
 
-    Stacking a ``stair_switchback`` / ``stair_wide`` directly above the previous
-    flight (even with a 180 yaw flip) blocks the walking path — the upper solid
-    sits on the lower treads. Successive flights must shift by one stair width.
+    Stacking ``stair_switchback`` / ``stair_wide`` / ``stair_straight`` directly above
+    the previous flight (even with a 180 yaw flip) blocks the walking path — the upper
+    solid sits on the lower treads. Successive flights must shift by one stair width.
     Spiral quarters are exempt (helix co-occupancy by design).
+
+    Handbook §11d ``flight_footprint_distinct`` — implemented as ``stair_flight_stack``.
 
     Fail-closed on *either* signal:
     1. ``covered_cells`` overlap (grid contract, Rule 5.1)
@@ -1632,10 +1760,10 @@ def _check_stair_flight_stack(assembly: Assembly) -> List[Failure]:
     """
     from pae.trim import covered_cells
 
-    monumental = frozenset({"stair_switchback", "stair_wide"})
+    flight_kinds = frozenset({"stair_switchback", "stair_wide", "stair_straight"})
     by_level: Dict[int, List[SolidPlacement]] = {}
     for piece in assembly.placements:
-        if piece.kind != "stair" or piece.asset_id not in monumental:
+        if piece.kind != "stair" or piece.asset_id not in flight_kinds:
             continue
         by_level.setdefault(piece.level, []).append(piece)
 
@@ -1669,7 +1797,7 @@ def _check_stair_flight_stack(assembly: Assembly) -> List[Failure]:
                     Failure(
                         check="stair_flight_stack",
                         message=(
-                            f"monumental stair {hi.piece_id} on level {hi.level} "
+                            f"stair {hi.piece_id} on level {hi.level} "
                             f"overlaps lower flight {lo.piece_id} ({reason}) — "
                             "shift by stair width so flights do not stack"
                         ),
@@ -1678,6 +1806,44 @@ def _check_stair_flight_stack(assembly: Assembly) -> List[Failure]:
                         critical=True,
                     )
                 )
+    # Exterior ``steps_grand`` / ``steps_external`` at L0 — no duplicate XY stacks.
+    from pae.approach_stairs import is_approach_step
+
+    approach = [
+        p for p in assembly.placements if is_approach_step(p) and p.level == 0
+    ]
+    for i, a in enumerate(approach):
+        a_cells = covered_cells(a)
+        a_min, a_max = _placement_aabb(a)
+        for b in approach[i + 1 :]:
+            key = (a.piece_id, b.piece_id)
+            if key in seen:
+                continue
+            overlap = a_cells & covered_cells(b)
+            b_min, b_max = _placement_aabb(b)
+            ox = min(a_max[0], b_max[0]) - max(a_min[0], b_min[0])
+            oy = min(a_max[1], b_max[1]) - max(a_min[1], b_min[1])
+            aabb_overlap = ox > TOL_CM and oy > TOL_CM
+            if not overlap and not aabb_overlap:
+                continue
+            seen.add(key)
+            reason = (
+                f"cells {sorted(overlap)}"
+                if overlap
+                else f"AABB XY overlap {ox:.1f}x{oy:.1f} cm"
+            )
+            failures.append(
+                Failure(
+                    check="stair_flight_stack",
+                    message=(
+                        f"exterior approach step {b.piece_id} overlaps "
+                        f"{a.piece_id} ({reason}) — one composition per gate"
+                    ),
+                    world_xyz=_centre(b_min, b_max),
+                    piece_id=b.piece_id,
+                    critical=True,
+                )
+            )
     return failures
 
 
@@ -1736,10 +1902,13 @@ def _check_stair_exit_clearance(assembly: Assembly) -> List[Failure]:
                     )
                 )
 
+        hole_cells_top = set(hole_by_cell.keys())
+
         for p in assembly.placements:
             if p.level != top_level or not _is_module_solid_floor(p):
                 continue
             plugged = covered_cells(p) & exit_cells
+            plugged = {c for c in plugged if c not in hole_cells_top}
             if not plugged:
                 continue
             failures.append(
@@ -1761,6 +1930,12 @@ def _check_stair_exit_clearance(assembly: Assembly) -> List[Failure]:
                     continue
                 if other.asset_id == "floor_hole":
                     continue
+                # Habitable drum helix climbs under hip eaves until crown well opens.
+                if (
+                    "habitable_drum" in stair.tags
+                    and other.kind == "roof"
+                ):
+                    continue
                 if not _solid_blocks_headroom(other, head_min, head_max):
                     continue
                 failures.append(
@@ -1780,6 +1955,89 @@ def _check_stair_exit_clearance(assembly: Assembly) -> List[Failure]:
                     )
                 )
 
+    return failures
+
+
+def _spanning_deck_hole_rects_cm(
+    deck: SolidPlacement,
+    holes: Sequence[SolidPlacement],
+) -> List[Tuple[float, float, float, float]]:
+    """Same punch rects as ``blender_build.spanning_floor_hole_rects_cm`` (no bpy)."""
+    from pae.primitives.floors import hole_rects_merged_for_deck_cm
+    from pae.trim import covered_cells
+
+    cells = set()
+    for h in holes:
+        if h.asset_id != "floor_hole" or h.level != deck.level:
+            continue
+        cells |= covered_cells(h)
+    return hole_rects_merged_for_deck_cm(tuple(deck.cell), cells)
+
+
+def _check_stair_run_floor_clear(assembly: Assembly) -> List[Failure]:
+    """Fail-closed: spanning upper decks must mesh-punch the FULL stair run.
+
+    ``stair_exit_clearance`` checks that ``floor_hole`` *placements* cover every
+    ``covered_cells`` bay. Spanning decks keep a solid AABB and rely on Blender
+    ``slab_with_rect_holes``; if punch rects only open the hole origin, stairs stay
+    buried under half a deck while placement checks still pass (Ledger F-7).
+
+    Rects come from the same ``hole_rects_merged_for_deck_cm`` + ``covered_cells``
+    path as the Blender mesh so placement and mesh contracts cannot drift.
+    """
+    from pae.trim import covered_cells
+
+    failures: List[Failure] = []
+    stairs = [p for p in assembly.placements if p.kind == "stair"]
+    if not stairs:
+        return failures
+
+    holes = [
+        p
+        for p in assembly.placements
+        if p.asset_id == "floor_hole" and p.kind == "floor"
+    ]
+    decks = [p for p in assembly.placements if _is_spanning_floor(p)]
+
+    for stair in stairs:
+        top_level = stair.level + 1
+        exit_cells = covered_cells(stair)
+        smin, smax = _placement_aabb(stair)
+        top_xyz = (
+            0.5 * (smin[0] + smax[0]),
+            0.5 * (smin[1] + smax[1]),
+            smax[2],
+        )
+        for deck in decks:
+            if deck.level != top_level:
+                continue
+            need = exit_cells & covered_cells(deck)
+            if not need:
+                continue
+            rects = _spanning_deck_hole_rects_cm(deck, holes)
+            dx0, dy0 = int(deck.cell[0]), int(deck.cell[1])
+            for cell in sorted(need):
+                cx = (cell[0] - dx0) * MODULE_CM + MODULE_CM * 0.5
+                cy = (cell[1] - dy0) * MODULE_CM + MODULE_CM * 0.5
+                open_at = any(
+                    r[0] < cx < r[2] and r[1] < cy < r[3] for r in rects
+                )
+                if open_at:
+                    continue
+                failures.append(
+                    Failure(
+                        check="stair_run_floor_clear",
+                        message=(
+                            f"stair {stair.piece_id} run still floored at cell {cell} "
+                            f"level {top_level} — spanning deck {deck.piece_id} hole "
+                            f"punch does not clear the full stair footprint "
+                            f"(need covered_cells, not origin-only)"
+                        ),
+                        world_xyz=top_xyz,
+                        piece_id=stair.piece_id,
+                        critical=True,
+                    )
+                )
     return failures
 
 
@@ -1817,20 +2075,24 @@ def _check_structural_islands(assembly: Assembly) -> List[Failure]:
     if len(candidates) < 2:
         return []
 
-    # Partition by BUILDING first. A site holds several buildings that are legitimately
-    # separate structures; connectivity is a WITHIN-building property, not a site-wide
-    # one. Without this a street of six houses reports five freestanding groups and the
-    # check becomes noise the moment you build more than one thing.
-    by_building: Dict[str, List[SolidPlacement]] = {}
+    # Partition by structure when declared, else by building. A site holds several
+    # buildings that are legitimately separate structures; connectivity is a
+    # WITHIN-structure property, not a site-wide one. Without this a street of six
+    # houses reports five freestanding groups and the check becomes noise the moment
+    # you build more than one thing. Fortress bailey uses one ``structure:`` for all
+    # ranges (Handbook §11d T-102).
+    from pae.structure_identity import partition_key
+
+    by_marker: Dict[str, List[SolidPlacement]] = {}
     for p in candidates:
-        mk = next((t for t in p.tags if t.startswith("building:")), "")
-        by_building.setdefault(mk, []).append(p)
-    if len(by_building) > 1:
+        mk = partition_key(p)
+        by_marker.setdefault(mk, []).append(p)
+    if len(by_marker) > 1:
         out: List[Failure] = []
-        for mk, group in sorted(by_building.items()):
+        for mk, group in sorted(by_marker.items()):
             out.extend(_islands_within(group, mk))
         return out
-    return _islands_within(candidates, next(iter(by_building)))
+    return _islands_within(candidates, next(iter(by_marker)))
 
 
 def _islands_within(
@@ -2063,44 +2325,70 @@ def _check_roof_valley_join(assembly: Assembly) -> List[Failure]:
     Reconstructs wing spans from ``roof_hip`` covered cells and compares against
     ``roof_valley`` count. Pitched-only multi-wing valleys remain assemble-asserted
     (``test_hip_roof``) until span reconstruction covers slope kits.
+
+    Compound campuses tag each range with ``building:<name>`` — only hips that share
+    a building tag are one roof system. Adjacent separate buildings must not require
+    cross-range valley stubs.
     """
+    from collections import defaultdict
+
     from pae.primitives.roofs import roof_valley_seams
     from pae.trim import covered_cells
 
     hips = [p for p in assembly.placements if p.asset_id == "roof_hip"]
     if len(hips) < 2:
         return []
-    spans: List[Tuple[int, int, int, int]] = []
+
+    def _building_key(tags: frozenset) -> str:
+        for tag in tags:
+            if tag.startswith("building:"):
+                return tag
+        return "__single_building__"
+
+    hips_by_building: Dict[str, List[SolidPlacement]] = defaultdict(list)
     for hip in hips:
-        cells = covered_cells(hip)
-        if not cells:
-            continue
-        xs = [c[0] for c in cells]
-        ys = [c[1] for c in cells]
-        spans.append((min(xs), min(ys), max(xs), max(ys)))
-    seams = roof_valley_seams(spans)
-    if not seams:
-        return []
+        hips_by_building[_building_key(hip.tags)].append(hip)
+
     valleys = [p for p in assembly.placements if p.asset_id == "roof_valley"]
-    if len(valleys) >= len(seams):
-        return []
-    sample = seams[0]
-    return [
-        Failure(
-            check="roof_valley_join",
-            message=(
-                f"multi-wing hip roof has {len(seams)} abutment seam(s) but only "
-                f"{len(valleys)} valley stub(s) — L/U wing joins need valleys (S-019)"
-            ),
-            world_xyz=(
-                sample.run0 * MODULE_CM + MODULE_CM * 0.5,
-                sample.cross_hi * MODULE_CM,
-                float(hips[0].level * STOREY_CM + STOREY_CM),
-            ),
-            piece_id=hips[0].piece_id,
-            critical=True,
+    failures: List[Failure] = []
+    for group in hips_by_building.values():
+        if len(group) < 2:
+            continue
+        spans: List[Tuple[int, int, int, int]] = []
+        for hip in group:
+            cells = covered_cells(hip)
+            if not cells:
+                continue
+            xs = [c[0] for c in cells]
+            ys = [c[1] for c in cells]
+            spans.append((min(xs), min(ys), max(xs), max(ys)))
+        seams = roof_valley_seams(spans)
+        if not seams:
+            continue
+        bkey = _building_key(group[0].tags)
+        group_valleys = [
+            v for v in valleys if _building_key(v.tags) == bkey
+        ]
+        if len(group_valleys) >= len(seams):
+            continue
+        sample = seams[0]
+        failures.append(
+            Failure(
+                check="roof_valley_join",
+                message=(
+                    f"multi-wing hip roof has {len(seams)} abutment seam(s) but only "
+                    f"{len(group_valleys)} valley stub(s) — L/U wing joins need valleys (S-019)"
+                ),
+                world_xyz=(
+                    sample.run0 * MODULE_CM + MODULE_CM * 0.5,
+                    sample.cross_hi * MODULE_CM,
+                    float(storey_datum_z_cm(group[0].level) + STOREY_CM),
+                ),
+                piece_id=group[0].piece_id,
+                critical=True,
+            )
         )
-    ]
+    return failures
 
 
 def _designed_roof_penetration_eave_tuck(
@@ -2403,6 +2691,18 @@ def _check_tower_entry_door(assembly: Assembly) -> List[Failure]:
     return check_tower_entry_door(assembly)
 
 
+def _check_tower_entry_clears_stair(assembly: Assembly) -> List[Failure]:
+    from pae.tower_entry import check_tower_entry_clears_stair
+
+    return check_tower_entry_clears_stair(assembly)
+
+
+def _check_spiral_reaches_top(assembly: Assembly) -> List[Failure]:
+    from pae.drum import check_spiral_reaches_top
+
+    return check_spiral_reaches_top(assembly)
+
+
 def _check_upper_entrance_landing(assembly: Assembly) -> List[Failure]:
     """Phase 9.2 T-007/T-009 — role-tagged upper_exterior doors need a landing."""
     from pae.upper_entrance import check_upper_entrance_landing
@@ -2609,6 +2909,14 @@ def _check_headroom(assembly: Assembly) -> List[Failure]:
                     continue
                 if other.asset_id == "floor_hole":
                     continue
+                # Habitable drum helix climbs under the hip eaves until the crown
+                # ``floor_hole`` / ``tower_deck`` well — not an indoor headroom fail.
+                if (
+                    walk.kind == "stair"
+                    and "habitable_drum" in walk.tags
+                    and other.kind == "roof"
+                ):
+                    continue
                 if not _solid_blocks_headroom(other, head_min, head_max):
                     continue
                 failures.append(
@@ -2685,7 +2993,7 @@ def _check_roof_covers_enclosed(assembly: Assembly) -> List[Failure]:
             world_xyz=(
                 sample[0] * MODULE_CM + MODULE_CM * 0.5,
                 sample[1] * MODULE_CM + MODULE_CM * 0.5,
-                float(top_level * STOREY_CM),
+                float(storey_datum_z_cm(top_level)),
             ),
             piece_id=None,
             critical=False,
@@ -2705,14 +3013,64 @@ STAIR_LANDING_CLEAR_FRAC = 0.5
 
 
 def _check_stair_landing_clearance(assembly: Assembly) -> List[Failure]:
-    """A stair must not dead-end into solid at either end.
+    """CRITICAL: solid walls must not block stair landings (top or bottom).
 
-    Implementation lives in ``pae.stair_occupancy`` so spiral helix co-occupancy and
-    landing false-positive triage share one model (Handbook 5.1 covered_cells).
+    Implementation lives in ``pae.stair_occupancy`` (``stair_landing_clear``).
+    Fail-closed — never demoted to warning. Handbook 5.1 covered_cells.
     """
     from pae.stair_occupancy import check_stair_landing_clearance
 
     return check_stair_landing_clearance(assembly)
+
+
+def _check_stair_landing_strip_scope(assembly: Assembly) -> List[Failure]:
+    """CRITICAL: landing autofix must not strip walls outside the landing strip zone."""
+    from pae.stair_occupancy import check_stair_landing_strip_scope
+
+    return check_stair_landing_strip_scope(assembly)
+
+
+def _check_structure_identity(assembly: Assembly) -> List[Failure]:
+    """Roadmap 10.1–10.2 — declared structure membership and party walls (§11d)."""
+    from pae.structure_identity import check_structure_identity
+
+    primary: Optional[str] = None
+    auxiliary: Tuple[str, ...] = ()
+    if any("fortress_compound" in p.tags for p in assembly.placements):
+        from pae.compound import fortress_compound_connections
+
+        conn = fortress_compound_connections()
+        primary = conn.primary_circulation_mass
+        auxiliary = conn.auxiliary_circulation_masses
+    return check_structure_identity(
+        assembly,
+        primary_circulation_mass=primary,
+        auxiliary_circulation_masses=auxiliary,
+    )
+
+
+def _check_compound_circulation(assembly: Assembly) -> List[Failure]:
+    """Compound unification: sealed ranges / missing doors / building-in-building.
+
+    Critical fail-closed checks from ``pae.compound_unify``. Autofix runs in
+    ``build_compound`` / ``build_fortress_compound`` before validate; this gate
+    still fires on hand-built / poisoned assemblies.
+    """
+    from pae.compound_unify import check_compound_circulation
+
+    connections = None
+    if any("fortress_compound" in p.tags for p in assembly.placements):
+        from pae.compound import fortress_compound_connections
+
+        connections = fortress_compound_connections()
+    return check_compound_circulation(assembly, connections=connections)
+
+
+def _check_storey_datum_consistent(assembly: Assembly) -> List[Failure]:
+    """Per-volume storey datum offsets honoured in placement Z (T-111 / Handbook §11d)."""
+    from pae.storey_datum_validate import check_storey_datum_consistent
+
+    return check_storey_datum_consistent(assembly)
 
 
 def _check_stair_typology_match(assembly: Assembly) -> List[Failure]:
@@ -2905,6 +3263,123 @@ def _check_fortress_compound(assembly: Assembly) -> List[Failure]:
     return check_fortress_compound(assembly)
 
 
+def _check_arcade_gallery(assembly: Assembly) -> List[Failure]:
+    """Cloister arcade continuity, pier bearing, gallery court railings."""
+    from pae.arcade_validate import check_arcade_gallery
+
+    return check_arcade_gallery(assembly)
+
+
+def _gate_clear_opening_cm(piece: SolidPlacement) -> Optional[float]:
+    """Clear opening height for a gate/arch wall from placement Z × profile."""
+    from pae.primitives.catalog import catalog_by_id
+    from pae.primitives.apertures import PROFILES, get_profile
+
+    cat = catalog_by_id()
+    desc = cat.get(piece.asset_id)
+    profile_name = None
+    if desc is not None and getattr(desc, "profile", None):
+        profile_name = desc.profile
+    if profile_name is None:
+        # Legacy map / asset id → profile name.
+        from pae.primitives.walls import LEGACY_PROFILE_IDS
+
+        profile_name = LEGACY_PROFILE_IDS.get(piece.asset_id)
+        if profile_name is None and piece.asset_id.startswith("wall_"):
+            candidate = piece.asset_id[len("wall_") :]
+            if candidate in PROFILES:
+                profile_name = candidate
+    if profile_name is None or profile_name not in PROFILES:
+        # Solid wall — no opening; treat clear as full height.
+        return float(piece.size_cm[2])
+    profile = get_profile(profile_name)
+    z0, z1 = profile.opening_z_cm(piece.size_cm[2])
+    return float(z1 - z0)
+
+
+def _declared_height_storeys_from_tags(tags: frozenset) -> Optional[float]:
+    for t in tags:
+        if isinstance(t, str) and t.startswith("height_storeys:"):
+            try:
+                return float(t.split(":", 1)[1])
+            except ValueError:
+                continue
+    return None
+
+
+def _check_building_height(assembly: Assembly) -> List[Failure]:
+    """Wall/gate height matches declared storeys; gate clear ≥ one STOREY.
+
+    Rule 5.1: identity uses ``covered_cells`` only for cell coverage questions;
+    height is read from ``size_cm.z`` (measured placement extent).
+    """
+    from pae.assemble import WALL_HEIGHT_SPAN_TAG
+    from pae.trim import covered_cells
+
+    failures: List[Failure] = []
+    clear_min = gate_clear_min_cm()
+    declared_building = float(max(1, int(assembly.storeys)))
+
+    for piece in assembly.placements:
+        if piece.kind != "wall":
+            continue
+        tags = piece.tags or frozenset()
+        is_gate = (
+            "gate" in piece.asset_id
+            or any(isinstance(t, str) and "entrance_role_gate" in t for t in tags)
+            or any(isinstance(t, str) and t == "gate" for t in tags)
+        )
+        is_span = WALL_HEIGHT_SPAN_TAG in tags
+        if not is_gate and not is_span:
+            continue
+
+        # Touch covered_cells so height identity stays tied to Rule 5.1 cell sets
+        # (origin-only reasoning has bitten wall/gate checks before).
+        _ = covered_cells(piece)
+
+        declared = _declared_height_storeys_from_tags(tags)
+        if declared is None:
+            declared = declared_building if is_span or is_gate else 1.0
+        need_z = height_cm_from_storeys(declared)
+        got_z = float(piece.size_cm[2])
+        if got_z + TOL_CM < need_z:
+            bb_min, bb_max = _placement_aabb(piece)
+            failures.append(
+                Failure(
+                    check="wall_height_span",
+                    message=(
+                        f"wall {piece.piece_id} ({piece.asset_id}) height "
+                        f"{got_z:.1f} cm < declared {declared:g} storeys "
+                        f"({need_z:.1f} cm) — stub MODULE/STOREY leaf instead of "
+                        f"spanning envelope"
+                    ),
+                    world_xyz=_centre(bb_min, bb_max),
+                    piece_id=piece.piece_id,
+                    critical=True,
+                )
+            )
+
+        if is_gate:
+            clear = _gate_clear_opening_cm(piece)
+            if clear is not None and clear + TOL_CM < clear_min:
+                bb_min, bb_max = _placement_aabb(piece)
+                failures.append(
+                    Failure(
+                        check="gate_clear_height",
+                        message=(
+                            f"gate {piece.piece_id} clear opening {clear:.1f} cm "
+                            f"< {clear_min:.1f} cm "
+                            f"({storeys_from_height_cm(clear_min):g} storey min) — "
+                            f"arch shorter than required carriage clear height"
+                        ),
+                        world_xyz=_centre(bb_min, bb_max),
+                        piece_id=piece.piece_id,
+                        critical=True,
+                    )
+                )
+    return failures
+
+
 def _check_run_fit(assembly: Assembly) -> List[Failure]:
     failures: List[Failure] = []
     for run in assembly.wall_runs:
@@ -2917,9 +3392,9 @@ def _check_run_fit(assembly: Assembly) -> List[Failure]:
         scale = (length + (MODULE_CM - leftover)) / length
         mid = (run.start_cm + run.end_cm) * 0.5
         if run.axis == "y":
-            xyz = (run.plane_cm, mid, run.level * STOREY_CM)
+            xyz = (run.plane_cm, mid, storey_datum_z_cm(run.level))
         else:
-            xyz = (mid, run.plane_cm, run.level * STOREY_CM)
+            xyz = (mid, run.plane_cm, storey_datum_z_cm(run.level))
         failures.append(
             Failure(
                 check="run_fit",
@@ -3206,7 +3681,7 @@ def _check_aperture_alignment(assembly: Assembly) -> List[Failure]:
                         f"{column} reference {ref_piece} at level {ref_level} "
                         f"(tolerance {tol} cm)"
                     ),
-                    world_xyz=(px, py, ref_level * STOREY_CM),
+                    world_xyz=(px, py, storey_datum_z_cm(ref_level)),
                     piece_id=piece_id,
                     critical=False,
                 )
@@ -3220,6 +3695,7 @@ __all__ = [
     "APERTURE_ALIGNMENT_TOL_CM",
     "placement_footprint_cells",
     "_check_stair_exit_clearance",
+    "_check_stair_run_floor_clear",
     "_check_stair_typology_match",
     "_check_headroom",
     "_check_no_bare_aperture_holes",
