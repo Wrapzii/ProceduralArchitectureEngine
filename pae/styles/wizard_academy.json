@@ -1,0 +1,22 @@
+{
+  "id": "wizard_academy",
+  "extends": "gothic_academy",
+  "geometry": {
+    "roof_pitch": 1.65
+  },
+  "roof": {
+    "pitch_min": 1.6,
+    "steep_silhouette": true,
+    "kind_default": "pitched"
+  },
+  "window": {
+    "tag": "window_gothic"
+  },
+  "substitutions": {
+    "window_gothic": "wall_window_lancet",
+    "window_lancet": "wall_window_lancet",
+    "door_gothic": "wall_door_gothic",
+    "roof_pitched_slope": "roof_pitched_slope",
+    "roof_gable_infill": "roof_gable_infill"
+  }
+}

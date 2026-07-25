@@ -167,3 +167,15 @@ Suite at close: 405 passed, 1 failed (@TOWER_ATTACH above). Renders: Saved/Scree
 >>> DONE @M7_APERTURE — per-storey door/window (no L0 door stack on L1); m3 aperture polish green.
 >>> DONE @M7_SHOW_VAR — spire/finial inherit cap XY; window spread pass for long runs.
 >>> DONE @M7_PHASE0 — Phase 0.1–0.4 closed. Suite: 467 passed / 0 failed. Remaining open: 0.5 (promote aperture_reachability after fixture polish), 0.6 tower windows.
+
+2026-07-25 — Master: ROADMAP COMPLETION SWARM (CASTLE M7–M14 + STYLE S-001+). Suite baseline 467/0.
+>>> TRIGGER @RM_P0_5 — Promote aperture_reachability + storey_egress GROUND/VOLUME to critical after fixture/variation fixes. Owns: validate.py severity + variation fixtures + milestone tests.
+>>> TRIGGER @RM_STYLE — StylePack S-001..S-010 foundation (dataclass, load, resolve, wizard_academy pack, piece substitution). Owns: pae/styles/, new pae/style_pack.py, spec load_style bridge.
+>>> TRIGGER @RM_ENTRANCE — EntranceSpec roles+placement (1.1–1.2) + existence check. Owns: pae/spec.py entrances, assemble door role mapping, validate existence.
+>>> TRIGGER @RM_CELLS — Sweep remaining validate checks off p.cell onto covered_cells (Handbook 5.1 / S-129). Owns: validate.py only (coordinate with P0_5).
+>>> TRIGGER @RM_SPIRAL — Place stair_spiral_quarter from stair_kind=spiral in towers (3.1). Owns: solver/plan/assemble spiral path; re-enable SUPPORTED spiral with stacking.
+>>> TRIGGER @RM_ROOF — Steep pitch style + hip roof primitive + L/U valley stub (S-011/S-012/S-019). Owns: primitives/roofs.py, assemble pitched/hip.
+>>> TRIGGER @RM_ROOMS — RoomSpec graph + double-height hall (2.1/2.4) extending school carve. Owns: plan.py/spec.py rooms.
+>>> TRIGGER @RM_LIGHTS — LightAnchor placements S-068..S-070 + manifest export. Owns: new anchors module, decorate/trim anchors, export schema.
+>>> TRIGGER @RM_HEADROOM — Headroom check S-130 + watertight envelope stub S-021/V. Owns: validate.py new checks.
+>>> TRIGGER @RM_CASTLE — Curtain wall + gatehouse greybox (4.1/4.2) compound preset. Owns: compound.py/site.py castle preset.
