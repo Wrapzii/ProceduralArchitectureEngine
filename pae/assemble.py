@@ -806,7 +806,14 @@ def _place_wall_run(
 ) -> None:
     yaw_by_face = {"west": 0, "east": 180, "south": 270, "north": 90}
     yaw = yaw_by_face[face]
+    # A tower cell is enclosed by its OWN drum. Running the rectangular perimeter wall
+    # through it as well put a straight wall inside the round tower — the drum appeared
+    # to wrap through the building, with windows opening into the tower's interior and
+    # no way in or out. The drum arcs are the enclosure on these cells; the box is not.
+    tower_owned = _tower_cells(fp)
     for cell in cells:
+        if cell in tower_owned:
+            continue
 
         piece_def = _wall_asset_for_cell(
             fp, cell, face, catalog, style, bbox, level
@@ -1038,12 +1045,46 @@ def _stair_occupied_cells(fp: FloorPlan) -> Set[Tuple[int, int, int]]:
         return occupied
     if len(run_cells) < 2:
         return occupied
+    pads = _monumental_flight_pads(run_cells) if kind in ("switchback", "wide") else None
     for level in range(len(fp.storeys) - 1):
         grid = fp.storeys[level]
+        if pads is not None:
+            pad = pads[level % 2]
+            if all(grid.get(*c) == CellRole.STAIR for c in pad):
+                for cx, cy in pad:
+                    occupied.add((level, cx, cy))
+            continue
         if all(grid.get(*c) == CellRole.STAIR for c in run_cells):
             for cx, cy in run_cells:
                 occupied.add((level, cx, cy))
     return occupied
+
+
+def _monumental_flight_pads(
+    well_cells: Sequence[Tuple[int, int]],
+) -> Optional[Tuple[List[Tuple[int, int]], List[Tuple[int, int]]]]:
+    """Split a multi-flight monumental well into two 2×2 pads shifted by stair width.
+
+    Returns ``(even_level_pad, odd_level_pad)`` or ``None`` when the well is a single
+    2×2 (only one flight) or cannot be split cleanly.
+    """
+    cells = sorted(set(well_cells))
+    if len(cells) < 8:
+        return None
+    xs = sorted({c[0] for c in cells})
+    ys = sorted({c[1] for c in cells})
+    x0, y0 = xs[0], ys[0]
+    if len(xs) >= 4 and len(ys) >= 2:
+        pad0 = [(x0 + i, y0 + j) for i in range(2) for j in range(2)]
+        pad1 = [(x0 + 2 + i, y0 + j) for i in range(2) for j in range(2)]
+    elif len(ys) >= 4 and len(xs) >= 2:
+        pad0 = [(x0 + i, y0 + j) for i in range(2) for j in range(2)]
+        pad1 = [(x0 + i, y0 + 2 + j) for i in range(2) for j in range(2)]
+    else:
+        return None
+    if any(c not in set(cells) for c in pad0 + pad1):
+        return None
+    return pad0, pad1
 
 
 def _place_stairs(
@@ -1136,6 +1177,35 @@ def _place_stairs(
         x0, y0 = min(xs), min(ys)
         place_cells = [(x0 + i, y0 + j) for i in range(2) for j in range(2)]
 
+    pads = (
+        _monumental_flight_pads(run_cells)
+        if asset_id in ("stair_switchback", "stair_wide")
+        else None
+    )
+    climbed = len(fp.storeys) - 1
+    if (
+        asset_id in ("stair_switchback", "stair_wide")
+        and climbed >= 2
+        and pads is None
+    ):
+        failures.append(
+            Failure(
+                check="stair_flight_stack",
+                message=(
+                    f"{asset_id} climbs {climbed} storeys but stair_cells only cover "
+                    f"a single 2×2 pad {sorted(set(run_cells))} — successive flights "
+                    "would stack in the same XY. Expand the well to 4×2 / 2×4 so "
+                    "flights shift by one stair width."
+                ),
+                world_xyz=(
+                    min(c[0] for c in run_cells) * MODULE_CM + MODULE_CM,
+                    min(c[1] for c in run_cells) * MODULE_CM + MODULE_CM,
+                    0.0,
+                ),
+                critical=True,
+            )
+        )
+
     if asset_id == "stair_straight":
         anchor, yaw = _stair_run_anchor_and_yaw(run_cells)
     else:
@@ -1152,9 +1222,46 @@ def _place_stairs(
     )
     for level in range(len(fp.storeys) - 1):
         grid = fp.storeys[level]
-        # Straight: every listed cell must be STAIR. Switchback/wide: require the
-        # full 2×2 stairwell as STAIR before placing the kit mesh.
-        check_cells = place_cells
+        if pads is not None:
+            pad = pads[level % 2]
+            check_cells = pad
+            lvl_anchor = (min(c[0] for c in pad), min(c[1] for c in pad))
+            # Alternate approach direction so the upper flight continues the
+            # circulation rather than mirroring into the previous head.
+            lvl_yaw = yaw if (level % 2 == 0) else (yaw + 180) % 360
+        else:
+            check_cells = place_cells
+            lvl_anchor = anchor
+            lvl_yaw = yaw
+            # Single-well 2-storey (one flight only): keep historic 180° flip only
+            # when it still covers the same cells — never use this for multi-flight
+            # stacking (that path requires ``pads`` above).
+            if level % 2 and climbed < 2:
+                flipped = (yaw + 180) % 360
+                fox, foy = rotation_offset_cm(
+                    flipped,
+                    sx,
+                    sy,
+                    rotates_about_center=stair_def.rotates_about_center,
+                )
+                same_cells = _placement_cells(
+                    anchor,
+                    level,
+                    flipped,
+                    stair_def.size_cm,
+                    (fox, foy, 0.0),
+                    stair_def.rotates_about_center,
+                ) == _placement_cells(
+                    anchor,
+                    level,
+                    yaw,
+                    stair_def.size_cm,
+                    (ox, oy, 0.0),
+                    stair_def.rotates_about_center,
+                )
+                if same_cells:
+                    lvl_yaw = flipped
+
         if not all(grid.get(*c) == CellRole.STAIR for c in check_cells):
             if asset_id in ("stair_switchback", "stair_wide") and len(fp.storeys) > 1:
                 missing = [
@@ -1168,37 +1275,20 @@ def _place_stairs(
                             f"missing or wrong role at {missing}"
                         ),
                         world_xyz=(
-                            anchor[0] * MODULE_CM + MODULE_CM * 0.5,
-                            anchor[1] * MODULE_CM + MODULE_CM * 0.5,
+                            lvl_anchor[0] * MODULE_CM + MODULE_CM * 0.5,
+                            lvl_anchor[1] * MODULE_CM + MODULE_CM * 0.5,
                             float(level * STOREY_CM),
                         ),
                         critical=True,
                     )
                 )
             continue
-        # REVERSE ALTERNATE FLIGHTS. Placing the same anchor and yaw on every level
-        # stacked identical runs directly on top of one another, all climbing the same
-        # way — you arrive at the head of one flight facing the foot of the next, which
-        # is not how a stair works and reads as floating steps repeated. Real stacked
-        # flights turn back on themselves. Flip 180 degrees on odd levels and re-derive
-        # the anchor so the run still occupies exactly the same well.
-        lvl_yaw, lvl_anchor, lvl_off = yaw, anchor, (ox, oy)
-        if level % 2:
-            flipped = (yaw + 180) % 360
-            fox, foy = rotation_offset_cm(
-                flipped, sx, sy,
-                rotates_about_center=stair_def.rotates_about_center,
-            )
-            same_cells = _placement_cells(
-                anchor, level, flipped, stair_def.size_cm, (fox, foy, 0.0),
-                stair_def.rotates_about_center,
-            ) == _placement_cells(
-                anchor, level, yaw, stair_def.size_cm, (ox, oy, 0.0),
-                stair_def.rotates_about_center,
-            )
-            if same_cells:
-                lvl_yaw, lvl_off = flipped, (fox, foy)
-        ox_l, oy_l = lvl_off
+        ox_l, oy_l = rotation_offset_cm(
+            lvl_yaw,
+            sx,
+            sy,
+            rotates_about_center=stair_def.rotates_about_center,
+        )
         pid = _next_piece_id(counters, "stair", lvl_anchor, level)
         placements.append(
             SolidPlacement(

@@ -87,6 +87,7 @@ Severity: **S1** shipped and visible · **S2** caught in review/CI · **S3** nea
 | D-20 | S2 | `light_anchor` pieces validated by nothing | Kind added to the catalog with no `measure.py` branch — falls to "unknown kind" | Handbook §3 completeness checklist |
 | D-21 | S1 | Spiral tower helix with no central newel / open drum bay | Assemble emitted quarters only; no existence/containment check for the shell | **FIXED (@VAL_SPIRAL_SHELL)** — `spiral_newel` + `spiral_newel_exists` / `spiral_drum_enclosure` (door-bay exempt hook for @VAL_TOWER_DOOR) |
 | D-22 | S2 | House got monumental `stair_wide`; industrial kept undersized `stair_straight` when a 2×2 well fit; buttress trim confused with stairs | No `building_class` / stair allow-list; variation could pick any `stair_kind` | **FIXED (@VAL_STAIR_TYPOLOGY)** — `STAIR_TYPOLOGY_POLICY` + `derive_building_class`; `vary_spec` picks continuity-safe kinds; `stair_typology_match` (critical house/buttress, warning undersized institutional) |
+| D-23 | S1 | Multi-storey monumental stairs stacked in the same XY (upper flight on lower treads; 180° flip only) — unwalkable | Assemble placed every storey's `stair_switchback`/`stair_wide` in one 2×2 well | **FIXED (@VAL_STAIR_OFFSET)** — solver expands to 4×2/2×4 when storeys≥3; alternate flights shift by stair width; critical `stair_flight_stack` |
 
 ## E. Kind registration
 

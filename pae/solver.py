@@ -681,8 +681,14 @@ def _tower_stair_cell(volumes: List[Volume]) -> Optional[Tuple[int, int]]:
 def _default_stair_cells(
     volumes: List[Volume],
     stair_kind: str,
+    storeys: int = 1,
 ) -> List[Tuple[int, int]]:
-    """Auto stair footprint: 2×1 straight, 2×2 switchback/wide, 1×1 spiral."""
+    """Auto stair footprint: 2×1 straight, 2×2 switchback/wide, 1×1 spiral.
+
+    Multi-storey monumental wells (storeys ≥ 3) expand to 4×2 / 2×4 so successive
+    flights can shift by one stair width instead of stacking in the same XY
+    (see assemble ``_monumental_flight_pads``).
+    """
     kind = (stair_kind or "straight").lower()
     if kind == "spiral":
         tower_cell = _tower_stair_cell(volumes)
@@ -699,16 +705,48 @@ def _default_stair_cells(
             return []
         x0 = m.x0 + 1
         y0 = m.y0 + 1
-        if x0 + 1 > m.x1:
+        if x0 + 1 >= m.x1:
             x0 = m.x0
-        if y0 + 1 > m.y1:
+        if y0 + 1 >= m.y1:
             y0 = m.y0
-        return [
+        pad = [
             (x0, y0),
             (x0 + 1, y0),
             (x0, y0 + 1),
             (x0 + 1, y0 + 1),
         ]
+        # Need two adjacent 2×2 pads when more than one flight is stacked.
+        if storeys >= 3:
+            bx = m.x1 - m.x0
+            by = m.y1 - m.y0
+            # Prefer the long axis so a shallow hall (e.g. 15×4) still fits.
+            if bx >= 4 and x0 + 3 < m.x1:
+                return pad + [
+                    (x0 + 2, y0),
+                    (x0 + 3, y0),
+                    (x0 + 2, y0 + 1),
+                    (x0 + 3, y0 + 1),
+                ]
+            if by >= 4 and y0 + 3 < m.y1:
+                return pad + [
+                    (x0, y0 + 2),
+                    (x0 + 1, y0 + 2),
+                    (x0, y0 + 3),
+                    (x0 + 1, y0 + 3),
+                ]
+            if bx >= 4 and x0 + 3 >= m.x1:
+                x0 = max(m.x0, m.x1 - 4)
+                y0 = min(y0, m.y1 - 2)
+                return [
+                    (x0 + i, y0 + j) for i in range(4) for j in range(2)
+                ]
+            if by >= 4 and y0 + 3 >= m.y1:
+                y0 = max(m.y0, m.y1 - 4)
+                x0 = min(x0, m.x1 - 2)
+                return [
+                    (x0 + i, y0 + j) for i in range(2) for j in range(4)
+                ]
+        return pad
     auto = _default_stair_cell(volumes)
     if auto is None:
         return []
@@ -781,7 +819,9 @@ def solve(spec: BuildingSpec) -> Tuple[Optional[Massing], Report]:
 
     stair_cells = list(spec.circulation.stair_cells)
     if spec.storeys > 1 and not stair_cells and not failures:
-        stair_cells = _default_stair_cells(volumes, spec.circulation.stair_kind)
+        stair_cells = _default_stair_cells(
+            volumes, spec.circulation.stair_kind, storeys=spec.storeys
+        )
 
     failures.extend(_volumes_overlap_failures(volumes))
     failures.extend(_tower_attach_failures(volumes))

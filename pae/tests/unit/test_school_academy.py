@@ -57,15 +57,16 @@ def test_school_academy_dict_round_trip():
     assert spec.footprint.kind == "school"
 
 
-def test_school_switchback_stairwell_is_2x2():
+def test_school_switchback_stairwell_is_offset_4x2():
+    """3-storey academy needs a 4×2 (or 2×4) well so flights can shift by width."""
     spec = school_academy_spec()
     massing, mreport = solve(spec)
     assert mreport.ok
     assert massing.stair_kind == "switchback"
-    assert len(massing.stair_cells) == 4
+    assert len(massing.stair_cells) >= 8
     xs = {c[0] for c in massing.stair_cells}
     ys = {c[1] for c in massing.stair_cells}
-    assert len(xs) == 2 and len(ys) == 2
+    assert (len(xs) == 4 and len(ys) == 2) or (len(xs) == 2 and len(ys) == 4)
 
     floor_plan, preport = plan(massing)
     assert preport.ok, [f.message for f in preport.failures]
@@ -147,21 +148,25 @@ def test_school_switchback_floor_holes_on_upper_storeys():
     spec = school_academy_spec()
     massing, _ = solve(spec)
     _, _, assembly, _ = run_through_assemble(spec)
-    assert len(massing.stair_cells) == 4
+    assert len(massing.stair_cells) >= 8
 
     switchbacks = [p for p in assembly.placements if p.asset_id == "stair_switchback"]
     assert switchbacks, "expected stair_switchback placement"
     assert all(p.kind == "stair" for p in switchbacks)
 
-    stair_cells = set(massing.stair_cells)
+    # Every flight's covered cells must be open on the storey above (Rule 5.1).
     holes = [p for p in assembly.placements if p.asset_id == "floor_hole"]
-    for level in sorted({p.level for p in holes if p.level >= 1}):
+    for stair in switchbacks:
+        top = stair.level + 1
         open_cells: set = set()
         for p in holes:
-            if p.level == level:
+            if p.level == top:
                 open_cells |= covered_cells(p)
-        assert len(open_cells) >= 4, f"level {level}: {len(open_cells)} open cell(s)"
-        assert open_cells >= stair_cells
+        need = covered_cells(stair)
+        assert need <= open_cells, (
+            f"level {stair.level} exit cells {sorted(need)} not open on L{top}: "
+            f"{sorted(open_cells)}"
+        )
 
 
 def test_gothic_school_interior_partition_uses_wall_door_gothic():

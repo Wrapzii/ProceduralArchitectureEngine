@@ -52,6 +52,7 @@ def validate(assembly: Assembly) -> Tuple[Assembly, Report]:
     failures.extend(_check_room_specs(assembly))
     failures.extend(_check_stair_reachability(assembly))
     failures.extend(_check_stair_exit_clearance(assembly))
+    failures.extend(_check_stair_flight_stack(assembly))
     failures.extend(_check_classroom_corridor_connectivity(assembly))
     failures.extend(_check_corridor_stair_connectivity(assembly))
     failures.extend(_check_run_fit(assembly))
@@ -1612,6 +1613,53 @@ def _solid_blocks_headroom(
     oy = min(head_max[1], smax[1]) - max(head_min[1], smin[1])
     oz = min(head_max[2], smax[2]) - max(head_min[2], smin[2])
     return ox > TOL_CM and oy > TOL_CM and oz > TOL_CM
+
+
+
+def _check_stair_flight_stack(assembly: Assembly) -> List[Failure]:
+    """Monumental flights on consecutive storeys must not share the same XY footprint.
+
+    Stacking a ``stair_switchback`` / ``stair_wide`` directly above the previous
+    flight (even with a 180 yaw flip) blocks the walking path — the upper solid
+    sits on the lower treads. Successive flights must shift by one stair width.
+    Spiral quarters are exempt (helix co-occupancy by design).
+    """
+    from pae.trim import covered_cells
+
+    monumental = frozenset({"stair_switchback", "stair_wide"})
+    by_level: Dict[int, List[SolidPlacement]] = {}
+    for piece in assembly.placements:
+        if piece.kind != "stair" or piece.asset_id not in monumental:
+            continue
+        by_level.setdefault(piece.level, []).append(piece)
+
+    failures: List[Failure] = []
+    for level, lower_stairs in sorted(by_level.items()):
+        upper_stairs = by_level.get(level + 1)
+        if not upper_stairs:
+            continue
+        for lo in lower_stairs:
+            lo_cells = covered_cells(lo)
+            for hi in upper_stairs:
+                overlap = lo_cells & covered_cells(hi)
+                if not overlap:
+                    continue
+                bb_min, bb_max = _placement_aabb(hi)
+                failures.append(
+                    Failure(
+                        check="stair_flight_stack",
+                        message=(
+                            f"monumental stair {hi.piece_id} on level {hi.level} "
+                            f"overlaps lower flight {lo.piece_id} in cells "
+                            f"{sorted(overlap)} — shift by stair width so flights "
+                            "do not stack"
+                        ),
+                        world_xyz=_centre(bb_min, bb_max),
+                        piece_id=hi.piece_id,
+                        critical=True,
+                    )
+                )
+    return failures
 
 
 def _check_stair_exit_clearance(assembly: Assembly) -> List[Failure]:

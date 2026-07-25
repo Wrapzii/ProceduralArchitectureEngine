@@ -406,3 +406,8 @@ TRIAGE DONE: @VAL_TRIAGE_EGRESS @VAL_TRIAGE_ROOF @VAL_TRIAGE_MISC; @VAL_TRIAGE_C
 New critical/warn checks: spiral_newel_exists, spiral_drum_enclosure, tower_entry_door, tower_rampart_ring, tower_top_walkable, stair_typology_match, roof_bears_on_wall, roof_covers_enclosed, roof_valley_join, tower_hall_kiss; handbook §6b variation-vs-continuity.
 
 >>> DONE @VAL_TRIAGE_CROWN ? Raise tower junction/deck/crenels above overlapping hall roof AABB (`_tower_rampart_junction_z_cm`); stretch top `tower_arc` to crown wall-head; canopy envelope accepts tower_arc/crown/cap so raised spires stay attached. No interpenetration demotion. `test_m3_interpenetration_zero` + roof_covers uncovered green.
+
+2026-07-25 — @VAL_STAIR_OFFSET: User bug — monumental stairs stacked same XY with 180° flip; cannot walk. Owns: pae/solver.py stair well, pae/assemble.py _place_stairs/_stair_occupied_cells, pae/validate.py stair_flight_stack check, tests. Do NOT demote headroom.
+>>> TRIGGER @VAL_STAIR_OFFSET — Shift multi-storey switchback/wide flights by stair width (4×2 well).
+
+>>> DONE @VAL_STAIR_OFFSET — Multi-storey switchback/wide flights shift by stair width (4x2 well). L0 pad (1,1)-(2,2), L1 pad (3,1)-(4,2). Critical stair_flight_stack. Tests: test_stair_flight_offset + school. Ledger D-23. Commit pending.
