@@ -64,6 +64,18 @@ def check_entrance_existence(
     return failures
 
 
+# Re-export ensemble existence for callers that already import from existence.
+def check_entrance_ensemble_existence(
+    entrances: Sequence[EntranceSpec],
+    assembly: Assembly,
+) -> List[Failure]:
+    from pae.entrance_ensemble import (
+        check_entrance_ensemble_existence as _check,
+    )
+
+    return _check(entrances, assembly)
+
+
 def check_no_bare_aperture_holes(assembly: Assembly) -> List[Failure]:
     """Passage breaches must carry a door/gate asset — never a bare hole (roadmap §1.5).
 

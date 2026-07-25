@@ -45,6 +45,10 @@ from pae.primitives.roofs import (
     roof_valley_span_size_cm,
 )
 from pae.existence import check_entrance_existence
+from pae.entrance_ensemble import (
+    check_entrance_ensemble_existence,
+    expand_entrance_ensembles,
+)
 from pae.primitives.types import PrimitiveDescriptor
 from pae.report import Failure, Report
 from pae.style_pack import resolve_piece_id
@@ -2141,9 +2145,18 @@ def assemble(
         ],
     )
     if floor_plan.massing is not None and floor_plan.massing.entrances:
-        failures.extend(
-            check_entrance_existence(floor_plan.massing.entrances, assembly)
-        )
+        entrances = floor_plan.massing.entrances
+        if any(e.ensemble for e in entrances):
+            assembly, ensemble_failures = expand_entrance_ensembles(
+                assembly,
+                entrances,
+                storeys=storeys,
+            )
+            failures.extend(ensemble_failures)
+            failures.extend(
+                check_entrance_ensemble_existence(entrances, assembly)
+            )
+        failures.extend(check_entrance_existence(entrances, assembly))
     return assembly, Report.from_failures(failures)
 
 

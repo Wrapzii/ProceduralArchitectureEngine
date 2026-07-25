@@ -99,12 +99,16 @@ class EntranceSpec:
 
     Every declared entrance is a *passage breach*: assemble must place a door or
     gate leaf (never a bare hole). Enforced by ``no_bare_aperture`` (roadmap §1.5).
-    Ensemble expansion (portico / twin stairs) is Phase 1.3 — not yet emitted.
+
+    When ``ensemble`` is True (Phase 1.3), assemble expands the entrance into a
+    greybox composition: arch leaf + exterior steps + flanking columns, and twin
+    interior stairs when the building has ≥2 storeys and free interior cells.
     """
 
     role: EntranceRole
     facade: Optional[str] = None  # south | north | east | west
     bay: Optional[int] = None  # 0-based index along the facade run
+    ensemble: bool = False
 
 
 @dataclass
@@ -329,7 +333,10 @@ def _parse_entrances(raw: Any) -> List[EntranceSpec]:
         bay = None if bay_raw is None else int(bay_raw)
         if bay is not None and bay < 0:
             raise ValueError(f"entrances[{i}].bay must be >= 0")
-        out.append(EntranceSpec(role=role, facade=facade, bay=bay))
+        ensemble = bool(item.get("ensemble", False))
+        out.append(
+            EntranceSpec(role=role, facade=facade, bay=bay, ensemble=ensemble)
+        )
     return out
 
 
@@ -1010,6 +1017,42 @@ def m8_entrances_spec(*, seed: int = 8) -> BuildingSpec:
         entrances=[
             EntranceSpec(role="grand", facade="south"),
             EntranceSpec(role="service", facade="north"),
+        ],
+        seed=seed,
+        ground_slab=True,
+    )
+
+
+def m9_grand_ensemble_spec(*, seed: int = 9) -> BuildingSpec:
+    """Milestone 9 — grand entrance ensemble (Phase 1.3 greybox stub).
+
+    South ``grand`` entrance with ``ensemble=True`` expands to arch + steps +
+    flanking columns (and twin interior stairs when feasible). Service door
+    remains a plain leaf without ensemble expansion.
+    """
+    return BuildingSpec(
+        name="m9_grand_ensemble",
+        style="keep",
+        footprint=FootprintSpec(kind="rect", bays_x=8, bays_y=6),
+        storeys=2,
+        storey_use=["hall", "hall"],
+        towers=[],
+        roof=RoofSpec(kind="pitched", pitch=0.9),
+        circulation=CirculationSpec(
+            stair_kind="straight",
+            # Keep the hall stair off the south grand bay so twin ensemble
+            # flights can occupy the inward flanks (Phase 1.3).
+            stair_cells=[(6, 3), (6, 4)],
+        ),
+        openings=OpeningPolicy(
+            windows_per_bay=1,
+            doors_ground=1,
+            windows_ground=None,
+            skip_ground_windows=True,
+        ),
+        entrances=[
+            EntranceSpec(role="grand", facade="south", ensemble=True),
+            EntranceSpec(role="service", facade="north", ensemble=False),
         ],
         seed=seed,
         ground_slab=True,

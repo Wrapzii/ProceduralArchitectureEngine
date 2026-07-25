@@ -55,6 +55,10 @@ opening, flanking columns or pilasters, a porch or portico, steps up from the wa
 described and it needs to be a single declarative unit that expands into ~30 pieces.
 *Verified by:* the ensemble's stairs are reachable from the entrance cell; both flights
 land on the same upper deck; railings guard both.
+**DONE stub (RM_M9_ENSEMBLE):** `EntranceSpec.ensemble` + `pae/entrance_ensemble.py`
+expands grand entrances to greybox arch + `steps_external` + flanking `pilaster` (and
+twin `stair_half` when storeys≥2); `entrance_ensemble_existence` check. Full ~30-piece
+portico/railings remain future work. Does not weaken 1.5 `no_bare_aperture`.
 
 **1.4 Vertical stacking of openings.** A doorway onto a first-floor balcony directly above
 the ground entrance. Openings need to know about each other vertically so they align.
