@@ -42,15 +42,15 @@ the switchboard for everything below.
 
 | # | Objective | Check owed |
 |---|---|---|
-| S-011 | Steep pointed roof profile (pitch ≥ 1.6) as a style parameter — the anime-fantasy read | pitch within style range |
-| S-012 | Hip roof | watertight envelope **[V]** |
+| ~~S-011~~ | **DONE (RM_ROOF_ADV + RM_STYLE_ADV):** `RoofHints` / `resolve_roof_pitch` / `is_steep_silhouette_style`; `wizard_academy` steep pack; pitched + hip height from `spec.pitch ≥ 1.6`. Tests: `test_hip_roof.py`, `test_style_pack.py`. | pitch within style range ✓ |
+| ~~S-012~~ | **DONE (RM_ROOF_ADV):** `roof_hip` four-slope mesh + per-wing `place_hip_roof`; validate `critical=[]` on milestones. Gaps: watertight envelope **[V]** (S-021). Tests: `test_hip_roof.py`. | watertight envelope **[V]** (stub) |
 | S-013 | Half-hip / jerkinhead | " |
 | S-014 | Mansard | " |
 | S-015 | Gambrel | " |
 | S-016 | Catslide / sweeping asymmetric roof to a lower eaves on one side | eaves height per side |
 | S-017 | Conical roof over round towers, meeting the drum exactly | canopy attachment **[V]** |
 | S-018 | Polygonal (octagonal) roof over polygonal towers | " |
-| S-019 | Valleys where wings meet — currently each wing roofs independently and they collide | no roof interpenetration **[V]** |
+| ~~S-019~~ | **DONE greybox (RM_ROOF_ADV):** `roof_valley` V-trough stubs on L/U wing abutments (pitched per-wing). Gaps: diagonal valley merge (S-021), ridge as real edge geom (S-020). Tests: `test_hip_roof.py`. | no roof interpenetration **[V]** (AABB-only) |
 | S-020 | Hips and ridges as real geometry, not implied by adjacent slabs | ridge continuity **[V]** |
 | S-021 | Roof over irregular (L/U/courtyard) plans as ONE resolved surface | watertight envelope |
 | S-022 | Multiple roof heights per building — tall hall, lower service range | roof step attachment |

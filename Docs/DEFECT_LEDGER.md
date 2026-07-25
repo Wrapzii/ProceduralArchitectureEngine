@@ -67,7 +67,7 @@ Severity: **S1** shipped and visible · **S2** caught in review/CI · **S3** nea
 
 | ID | Sev | Symptom | Root cause | Fix / rule |
 |---|---|---|---|---|
-| D-6 | S1 | Four-storey tower with three doorways opening into open air | Assembler places a door on the same bay of EVERY storey; nothing asked what was outside | `aperture_reachability` check + `variation.vary()` demotes unreachable upper doors |
+| D-6 | S1 | Four-storey tower with three doorways opening into open air | Assembler places a door on the same bay of EVERY storey; nothing asked what was outside | **FIXED (@VAL_APERTURE / roadmap 0.5)** — `aperture_reachability` + `storey_egress` GROUND/VOLUME promoted **critical**; assemble south-face upper glazing, variation balcony landing set, compound deck-adjacent balcony doors, property factory multi-storey glaze. Tests: `test_aperture_reachability_critical.py` (5); random 100 seeds critical empty |
 | D-7 | S1 | Every door in the corner of its elevation | Assembler takes the first bay of a run | Seeded mid-elevation placement with a corner margin |
 | D-8 | S1 | Two entrances side by side | Doors repositioned independently, no separation rule | `door_min_separation_bays`, `max_doors_per_elevation` |
 | D-9 | S1 | An arched door beside a square-headed one on one elevation | Door style chosen per door | ONE entrance style per building, seeded |

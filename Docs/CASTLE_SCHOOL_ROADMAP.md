@@ -28,7 +28,7 @@ fix each time was a check, not a patch.
 | ~~0.1~~ | ~~Random-spec towers fully detached~~ | **DONE (M7)** — solver perimeter attach snap + assemble drum offset `2r→r` so arcs kiss the hall. Random validate green for freestanding towers. | Ledger C-5 |
 | ~~0.2~~ | ~~Stair-top clearance cell-based~~ | **DONE (M7)** — `_check_stair_exit_clearance` uses `covered_cells` for stair footprint, holes, and solid plugs (Rule 5.1). | Ledger D-5 |
 | ~~0.3~~ | ~~`roof_penetration` check is a warning, not critical~~ | **DONE (M7)** — school academy triaged: 0 hits (flat roofs sit ``FLOOR_T`` above wall heads; no blades). Eave-tuck and gable-ridge designed pairs exempted; check promoted to **critical**. Tests: ``test_roof_penetration_triage.py``. | |
-| 0.5 | `aperture_reachability`, `storey_egress` GROUND/VOLUME are WARNINGS | They are correct and find 25 real doorway-to-nothing defects across the milestone fixtures (M2's first-floor door opens into air) | Promoting now breaks 26 tests in other lanes. Fix the fixtures with `pae.variation`, then promote to critical. **A warning that stays a warning past one milestone is decoration.** Partial: assemble no longer stacks L0 doors onto upper storeys; M3 aperture polish green. |
+| ~~0.5~~ | ~~`aperture_reachability`, `storey_egress` GROUND/VOLUME are WARNINGS~~ | **DONE** — checks are **critical**. Fixtures/generators fixed: assemble south-face upper glazing (no doorway-to-nothing stack; VOLUME on empty `windows_per_bay`), variation keeps gallery doors via balcony landing set, compound only punches balcony doors onto deck-adjacent bays, property factory glazes multi-storey. Tests: ``test_aperture_reachability_critical.py``. | |
 | ~~0.6~~ | ~~Circular towers have no windows and a poor roof junction~~ | **DONE** — helical / perimeter drum windows (`tower_arc_quarter_window` + wall overlays); `tower_junction` ring under crown/cap. Tests: `test_tower_windows.py`. | Phase 4.7 |
 | ~~0.4~~ | ~~Gallery roof partial edge attachment~~ | **DONE (M7)** — one spanning gallery roof per range with court-face eaves (`EAVE_OVERHANG_CM`). | |
 
@@ -99,8 +99,10 @@ Comfy decorative pipeline's real job — it exists but has only a demo crate.
 
 ## Phase 3 — Vertical circulation (beyond the straight flight)
 
-**3.1 Spiral stairs placed.** `stair_spiral_quarter` exists and is still unreachable from
-any spec. Towers need them.
+**3.1 Spiral stairs placed.** **DONE (RM_SPIRAL_POLISH):** `stair_kind=spiral` on tower
+drum cells; solver single-cell tower gate; plan STAIR/VOID on drum; assemble stacks 4×
+`stair_spiral_quarter` per storey climb; exit holes punched via `covered_cells` (Rule 5.1).
+Tests: `test_spiral_stairs.py`. Gaps: headroom / walkable-path checks (Phase 3 verify block).
 **3.2 Switchback and grand flights.** Partially present in the swarm's stair kit; needs
 solver integration and landings.
 **3.3 Stair enclosures.** Stairwells as rooms with walls and doors, not open holes.
@@ -118,17 +120,22 @@ and a walkable-path check from ground to every storey.
 `gate`) with west/east curtain runs (`wall_plain`, `parapet_solid`, `battlement` trim).
 Validated with `critical=[]`; portcullis, murder holes, and barbican remain future work.
 
-**4.1 Curtain walls** with wall-walks, parapets and battlements — a run between towers,
-not a building.
-**4.2 Gatehouse** — twin towers, portcullis slot, murder holes, barbican.
+**4.1 Curtain walls** — **DONE greybox (RM_CASTLE_POLISH):** west/east `wall_plain` curtain
+runs with `parapet_solid` + `battlement` trim via `castle_curtain_wall_spec()` /
+`build_castle_curtain_compound()`; `critical=[]`. Gaps: full wall-walk circuit, moat-scale
+enclosure.
+**4.2 Gatehouse** — **DONE greybox (RM_CASTLE_POLISH):** twin-tower gatehouse with
+`wall_gate_arch` (`entrance_role` `gate`) in `castle_gatehouse_spec()`. Gaps: portcullis
+slot, murder holes, barbican.
 **4.3 Corner and flanking towers** integrated into curtain walls rather than bolted onto a
-range. (Tower geometry exists; attachment is the gap — see defect 0.1.)
+range. (Perimeter attach + drum offset fixed in M7 / defect 0.1; curtain integration still
+open.)
 **4.4 Moat, bridge, drawbridge.** Needs terrain interaction.
 **4.5 Keep** — a tall multi-storey block with its own internal program.
-**4.7 Habitable towers and spires.** Today a spire is a solid decorative cone and a tower
-drum is blind. Needed: spires large enough to contain rooms and a stair; drum windows placed
-along the internal spiral so they light the stair and read correctly from outside; a walkable
-platform at the top with a **circular** railing following the drum, not a straight run.
+**4.7 Habitable towers and spires.** Drum windows + `tower_junction` ring landed (defect
+0.6 / `test_tower_windows.py`). Still open: spires large enough to contain rooms; windows
+at tread height along the internal spiral; walkable top platform with a **circular** railing
+following the drum, not a straight run.
 *Verified by:* stair reachability to the top platform; every drum window at a tread height;
 railing continuity around a curve; headroom on the spiral.
 
@@ -166,7 +173,7 @@ Still needed:
 | **Headroom** | Stairs under low ceilings, doors under beams |
 | **Egress** | Every room within N metres of an exit; a building with one door |
 | **Watertight envelope** | Holes in the roof plane over enclosed space |
-| **Aperture reachability** | A door opening onto a 4 m drop — the balcony bug, generalised |
+| ~~**Aperture reachability**~~ | ~~A door opening onto a 4 m drop~~ — **DONE (0.5):** check is **critical**; milestone fixtures + variation/generators green (`test_aperture_reachability_critical.py`) |
 | **Stacked-opening alignment** | Windows that wander bay to bay between storeys |
 | **Proportion sanity** | Roof pitch, window-to-wall ratio, storey height vs span — the *aesthetic* faults the structural checks cannot see |
 | **Terrain conformance** | Buildings buried in or floating over the landscape |
