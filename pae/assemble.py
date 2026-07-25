@@ -862,31 +862,22 @@ def _place_pitched_roof(
                     tags=gable_piece.tags,
                 )
             )
-        for y in range(ry0, ry1 + 1):
-            local_rise = local_slope_rise_cm(
-                pitch=pitch,
-                cell_index=y,
-                span_start=ry0,
-                span_end=ry1,
-                ridge_axis="x",
-                along_index=rx0,
+        # One full-footprint A-frame (non-uniform scaled proto), not per-bay wedges.
+        pid = _next_piece_id(counters, "roof_slope", (rx0, ry0), level)
+        placements.append(
+            SolidPlacement(
+                piece_id=pid,
+                asset_id=slope_piece.asset_id,
+                kind="roof",
+                cell=(rx0, ry0),
+                level=level,
+                yaw=0,
+                offset_cm=(0.0, 0.0, roof_z),
+                size_cm=(span_x, span_y, gable_height),
+                rotates_about_center=slope_piece.rotates_about_center,
+                tags=slope_piece.tags,
             )
-            hz = max(FLOOR_T_CM, local_rise + FLOOR_T_CM)
-            pid = _next_piece_id(counters, "roof_slope", (rx0, y), level)
-            placements.append(
-                SolidPlacement(
-                    piece_id=pid,
-                    asset_id=slope_piece.asset_id,
-                    kind="roof",
-                    cell=(rx0, y),
-                    level=level,
-                    yaw=0,
-                    offset_cm=(0.0, 0.0, roof_z),
-                    size_cm=(span_x, MODULE_CM, hz),
-                    rotates_about_center=slope_piece.rotates_about_center,
-                    tags=slope_piece.tags,
-                )
-            )
+        )
     else:
         span_modules = modules_x
         full_rise = roof_rise_cm(pitch, span_modules * MODULE_CM)
@@ -909,31 +900,21 @@ def _place_pitched_roof(
                     tags=gable_piece.tags,
                 )
             )
-        for x in range(rx0, rx1 + 1):
-            local_rise = local_slope_rise_cm(
-                pitch=pitch,
-                cell_index=x,
-                span_start=rx0,
-                span_end=rx1,
-                ridge_axis="y",
-                along_index=ry0,
+        pid = _next_piece_id(counters, "roof_slope", (rx0, ry0), level)
+        placements.append(
+            SolidPlacement(
+                piece_id=pid,
+                asset_id=slope_piece.asset_id,
+                kind="roof",
+                cell=(rx0, ry0),
+                level=level,
+                yaw=0,
+                offset_cm=(0.0, 0.0, roof_z),
+                size_cm=(span_x, span_y, gable_height),
+                rotates_about_center=slope_piece.rotates_about_center,
+                tags=slope_piece.tags,
             )
-            hz = max(FLOOR_T_CM, local_rise + FLOOR_T_CM)
-            pid = _next_piece_id(counters, "roof_slope", (x, ry0), level)
-            placements.append(
-                SolidPlacement(
-                    piece_id=pid,
-                    asset_id=slope_piece.asset_id,
-                    kind="roof",
-                    cell=(x, ry0),
-                    level=level,
-                    yaw=0,
-                    offset_cm=(0.0, 0.0, roof_z),
-                    size_cm=(MODULE_CM, span_y, hz),
-                    rotates_about_center=slope_piece.rotates_about_center,
-                    tags=slope_piece.tags,
-                )
-            )
+        )
 
 
 def _place_tower_arcs(

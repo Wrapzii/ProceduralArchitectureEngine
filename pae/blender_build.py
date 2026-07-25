@@ -381,12 +381,28 @@ def _unlink_collection_tree(coll) -> None:
     bpy.data.collections.remove(coll)
 
 
+def _clear_proto_meshes() -> None:
+    """Drop cached ``PAE_Proto_*`` objects so mesh authoring edits take effect.
+
+    Without this, gallery rebuilds reuse stale 8-vert box protos for crown/cap/roof.
+    """
+    import bpy
+
+    for obj in list(bpy.data.objects):
+        if obj.name.startswith("PAE_Proto_"):
+            mesh = obj.data if obj.type == "MESH" else None
+            bpy.data.objects.remove(obj, do_unlink=True)
+            if mesh is not None and getattr(mesh, "users", 1) == 0:
+                bpy.data.meshes.remove(mesh)
+
+
 def _clear_pae_objects():
     from pae.primitives import bpy_util
 
     bpy_util.require_bpy()
     import bpy
 
+    _clear_proto_meshes()
     # Remove prior PAE live objects / orphans.
     for obj in list(bpy.data.objects):
         if obj.name.startswith("PAE_") or obj.name.startswith("m1_") or obj.name.startswith("m2_"):
@@ -404,6 +420,7 @@ def _clear_gallery_collections():
     bpy_util.require_bpy()
     import bpy
 
+    _clear_proto_meshes()
     root = bpy.data.collections.get(GALLERY_ROOT_COLLECTION)
     if root is not None:
         _unlink_collection_tree(root)

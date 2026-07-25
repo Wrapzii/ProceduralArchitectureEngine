@@ -208,8 +208,33 @@ def all_roofs() -> tuple:
 
 
 def _gable_infill_verts_faces(sx: float, sy: float, sz: float) -> Tuple[List[Vec3], List[Sequence[int]]]:
-    """Triangular prism: gable triangle in X-Z extruded along Y."""
-    verts: List[Vec3] = [
+    """Triangular prism sized for the gable *end* wall.
+
+    * If ``sy >= sx`` (span along Y): triangle in Y–Z, extruded along X — faces ±X
+      (ridge-along-X buildings).
+    * Else: triangle in X–Z, extruded along Y — faces ±Y (ridge-along-Y buildings).
+
+    Prior bug: always X–Z triangles along the long eaves → sawtooth / wrong facing.
+    """
+    if sy >= sx:
+        # Thickness X, span Y, peak at mid-Y.
+        verts: List[Vec3] = [
+            (0.0, 0.0, 0.0),
+            (0.0, sy, 0.0),
+            (0.0, sy * 0.5, sz),
+            (sx, 0.0, 0.0),
+            (sx, sy, 0.0),
+            (sx, sy * 0.5, sz),
+        ]
+        faces: List[Sequence[int]] = [
+            (0, 2, 1),
+            (3, 4, 5),
+            (0, 1, 4, 3),
+            (0, 3, 5, 2),
+            (1, 2, 5, 4),
+        ]
+        return verts, faces
+    verts = [
         (0.0, 0.0, 0.0),
         (sx, 0.0, 0.0),
         (sx * 0.5, 0.0, sz),
@@ -217,7 +242,7 @@ def _gable_infill_verts_faces(sx: float, sy: float, sz: float) -> Tuple[List[Vec
         (sx, sy, 0.0),
         (sx * 0.5, sy, sz),
     ]
-    faces: List[Sequence[int]] = [
+    faces = [
         (0, 1, 2),
         (3, 5, 4),
         (0, 3, 4, 1),
@@ -227,16 +252,59 @@ def _gable_infill_verts_faces(sx: float, sy: float, sz: float) -> Tuple[List[Vec
     return verts, faces
 
 
-def _slope_wedge_verts_faces(
+def _double_pitch_verts_faces(sx: float, sy: float, sz: float) -> Tuple[List[Vec3], List[Sequence[int]]]:
+    """Full-footprint double-pitch roof: eaves at y=0/sy, ridge at mid-Y, height *sz*."""
+    mid = sy * 0.5
+    verts: List[Vec3] = [
+        (0.0, 0.0, 0.0),
+        (sx, 0.0, 0.0),
+        (sx, sy, 0.0),
+        (0.0, sy, 0.0),
+        (0.0, mid, sz),
+        (sx, mid, sz),
+    ]
+    faces: List[Sequence[int]] = [
+        (0, 1, 5, 4),  # south slope
+        (4, 5, 2, 3),  # north slope
+        (0, 4, 3),  # west gable fill (thin)
+        (1, 2, 5),  # east gable fill (thin)
+        (0, 3, 2, 1),  # underside
+    ]
+    return verts, faces
+
+
+def _double_pitch_verts_faces_ridge_y(sx: float, sy: float, sz: float) -> Tuple[List[Vec3], List[Sequence[int]]]:
+    """Double-pitch with ridge along Y (eaves at x=0/sx)."""
+    mid = sx * 0.5
+    verts: List[Vec3] = [
+        (0.0, 0.0, 0.0),
+        (sx, 0.0, 0.0),
+        (sx, sy, 0.0),
+        (0.0, sy, 0.0),
+        (mid, 0.0, sz),
+        (mid, sy, sz),
+    ]
+    faces: List[Sequence[int]] = [
+        (0, 4, 5, 3),  # west slope
+        (4, 1, 2, 5),  # east slope
+        (0, 1, 4),
+        (3, 5, 2),
+        (0, 3, 2, 1),
+    ]
+    return verts, faces
+
+
+def _single_slope_wedge_verts_faces(
     sx: float,
     sy: float,
     sz: float,
     *,
-    ridge_toward_positive_y: bool = True,
+    ridge_toward_positive_y: bool,
 ) -> Tuple[List[Vec3], List[Sequence[int]]]:
-    """Wedge with eave on one Y edge and ridge on the opposite edge."""
     if not ridge_toward_positive_y:
-        verts, faces = _slope_wedge_verts_faces(sx, sy, sz, ridge_toward_positive_y=True)
+        verts, faces = _single_slope_wedge_verts_faces(
+            sx, sy, sz, ridge_toward_positive_y=True
+        )
         flipped = [(v[0], sy - v[1], v[2]) for v in verts]
         return flipped, faces
     verts: List[Vec3] = [
@@ -255,6 +323,25 @@ def _slope_wedge_verts_faces(
         (2, 5, 4, 3),
     ]
     return verts, faces
+
+
+def _slope_wedge_verts_faces(
+    sx: float,
+    sy: float,
+    sz: float,
+    *,
+    ridge_toward_positive_y: bool = True,
+) -> Tuple[List[Vec3], List[Sequence[int]]]:
+    """Full A-frame for square/rect decks; one-sided wedge only when explicitly thin."""
+    # Catalog proto is MODULE×MODULE — always author as double-pitch so non-uniform
+    # instance scale produces a closed hall roof.
+    if sx >= MODULE_CM * 0.9 and sy >= MODULE_CM * 0.9:
+        if sx >= sy:
+            return _double_pitch_verts_faces(sx, sy, sz)
+        return _double_pitch_verts_faces_ridge_y(sx, sy, sz)
+    return _single_slope_wedge_verts_faces(
+        sx, sy, sz, ridge_toward_positive_y=ridge_toward_positive_y
+    )
 
 
 def build_roof_mesh(desc: PrimitiveDescriptor, *, name: Optional[str] = None):

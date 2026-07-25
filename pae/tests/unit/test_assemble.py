@@ -303,10 +303,11 @@ def test_pitched_roof_emits_gable_pieces():
     assert gables[0].size_cm[2] == pytest.approx(rise + FLOOR_T_CM)
     assert gables[0].size_cm[0] == MODULE_CM
     assert gables[0].size_cm[1] == 3 * MODULE_CM
-    # 4×3 footprint: ridge along X → 2 gable end caps (span full Y), 3 slope rows.
+    # 4×3 footprint: ridge along X → 2 gable end caps (span full Y), 1 A-frame deck.
     assert len(gables) == 2
-    assert len(slopes) == 3
+    assert len(slopes) == 1
     assert slopes[0].size_cm[0] == 4 * MODULE_CM
+    assert slopes[0].size_cm[1] == 3 * MODULE_CM
     gable_x = {p.cell[0] for p in gables}
     assert gable_x == {0, 3}
 
