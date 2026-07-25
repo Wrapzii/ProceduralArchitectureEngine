@@ -180,6 +180,7 @@ Suite at close: 405 passed, 1 failed (@TOWER_ATTACH above). Renders: Saved/Scree
 >>> TRIGGER @RM_HEADROOM â€” Headroom check S-130 + watertight envelope stub S-021/V. Owns: validate.py new checks.
 >>> TRIGGER @RM_CASTLE â€” Curtain wall + gatehouse greybox (4.1/4.2) compound preset. Owns: compound.py/site.py castle preset.
 >>> DONE @RM_CASTLE_POLISH - Phase 4.1-4.2 greybox: castle_curtain_ranges + build_castle_curtain_compound (west/east wall_plain curtains + twin-tower gatehouse wall_gate_arch role gate); CASTLE_BAILEY_SITE cobble walk; check_range_chain_connection + gate check_entrance_existence fail-closed. test_castle_curtain.py 11 passed; validate critical=[]. Commit 4b3ff49.
+>>> DONE @RM_STYLE_ADV — RoofHints (pitch_min/max, steep_silhouette, kind_default); resolve_roof_pitch + is_steep_silhouette_style; resolve_piece_id roof/band roles; wizard_academy steep pack; roof-section unknown-key rejection. 12 style_pack tests pass. Commit f4ccfe1.
 
 2026-07-25 — @RM_ENTRANCE_ADV
 >>> TRIGGER @RM_ENTRANCE_ADV — Phase 1.5 no-hole-without-door. Owns: pae/existence.py, EntranceSpec-only in spec.py (no RoomSpec), assemble door-role only if needed, validate.py APPEND no_bare_aperture only (do not touch aperture_reachability), test_entrances.py. Do not demote critical checks.
