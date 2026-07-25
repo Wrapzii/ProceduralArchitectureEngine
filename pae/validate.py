@@ -477,6 +477,14 @@ def _designed_stair_opening_pair(a: SolidPlacement, b: SolidPlacement) -> bool:
     return False
 
 
+def _designed_roof_gable_slope_pair(a: SolidPlacement, b: SolidPlacement) -> bool:
+    """Gable-end infill and slope deck share ridge-end volume by design (§6)."""
+    ids = {a.asset_id, b.asset_id}
+    if ids != {"roof_gable_infill", "roof_pitched_slope"}:
+        return False
+    return a.kind == "roof" and b.kind == "roof" and a.level == b.level
+
+
 def _interpenetration_pair_allowed(
     a: SolidPlacement,
     b: SolidPlacement,
@@ -501,6 +509,8 @@ def _interpenetration_pair_allowed(
     if _designed_floor_hole_pair(a, b):
         return True
     if _designed_stair_opening_pair(a, b):
+        return True
+    if _designed_roof_gable_slope_pair(a, b):
         return True
     return False
 
