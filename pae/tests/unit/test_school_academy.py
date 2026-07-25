@@ -12,6 +12,7 @@ from pae.assemble import assemble
 from pae.plan import CellRole, plan
 from pae.pipeline import run_through_assemble, run_through_validate_trim
 from pae.solver import solve
+from pae.trim import covered_cells
 from pae.spec import (
     BuildingSpec,
     CirculationSpec,
@@ -137,7 +138,12 @@ def test_school_assemble_validate_critical_empty_before_trim():
 
 
 def test_school_switchback_floor_holes_on_upper_storeys():
-    """Switchback well: stair_switchback + ≥4 floor_hole rims per upper storey."""
+    """Switchback well: stair_switchback + the full stairwell open on every upper storey.
+
+    Asserted on CELLS COVERED, not on piece count. Holes are emitted as maximal
+    rectangles, so a 2x2 well is one placement, not four — counting pieces measured the
+    emitter's packing rather than whether the deck is actually open over the stair.
+    """
     spec = school_academy_spec()
     massing, _ = solve(spec)
     _, _, assembly, _ = run_through_assemble(spec)
@@ -150,9 +156,12 @@ def test_school_switchback_floor_holes_on_upper_storeys():
     stair_cells = set(massing.stair_cells)
     holes = [p for p in assembly.placements if p.asset_id == "floor_hole"]
     for level in sorted({p.level for p in holes if p.level >= 1}):
-        level_holes = [p for p in holes if p.level == level]
-        assert len(level_holes) >= 4, f"level {level}: {len(level_holes)} floor_hole"
-        assert {p.cell for p in level_holes} >= stair_cells
+        open_cells: set = set()
+        for p in holes:
+            if p.level == level:
+                open_cells |= covered_cells(p)
+        assert len(open_cells) >= 4, f"level {level}: {len(open_cells)} open cell(s)"
+        assert open_cells >= stair_cells
 
 
 def test_gothic_school_interior_partition_uses_wall_door_gothic():

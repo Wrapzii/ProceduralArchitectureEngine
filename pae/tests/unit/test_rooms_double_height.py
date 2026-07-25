@@ -94,11 +94,13 @@ def test_double_height_hall_no_l1_solid_floor():
     _, _, assembly, _ = run_through_assemble(spec)
 
     level = 1
-    holes = {
-        p.cell
-        for p in assembly.placements
-        if p.level == level and p.asset_id == "floor_hole"
-    }
+    # Cells OPENED, not hole pieces: a rectangular well is one spanning placement.
+    from pae.trim import covered_cells
+
+    holes: set = set()
+    for p in assembly.placements:
+        if p.level == level and p.asset_id == "floor_hole":
+            holes |= covered_cells(p)
     assert inner <= holes, f"missing holes for {inner - holes}"
 
     _, report = validate(assembly)

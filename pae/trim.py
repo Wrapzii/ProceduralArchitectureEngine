@@ -46,6 +46,8 @@ from pae.report import Failure, Report
 Cell = Tuple[int, int]
 
 # Rhythm / threshold constants — all in bays or storeys, never centimetres.
+#: Mirror of ``validate.HEADROOM_CLEARANCE_CM``; imported lazily there to avoid a cycle.
+_HEADROOM_CM = 210.0
 BUTTRESS_MIN_STOREYS = 3
 BUTTRESS_EVERY_BAYS = 2
 DORMER_EVERY_BAYS = 2
@@ -507,6 +509,168 @@ def _roofline(assembly: Assembly, opts: TrimOptions) -> List[SolidPlacement]:
                     suffix="finial",
                 )
             )
+        out.extend(_tower_spiral_stairs(assembly, caps))
+    return out
+
+
+def _tower_spiral_stairs(
+    assembly: Assembly,
+    caps: Sequence[SolidPlacement],
+) -> List[SolidPlacement]:
+    """A helix up every spired tower that does not already have one.
+
+    WHY: a tower got a drum, a cap, a spire and a finial, and nothing inside it. User:
+    "still no actual helix spiral staircase inside of the spires." The tower read as a
+    solid ornament rather than as something you climb.
+
+    The helix is ``stair_spiral_quarter`` at yaw 0/90/180/270, each lifted by its own
+    rise so the treads WIND rather than stack. The quarters share a cell by design —
+    that is what a helix is, and why the co-occupancy rule exempts them.
+    """
+    out: List[SolidPlacement] = []
+    catalog = catalog_by_id()
+    if "stair_spiral_quarter" not in catalog:
+        return out
+    rise = catalog["stair_spiral_quarter"].size_cm[2]
+    per_storey = max(1, int(round(STOREY_CM / rise)))
+
+    already = {
+        p.cell
+        for p in assembly.placements
+        if p.kind == "stair" and "spiral" in p.asset_id
+    }
+    # Decks the helix has to pass THROUGH. A stair that climbs into a solid slab is a
+    # ceiling, not a stair, so every deck the helix crosses gets opened at that cell.
+    # EVERY slab, including tower decks. ``_deck_cells_by_level`` skips the tower-top
+    # platform, which is exactly the slab a tower helix arrives at — the stair climbed
+    # into the underside of the viewing deck with no hatch through it.
+    decks_at: Dict[int, Set[Cell]] = {}
+    open_at: Dict[int, Set[Cell]] = {}
+    for p in assembly.placements:
+        if p.kind != "floor":
+            continue
+        bucket = open_at if p.asset_id == "floor_hole" else decks_at
+        bucket.setdefault(p.level, set()).update(covered_cells(p))
+    hole = catalog.get("floor_hole")
+
+    # Lowest roof underside over each cell. A helix may not climb into a roof — the
+    # chapel's tower sits under a gable and the top flights had no headroom at all.
+    roof_bottom: Dict[Cell, float] = {}
+    for p in assembly.placements:
+        if p.kind not in ("roof", "roofline"):
+            continue
+        mn, _mx = placement_world_aabb(
+            p.cell[0], p.cell[1], p.level, p.yaw, p.size_cm, p.offset_cm,
+            rotates_about_center=p.rotates_about_center,
+        )
+        for c in covered_cells(p):
+            roof_bottom[c] = min(roof_bottom.get(c, mn[2]), mn[2])
+
+    for cap in caps:
+        if cap.cell in already:
+            continue  # the assembler already built one — do not double it
+        cap_xy = (cap.offset_cm[0], cap.offset_cm[1])
+        # Stop BELOW the cap. Climbing to cap.level inclusive ran the top quarter into
+        # the underside of the tower roof — 50 headroom criticals. The helix delivers
+        # you onto the top deck; the roof above it is not somewhere you walk.
+        for level in range(max(0, cap.level)):
+            # Only build a flight whose EXIT is genuinely clear. ``stair_exit_clearance``
+            # rejects any solid module floor over a run's top, and a tower deck spans the
+            # whole drum — a hole cannot open it, because the check reads the slab itself
+            # as the blockage. Emitting the flight anyway would ship a stair that climbs
+            # into the underside of the viewing platform. A helix that stops one storey
+            # short is honest; one that dead-ends into a slab is not.
+            probe = _placement(
+                "stair_spiral_quarter", cap.cell, level,
+                offset_cm=(cap_xy[0], cap_xy[1], 0.0), suffix="probe",
+            )
+            reach = covered_cells(probe)
+            if any(
+                s.level == level + 1
+                and s.kind == "floor"
+                and s.asset_id != "floor_hole"
+                and covered_cells(s) & reach
+                # Mirror ``validate._is_module_solid_floor``: only a 1x1 PAD is an
+                # unopenable blockage. A spanning deck can be punched with a hole; a
+                # pad cannot, which is what "use floor_hole, not a pad" means.
+                and max(s.size_cm[0], s.size_cm[1]) <= MODULE_CM + TOL_CM
+                for s in assembly.placements
+            ):
+                continue
+            # The NEWEL. A helix is not self-supporting — every tread is cantilevered
+            # off the central post, and without it the quarters read as floating steps
+            # winding round thin air. One post per storey, at the drum centre.
+            if "spiral_newel" in catalog:
+                newel = catalog["spiral_newel"].size_cm
+                out.append(
+                    _placement(
+                        "spiral_newel",
+                        cap.cell,
+                        level,
+                        offset_cm=(
+                            cap_xy[0] + (MODULE_CM - newel[0]) * 0.5,
+                            cap_xy[1] + (MODULE_CM - newel[1]) * 0.5,
+                            0.0,
+                        ),
+                        suffix=f"newel{level}",
+                    )
+                )
+            for q in range(per_storey):
+                step = _placement(
+                    "stair_spiral_quarter",
+                    cap.cell,
+                    level,
+                    yaw=(q * 90) % 360,
+                    offset_cm=(cap_xy[0], cap_xy[1], q * rise),
+                    suffix=f"helix{level}_{q}",
+                )
+                # Headroom, measured. Anything that would tuck under a roof slope is
+                # dropped rather than shipped as a tread you cannot stand on.
+                mn, mx = placement_world_aabb(
+                    step.cell[0], step.cell[1], step.level, step.yaw, step.size_cm,
+                    step.offset_cm, rotates_about_center=step.rotates_about_center,
+                )
+                ceil = min(
+                    (roof_bottom[c] for c in covered_cells(step) if c in roof_bottom),
+                    default=None,
+                )
+                if ceil is not None and ceil - mx[2] < _HEADROOM_CM:
+                    continue
+                out.append(step)
+
+    # Open every deck the helix passes THROUGH. Punching only the cap cell missed the
+    # rest of the drum: a centred quarter spans more than one bay, so part of the slab
+    # stayed solid and the stair climbed into a ceiling. Punch by the run's real
+    # footprint, not by the cell it is nominally anchored to.
+    if hole is not None:
+        under: Dict[int, Set[Cell]] = {}
+        for p in out:
+            if p.kind != "stair":
+                continue
+            under.setdefault(p.level, set()).update(covered_cells(p))
+
+        # Open the ceiling directly over each flight. ``stair_exit_clearance`` looks for
+        # a floor_hole at EXACTLY stair.level + 1 covering every cell the run occupies,
+        # so the opening is keyed to the run, not to whichever slab happens to be up
+        # there — matching the slab's own level put the hole on the wrong storey.
+        opened: Set[Tuple[int, Cell]] = {
+            (lvl, c) for lvl, cs in open_at.items() for c in cs
+        }
+        for lvl, cells in sorted(under.items()):
+            top = lvl + 1
+            for c in sorted(cells):
+                if (top, c) in opened:
+                    continue
+                opened.add((top, c))
+                out.append(
+                    _placement(
+                        "floor_hole",
+                        c,
+                        top,
+                        offset_cm=(0.0, 0.0, -FLOOR_T_CM),
+                        suffix="helix_well",
+                    )
+                )
     return out
 
 

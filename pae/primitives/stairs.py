@@ -96,7 +96,32 @@ def straight_stair_verts_faces(
     riser_t = max(tread_d * 0.18, 4.0)
     tread_t = max(riser_h * 0.22, 5.0)
     nose = tread_d * 0.12
+    # Closed STRINGS carrying the flight. Treads and risers alone gave a ladder of
+    # floating steps with nothing beneath it — user: "there are no supports under the
+    # stairs, it just looks like there's floating steps." A string is a raked beam down
+    # each side; built here as a stepped stack because the kit is box geometry, which
+    # gives the right silhouette and a closed soffit line from the side.
+    string_t = max(width * 0.09, 6.0)
     parts: List[Tuple[List[Vec3], List[Face]]] = []
+
+    for i in range(n):
+        z0 = i * riser_h
+        top = z0 + riser_h
+        for near in (0.0, width - string_t):
+            if along == "x":
+                parts.append(
+                    _box_verts_faces(i * tread_d, near, 0.0, tread_d, string_t, top)
+                )
+            elif along == "y":
+                parts.append(
+                    _box_verts_faces(near, i * tread_d, 0.0, string_t, tread_d, top)
+                )
+            else:  # -y
+                parts.append(
+                    _box_verts_faces(
+                        near, run - (i + 1) * tread_d, 0.0, string_t, tread_d, top
+                    )
+                )
 
     for i in range(n):
         z0 = i * riser_h

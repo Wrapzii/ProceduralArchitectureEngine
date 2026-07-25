@@ -65,8 +65,13 @@ def test_m2_assemble_stair_and_floor_hole():
     assert len(stairs) == 1
     assert stairs[0].asset_id == "stair_straight"
     assert stairs[0].level == 0
-    assert len(holes) == 2
-    hole_cells = {p.cell for p in holes}
+    # The void bays are OPEN — asserted on cells, not on how many rectangles the
+    # emitter needed to cover them (a 1x2 well is one placement, not two).
+    from pae.trim import covered_cells
+
+    hole_cells: set = set()
+    for p in holes:
+        hole_cells |= covered_cells(p)
     void_cells = {
         c for c, r in floor_plan.storeys[1].cells.items() if r == CellRole.VOID
     }

@@ -104,7 +104,7 @@ def test_happy_minimal_assembly_passes():
     placements = [
         SolidPlacement(
             piece_id="w_s",
-            asset_id="wall",
+            asset_id="wall_door",
             kind="wall",
             cell=(0, 0),
             level=0,
@@ -124,7 +124,7 @@ def test_happy_minimal_assembly_passes():
         ),
         SolidPlacement(
             piece_id="w_e",
-            asset_id="wall",
+            asset_id="wall_window",
             kind="wall",
             cell=(1, 0),
             level=0,

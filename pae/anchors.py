@@ -28,33 +28,14 @@ CHANDELIER_MIN_CELLS = 9
 PENDANT_HEIGHT_CM = 280.0
 WALL_INSET_CM = 8.0
 
-_INTERIOR_ROLES = frozenset(
-    {
-        CellRole.INTERIOR,
-        CellRole.CORRIDOR,
-        CellRole.CLASSROOM,
-        # Double-height volume cells still need wall sconces on enclosing faces.
-        CellRole.DOUBLE_VOID,
-    }
+# Compare roles by *name* so placement survives ``reload_pae()`` (plain Enum
+# members from a reloaded ``pae.plan`` are not identical to import-time members).
+_INTERIOR_ROLE_NAMES = frozenset(
+    {"INTERIOR", "CORRIDOR", "CLASSROOM", "DOUBLE_VOID"}
 )
-
-# Halls for chandelier centroids — floor plate + open double-height volume.
-_CHANDELIER_ROLES = frozenset(
-    {
-        CellRole.INTERIOR,
-        CellRole.DOUBLE_VOID,
-    }
-)
-
-_WALL_HOST_ROLES = frozenset(
-    {
-        CellRole.EXTERIOR,
-        CellRole.WALL_LINE,
-        CellRole.DOOR,
-        CellRole.VOID,
-        CellRole.COURTYARD,
-        CellRole.STAIR,
-    }
+_CHANDELIER_ROLE_NAMES = frozenset({"INTERIOR", "DOUBLE_VOID"})
+_WALL_HOST_ROLE_NAMES = frozenset(
+    {"EXTERIOR", "WALL_LINE", "DOOR", "VOID", "COURTYARD", "STAIR"}
 )
 
 _NEIGHBOR_DELTA: Dict[Face, Tuple[int, int]] = {
@@ -65,26 +46,34 @@ _NEIGHBOR_DELTA: Dict[Face, Tuple[int, int]] = {
 }
 
 
-def _role_at(layer: FloorPlanLayer, cx: int, cy: int) -> Optional[CellRole]:
+def _role_name(role: object) -> str:
+    if role is None:
+        return "EXTERIOR"
+    name = getattr(role, "name", None)
+    if isinstance(name, str):
+        return name
+    return str(role)
+
+
+def _role_at(layer: FloorPlanLayer, cx: int, cy: int) -> object:
     role = layer.role_at(cx, cy)
     if role is None:
         return CellRole.EXTERIOR
     return role
 
 
-def _needs_sconce(host: CellRole, neighbor: CellRole) -> bool:
-    if neighbor in _WALL_HOST_ROLES:
+def _needs_sconce(host: object, neighbor: object) -> bool:
+    host_n = _role_name(host)
+    neighbor_n = _role_name(neighbor)
+    if neighbor_n in _WALL_HOST_ROLE_NAMES:
         return True
-    if host == CellRole.CLASSROOM and neighbor == CellRole.CORRIDOR:
+    if host_n == "CLASSROOM" and neighbor_n == "CORRIDOR":
         return True
-    if host == CellRole.CORRIDOR and neighbor == CellRole.CLASSROOM:
+    if host_n == "CORRIDOR" and neighbor_n == "CLASSROOM":
         return True
-    if host in (CellRole.CORRIDOR, CellRole.CLASSROOM) and neighbor == CellRole.INTERIOR:
+    if host_n in ("CORRIDOR", "CLASSROOM") and neighbor_n == "INTERIOR":
         return True
-    if host == CellRole.INTERIOR and neighbor in (
-        CellRole.CORRIDOR,
-        CellRole.CLASSROOM,
-    ):
+    if host_n == "INTERIOR" and neighbor_n in ("CORRIDOR", "CLASSROOM"):
         return True
     return False
 
@@ -161,7 +150,7 @@ def _sconce_candidates(assembly: Assembly) -> List[Tuple[int, Cell, Face]]:
         for ly in range(layer.height):
             for lx in range(layer.width):
                 role = layer.cells[ly][lx]
-                if role not in _INTERIOR_ROLES:
+                if _role_name(role) not in _INTERIOR_ROLE_NAMES:
                     continue
                 cx, cy = ox + lx, oy + ly
                 for face, (dx, dy) in _NEIGHBOR_DELTA.items():
@@ -208,7 +197,7 @@ def _interior_components(
     ox, oy = layer.origin_cell
     for ly in range(layer.height):
         for lx in range(layer.width):
-            if layer.cells[ly][lx] in _CHANDELIER_ROLES:
+            if _role_name(layer.cells[ly][lx]) in _CHANDELIER_ROLE_NAMES:
                 interior.add((ox + lx, oy + ly))
     if len(interior) < min_cells:
         return []
@@ -261,7 +250,7 @@ def _pendant_points(assembly: Assembly) -> List[Tuple[int, float, float]]:
         ox, oy = layer.origin_cell
         for ly in range(layer.height):
             for lx in range(layer.width):
-                if layer.cells[ly][lx] != CellRole.STAIR:
+                if _role_name(layer.cells[ly][lx]) != "STAIR":
                     continue
                 cx, cy = ox + lx, oy + ly
                 wx = cx * MODULE_CM + MODULE_CM * 0.5
@@ -422,14 +411,16 @@ def validate_anchor_placements(assembly: Assembly) -> List[Failure]:
             continue
 
         role_here = _role_at(layer, cx, cy)
-        on_interior = role_here in _INTERIOR_ROLES
+        on_interior = _role_name(role_here) in _INTERIOR_ROLE_NAMES
         on_wall = False
         for face, (dx, dy) in _NEIGHBOR_DELTA.items():
             nrole = _role_at(layer, cx + dx, cy + dy)
-            if role_here in _INTERIOR_ROLES and _needs_sconce(role_here, nrole):
+            if on_interior and _needs_sconce(role_here, nrole):
                 on_wall = True
                 break
-            if nrole in _INTERIOR_ROLES and _needs_sconce(nrole, role_here or CellRole.EXTERIOR):
+            if _role_name(nrole) in _INTERIOR_ROLE_NAMES and _needs_sconce(
+                nrole, role_here or CellRole.EXTERIOR
+            ):
                 on_wall = True
                 break
 
