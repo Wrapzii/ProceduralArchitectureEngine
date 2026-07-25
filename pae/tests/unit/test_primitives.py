@@ -34,6 +34,7 @@ REQUIRED_IDS = [
     "tower_cap",
     "battlement",
     "roof_pitched_gable",
+    "roof_flat",
     "ground_plinth",
 ]
 
@@ -121,6 +122,13 @@ def test_roof_includes_gable_height():
     assert roof.size_cm[2] == pytest.approx(rise + FLOOR_T_CM)
     assert roof.size_cm[0] == pytest.approx(MODULE_CM)
     assert "gable" in roof.tags
+
+
+def test_roof_flat_module_footprint():
+    flat = get("roof_flat")
+    assert flat.size_cm == pytest.approx((MODULE_CM, MODULE_CM, FLOOR_T_CM))
+    assert flat.footprint_modules == (1, 1)
+    assert "flat" in flat.tags
 
 
 def test_ground_plinth_thickness():

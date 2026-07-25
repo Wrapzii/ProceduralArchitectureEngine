@@ -88,8 +88,12 @@ def floor_placement_z_cm(level: int) -> float:
 
 
 def ground_plinth_z_cm() -> float:
-    """Ground / plinth slab origin so its top is at z = -FLOOR_T (§2.5)."""
-    return -FLOOR_T_CM
+    """Ground / plinth slab origin so its top is at z = -FLOOR_T (§2.5).
+
+    Slab thickness is ``FLOOR_T_CM``, so the min-corner origin sits one slab
+    below that top contact plane (floor bottom at level 0).
+    """
+    return -2.0 * FLOOR_T_CM
 
 
 def rotate_local_xy(

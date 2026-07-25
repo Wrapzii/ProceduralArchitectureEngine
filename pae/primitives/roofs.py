@@ -75,8 +75,61 @@ def roof_pitched_gable(
     )
 
 
+def roof_flat_span_size_cm(modules_x: int, modules_y: int) -> tuple[float, float, float]:
+    """Axis-aligned flat roof slab spanning *modules_x* × *modules_y* bays."""
+    if modules_x < 1 or modules_y < 1:
+        raise ValueError(f"roof span must be ≥ 1×1 modules, got {modules_x}×{modules_y}")
+    return (modules_x * MODULE_CM, modules_y * MODULE_CM, FLOOR_T_CM)
+
+
+def roof_flat() -> PrimitiveDescriptor:
+    """One-module flat roof deck (assemble scales XY via ``roof_flat_span_size_cm``)."""
+    tag = frozenset({module_tag(), "roof"})
+    sockets = (
+        SocketDesc(
+            name="eave_x0",
+            pos_cm=(0.0, MODULE_CM * 0.5, 0.0),
+            normal=(-1.0, 0.0, 0.0),
+            type="roof_eave",
+            tags=tag,
+        ),
+        SocketDesc(
+            name="eave_x1",
+            pos_cm=(MODULE_CM, MODULE_CM * 0.5, 0.0),
+            normal=(1.0, 0.0, 0.0),
+            type="roof_eave",
+            tags=tag,
+        ),
+        SocketDesc(
+            name="eave_y0",
+            pos_cm=(MODULE_CM * 0.5, 0.0, 0.0),
+            normal=(0.0, -1.0, 0.0),
+            type="roof_eave",
+            tags=tag,
+        ),
+        SocketDesc(
+            name="eave_y1",
+            pos_cm=(MODULE_CM * 0.5, MODULE_CM, 0.0),
+            normal=(0.0, 1.0, 0.0),
+            type="roof_eave",
+            tags=tag,
+        ),
+    )
+    return PrimitiveDescriptor(
+        id="roof_flat",
+        kind="roof",
+        footprint_modules=(1, 1),
+        height_storeys=0.0,
+        size_cm=roof_flat_span_size_cm(1, 1),
+        sockets=sockets,
+        tags=frozenset({"roof", "flat", module_tag()}),
+        origin="min_corner",
+        notes="Deck thickness FLOOR_T; place top at level_z + STOREY (§6 flat roof).",
+    )
+
+
 def all_roofs() -> tuple:
-    return (roof_pitched_gable(),)
+    return (roof_pitched_gable(), roof_flat())
 
 
 def build_roof_mesh(desc: PrimitiveDescriptor, *, name: Optional[str] = None):

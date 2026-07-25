@@ -29,8 +29,8 @@ def ground_plinth() -> PrimitiveDescriptor:
         tags=frozenset({"plinth", "ground", "foundation", module_tag()}),
         origin="min_corner",
         notes=(
-            "Assemble places origin at ground_plinth_z_cm() so top is at "
-            "z = −FLOOR_T (§2.5)."
+            "Assemble places origin at ground_plinth_z_cm() (−2×FLOOR_T) so the "
+            "slab top lands at z = −FLOOR_T, flush under the level-0 floor (§2.5)."
         ),
     )
 

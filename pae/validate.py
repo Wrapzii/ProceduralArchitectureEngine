@@ -330,6 +330,14 @@ def _gaps_along_run(run: WallRun, pieces: Dict[str, SolidPlacement]) -> List[Fai
 # --- §7.4 interpenetration ---------------------------------------------------
 
 
+def _interpenetration_pair_allowed(a: SolidPlacement, b: SolidPlacement) -> bool:
+    """Pairs that may touch by design — not reported as overlap defects."""
+    kinds = {a.kind, b.kind}
+    if kinds == {"floor", "ground"}:
+        return True
+    return False
+
+
 def _check_interpenetration(assembly: Assembly) -> List[Failure]:
     failures: List[Failure] = []
     placements = assembly.placements
@@ -338,6 +346,8 @@ def _check_interpenetration(assembly: Assembly) -> List[Failure]:
         amin, amax = _placement_aabb(a)
         for j in range(i + 1, len(placements)):
             b = placements[j]
+            if _interpenetration_pair_allowed(a, b):
+                continue
             if a.level != b.level and not _vertical_stack_overlap(amin, amax, *_placement_aabb(b)):
                 bmin, bmax = _placement_aabb(b)
                 if max(amin[2], bmin[2]) >= min(amax[2], bmax[2]) - TOL_CM:

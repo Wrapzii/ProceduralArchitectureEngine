@@ -31,7 +31,7 @@ def test_wall_run_cell_east_north_boundary():
 
 def test_floor_and_ground_z():
     assert floor_placement_z_cm(1) == STOREY_CM - FLOOR_T_CM
-    assert ground_plinth_z_cm() == -FLOOR_T_CM
+    assert ground_plinth_z_cm() == -2.0 * FLOOR_T_CM
 
 
 def test_rotate_local_xy_table():

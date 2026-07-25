@@ -18,13 +18,13 @@ from pae.contract import (
     FLOOR_T_CM,
     MODULE_CM,
     STOREY_CM,
-    floor_placement_z_cm,
     ground_plinth_z_cm,
     placement_world_aabb,
     rotation_offset_cm,
 )
 from pae.plan import CellRole, FloorPlan, StoreyGrid
 from pae.primitives.catalog import catalog_by_id, get as get_primitive
+from pae.primitives.roofs import roof_flat_span_size_cm
 from pae.primitives.types import PrimitiveDescriptor
 from pae.report import Failure, Report
 
@@ -143,6 +143,32 @@ _FLOOR_ROLES = frozenset(
         CellRole.STAIR,
     }
 )
+
+
+def _boundary_wall_cells(
+    x0: int,
+    y0: int,
+    x1: int,
+    y1: int,
+) -> Dict[str, List[Tuple[int, int]]]:
+    """§2.3 boundary-line wall cells with single corner ownership.
+
+    East/north runs sit on ``x1+1`` / ``y1+1`` (not ``x1`` / ``y1``).
+
+    Corner ownership — vertical runs (west/east) own perimeter corner cells;
+    horizontal runs (south/north) omit the shared endpoint so each grid cell
+    gets at most one wall piece:
+
+    - **SW** ``(x0, y0)``: west keeps it; south starts at ``x0+1``.
+    - East/north boundary lines are orthogonal (``x1+1`` column vs ``y1+1`` row),
+      so they do not share grid cells; only west+south meet at one cell today.
+    """
+    return {
+        "west": [(x0, y) for y in range(y0, y1 + 1)],
+        "east": [(x1 + 1, y) for y in range(y0, y1 + 1)],
+        "south": [(x, y0) for x in range(x0 + 1, x1 + 1)],
+        "north": [(x, y1 + 1) for x in range(x0, x1 + 1)],
+    }
 
 
 def _footprint_bbox(grid: StoreyGrid) -> Tuple[int, int, int, int]:
@@ -380,6 +406,77 @@ def _build_wall_runs(
     return runs
 
 
+def _stair_run_anchor_and_yaw(
+    cells: List[Tuple[int, int]],
+) -> Tuple[Tuple[int, int], int]:
+    """Bottom-left anchor and yaw for a straight 2-module run (§5.3)."""
+    if not cells:
+        raise ValueError("stair run requires at least one cell")
+    ordered = sorted(cells)
+    ax, ay = ordered[0]
+    if len(ordered) == 1:
+        return (ax, ay), 0
+    bx, by = ordered[1]
+    if ax == bx:
+        return (ax, min(ay, by)), 90
+    return (min(ax, bx), ay), 0
+
+
+def _stair_occupied_cells(fp: FloorPlan) -> Set[Tuple[int, int, int]]:
+    """(level, x, y) cells covered by a stair flight — skip floor slabs there."""
+    occupied: Set[Tuple[int, int, int]] = set()
+    run_cells = list(fp.stair_cells)
+    if len(run_cells) < 2:
+        return occupied
+    for level in range(len(fp.storeys) - 1):
+        grid = fp.storeys[level]
+        if all(grid.get(*c) == CellRole.STAIR for c in run_cells):
+            for cx, cy in run_cells:
+                occupied.add((level, cx, cy))
+    return occupied
+
+
+def _place_stairs(
+    *,
+    fp: FloorPlan,
+    catalog: _PieceCatalog,
+    placements: List[SolidPlacement],
+    counters: Dict[str, int],
+) -> None:
+    """Emit one ``stair_straight`` per climbed storey (2 modules, 1 rise)."""
+    run_cells = list(fp.stair_cells)
+    if len(run_cells) < 2:
+        return
+    anchor, yaw = _stair_run_anchor_and_yaw(run_cells)
+    stair_def = catalog.get("stair_straight")
+    sx, sy, _ = stair_def.size_cm
+    ox, oy = rotation_offset_cm(
+        yaw,
+        sx,
+        sy,
+        rotates_about_center=stair_def.rotates_about_center,
+    )
+    for level in range(len(fp.storeys) - 1):
+        grid = fp.storeys[level]
+        if not all(grid.get(*c) == CellRole.STAIR for c in run_cells):
+            continue
+        pid = _next_piece_id(counters, "stair", anchor, level)
+        placements.append(
+            SolidPlacement(
+                piece_id=pid,
+                asset_id=stair_def.asset_id,
+                kind="stair",
+                cell=anchor,
+                level=level,
+                yaw=yaw,
+                offset_cm=(ox, oy, 0.0),
+                size_cm=stair_def.size_cm,
+                rotates_about_center=stair_def.rotates_about_center,
+                tags=stair_def.tags,
+            )
+        )
+
+
 def _circulation_edges(fp: FloorPlan) -> List[CirculationEdge]:
     edges: List[CirculationEdge] = []
     seen: Set[Tuple[int, int, int, int]] = set()
@@ -397,6 +494,122 @@ def _circulation_edges(fp: FloorPlan) -> List[CirculationEdge]:
             )
         )
     return edges
+
+
+def _tower_cells(fp: FloorPlan) -> Set[Tuple[int, int]]:
+    """Cells owned by tower volumes (cap/arcs, not pitched roof)."""
+    cells: Set[Tuple[int, int]] = set()
+    if fp.massing is None:
+        return cells
+    for vol in fp.massing.volumes:
+        if vol.role == "tower":
+            cells |= vol.cells()
+    return cells
+
+
+def _place_pitched_roof(
+    *,
+    grid: StoreyGrid,
+    level: int,
+    catalog: _PieceCatalog,
+    tower_cells: Set[Tuple[int, int]],
+    placements: List[SolidPlacement],
+    counters: Dict[str, int],
+) -> None:
+    """Tile ``roof_pitched_gable`` over the top storey (gable infill in-piece).
+
+    Prior failure: walls stopped at the eaves and nothing filled the gable
+    triangle → 8 m holes. The pitched kit piece includes solid gable faces.
+    """
+    roof_piece = catalog.get("roof_pitched_gable")
+    roof_z = STOREY_CM
+    for (cx, cy), role in grid.cells.items():
+        if role == CellRole.EXTERIOR or role == CellRole.COURTYARD:
+            continue
+        if (cx, cy) in tower_cells:
+            continue
+        # Floors / wall-line / door / stair / void — cover the enclosed plan.
+        if role not in _ENCLOSED_ROLES:
+            continue
+        pid = _next_piece_id(counters, "roof_pitched", (cx, cy), level)
+        placements.append(
+            SolidPlacement(
+                piece_id=pid,
+                asset_id=roof_piece.asset_id,
+                kind="roof",
+                cell=(cx, cy),
+                level=level,
+                yaw=0,
+                offset_cm=(0.0, 0.0, roof_z),
+                size_cm=roof_piece.size_cm,
+                rotates_about_center=roof_piece.rotates_about_center,
+                tags=roof_piece.tags,
+            )
+        )
+
+
+def _place_tower_arcs(
+    *,
+    floor_plan: FloorPlan,
+    catalog: _PieceCatalog,
+    placements: List[SolidPlacement],
+    counters: Dict[str, int],
+) -> None:
+    """Place 4× ``tower_arc_quarter`` at the *same* tower cell (§2.2 centred).
+
+    Prior failure: offsetting quarters to four cells scattered the drum and
+    left no curved wall. Quarters share the circle centre; yaw only.
+    """
+    if floor_plan.massing is None:
+        return
+    arc = catalog.get("tower_arc_quarter")
+    crown = catalog.get("tower_crown")
+    cap = catalog.get("tower_cap")
+    for vol in floor_plan.massing.volumes:
+        if vol.role != "tower":
+            continue
+        # 1×1 tower footprint — all quarters share (x0, y0).
+        cell = (vol.x0, vol.y0)
+        for level in range(vol.storeys):
+            for yaw in (0, 90, 180, 270):
+                # §2.2 centred exception — no min-corner yaw offset, same cell.
+                pid = _next_piece_id(counters, f"tower_arc_{yaw}", cell, level)
+                placements.append(
+                    SolidPlacement(
+                        piece_id=pid,
+                        asset_id=arc.asset_id,
+                        kind="tower_arc",
+                        cell=cell,
+                        level=level,
+                        yaw=yaw,
+                        offset_cm=(0.0, 0.0, 0.0),
+                        size_cm=arc.size_cm,
+                        rotates_about_center=True,
+                        tags=arc.tags,
+                    )
+                )
+        # Crown + cap on the drum top (centred, same cell).
+        top = vol.storeys - 1
+        crown_z = STOREY_CM
+        for piece, kind, z_off in (
+            (crown, "tower_crown", crown_z),
+            (cap, "tower_cap", crown_z + crown.size_cm[2]),
+        ):
+            pid = _next_piece_id(counters, kind, cell, top)
+            placements.append(
+                SolidPlacement(
+                    piece_id=pid,
+                    asset_id=piece.asset_id,
+                    kind=kind,
+                    cell=cell,
+                    level=top,
+                    yaw=0,
+                    offset_cm=(0.0, 0.0, z_off),
+                    size_cm=piece.size_cm,
+                    rotates_about_center=True,
+                    tags=piece.tags,
+                )
+            )
 
 
 def assemble(
@@ -424,6 +637,7 @@ def assemble(
     floor_layers: Dict[int, FloorPlanLayer] = {}
 
     storeys = len(floor_plan.storeys)
+    stair_occupied = _stair_occupied_cells(floor_plan)
 
     for grid in floor_plan.storeys:
         level = grid.level
@@ -437,17 +651,14 @@ def assemble(
             "north": [],
         }
 
-        # §2.3 boundary-line cells — east/north on x1+1 / y1+1 (NOT x1/y1).
-        west_cells = [(x0, y) for y in range(y0, y1 + 1)]
-        east_cells = [(x1 + 1, y) for y in range(y0, y1 + 1)]
-        south_cells = [(x, y0) for x in range(x0, x1 + 1)]
-        north_cells = [(x, y1 + 1) for x in range(x0, x1 + 1)]
+        # §2.3 boundary-line cells — corner ownership via _boundary_wall_cells.
+        wall_cells = _boundary_wall_cells(x0, y0, x1, y1)
 
         for face, cells in (
-            ("west", west_cells),
-            ("east", east_cells),
-            ("south", south_cells),
-            ("north", north_cells),
+            ("west", wall_cells["west"]),
+            ("east", wall_cells["east"]),
+            ("south", wall_cells["south"]),
+            ("north", wall_cells["north"]),
         ):
             before = len(placements)
             _place_wall_run(
@@ -465,24 +676,47 @@ def assemble(
             run_piece_ids[face] = [p.piece_id for p in placements[before:]]
 
         floor_piece = catalog.get("floor")
-        floor_z_off = floor_placement_z_cm(level)
-        for (cx, cy), role in grid.cells.items():
-            if role in _FLOOR_ROLES:
-                pid = _next_piece_id(counters, "floor", (cx, cy), level)
-                placements.append(
-                    SolidPlacement(
-                        piece_id=pid,
-                        asset_id=floor_piece.asset_id,
-                        kind="floor",
-                        cell=(cx, cy),
-                        level=level,
-                        yaw=0,
-                        offset_cm=(0.0, 0.0, floor_z_off),
-                        size_cm=floor_piece.size_cm,
-                        tags=floor_piece.tags,
+        floor_z_off = -FLOOR_T_CM
+        if level == 0:
+            for (cx, cy), role in grid.cells.items():
+                if (level, cx, cy) in stair_occupied:
+                    continue
+                if role in _FLOOR_ROLES:
+                    pid = _next_piece_id(counters, "floor", (cx, cy), level)
+                    placements.append(
+                        SolidPlacement(
+                            piece_id=pid,
+                            asset_id=floor_piece.asset_id,
+                            kind="floor",
+                            cell=(cx, cy),
+                            level=level,
+                            yaw=0,
+                            offset_cm=(0.0, 0.0, floor_z_off),
+                            size_cm=floor_piece.size_cm,
+                            tags=floor_piece.tags,
+                        )
                     )
+        else:
+            # Upper storeys: one spanning deck (perimeter walls carry the span).
+            modules_x = x1 - x0 + 1
+            modules_y = y1 - y0 + 1
+            pid = _next_piece_id(counters, "floor_deck", (x0, y0), level)
+            placements.append(
+                SolidPlacement(
+                    piece_id=pid,
+                    asset_id=floor_piece.asset_id,
+                    kind="floor",
+                    cell=(x0, y0),
+                    level=level,
+                    yaw=0,
+                    offset_cm=(0.0, 0.0, floor_z_off),
+                    size_cm=roof_flat_span_size_cm(modules_x, modules_y),
+                    tags=floor_piece.tags,
                 )
-            elif role == CellRole.VOID:
+            )
+            for (cx, cy), role in grid.cells.items():
+                if role != CellRole.VOID:
+                    continue
                 hole = catalog.get("floor_hole")
                 pid = _next_piece_id(counters, "floor_hole", (cx, cy), level)
                 placements.append(
@@ -499,25 +733,50 @@ def assemble(
                     )
                 )
 
-        if floor_plan.roof_kind == "flat" and level == storeys - 1:
-            roof_z = STOREY_CM
-            # Roof covers footprint cells x0..x1, y0..y1 (not the wall ring outside).
-            span_x = (x1 - x0 + 1) * MODULE_CM
-            span_y = (y1 - y0 + 1) * MODULE_CM
-            pid = _next_piece_id(counters, "roof", (x0, y0), level)
-            placements.append(
-                SolidPlacement(
-                    piece_id=pid,
-                    asset_id="roof_flat",
-                    kind="roof",
-                    cell=(x0, y0),
-                    level=level,
-                    yaw=0,
-                    offset_cm=(0.0, 0.0, roof_z),
-                    size_cm=(span_x, span_y, FLOOR_T_CM),
-                    tags=frozenset({"roof", "flat"}),
+        if level == storeys - 1:
+            if floor_plan.roof_kind == "flat":
+                roof_piece = catalog.get("roof_flat")
+                roof_z = STOREY_CM
+                modules_x = x1 - x0 + 1
+                modules_y = y1 - y0 + 1
+                pid = _next_piece_id(counters, "roof", (x0, y0), level)
+                placements.append(
+                    SolidPlacement(
+                        piece_id=pid,
+                        asset_id=roof_piece.asset_id,
+                        kind="roof",
+                        cell=(x0, y0),
+                        level=level,
+                        yaw=0,
+                        offset_cm=(0.0, 0.0, roof_z),
+                        size_cm=roof_flat_span_size_cm(modules_x, modules_y),
+                        tags=roof_piece.tags,
+                    )
                 )
-            )
+            elif floor_plan.roof_kind == "pitched":
+                _place_pitched_roof(
+                    grid=grid,
+                    level=level,
+                    catalog=catalog,
+                    tower_cells=_tower_cells(floor_plan),
+                    placements=placements,
+                    counters=counters,
+                )
+
+    _place_stairs(
+        fp=floor_plan,
+        catalog=catalog,
+        placements=placements,
+        counters=counters,
+    )
+
+    # Round towers: 4 arc quarters × same cell (§2.2 centred exception).
+    _place_tower_arcs(
+        floor_plan=floor_plan,
+        catalog=catalog,
+        placements=placements,
+        counters=counters,
+    )
 
     if floor_plan.ground_slab:
         plinth = catalog.get("ground_plinth")
@@ -526,7 +785,7 @@ def assemble(
             if grid.level != 0:
                 continue
             for (cx, cy), role in grid.cells.items():
-                if role == CellRole.EXTERIOR:
+                if role not in _FLOOR_ROLES:
                     continue
                 pid = _next_piece_id(counters, "ground", (cx, cy), 0)
                 placements.append(

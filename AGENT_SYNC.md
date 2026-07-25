@@ -40,4 +40,6 @@ Project root: `C:\Users\WhiteWidow\Documents\GitHub\ProceduralArchitectureEngine
 >>> DONE @WP-7 — Blender add-on UI (§10): Validate click-to-frame, Spec/Assets/Generate/Export panels, pure helpers + 12 unit tests; install `pae/addon/README.md`.
 >>> DONE @WP-6 — Export gate (refuses critical), pae.manifest/1 (contract dims), FBX/blend stubs + linked-dupe plan, bind_to_terrain heightmap modes; 10 export unit tests.
 2026-07-24 — Master: wired WP-7 export operators to WP-6 APIs (blend/fbx/manifest). M1 proof: validate ok=True, 29 placements, pae.manifest/1 written. Suite: 140 passed, 2 xfailed. ALL WP-1..WP-9 DONE.
+>>> DONE @CORNERS_ROOF — roof_flat catalog + span helper; wall corner ownership (west owns SW); ground z −2×FLOOR_T (top at −FLOOR_T); floor/ground interpenetration exempt; 152 passed / 2 xfailed.
+>>> DONE @M2 — Two-storey 4×3 rect + straight stair (2 modules, 1 rise), VOID above stair, floor_hole + spanning upper deck, stair_straight in assemble; m2_two_storey_stair_spec(); validate ok=True critical=[]; 8 M2 tests; 152 passed / 2 xfailed repo-wide; M1 + §2.3 east/north boundary regression clean.
 ```
