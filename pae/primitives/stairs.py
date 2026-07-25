@@ -2,12 +2,90 @@
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import List, Optional, Sequence, Tuple
 
 from pae.contract import MODULE_CM, STOREY_CM
 from pae.primitives.types import PrimitiveDescriptor, SocketDesc, module_tag
 
+Vec3 = Tuple[float, float, float]
+Face = Tuple[int, ...]
+
 _SPIRAL_RISE_STOREYS = 0.25  # STOREY/4 per quarter (§5.3)
+# Straight run: exact integer riser/tread from contract dims (350/20, 800/20).
+_STRAIGHT_STAIR_STEPS = 20
+
+
+def straight_stair_step_count() -> int:
+    """Number of treads on a full straight run (one storey rise)."""
+    return _STRAIGHT_STAIR_STEPS
+
+
+def _box_verts_faces(
+    ox: float, oy: float, oz: float, sx: float, sy: float, sz: float
+) -> Tuple[List[Vec3], List[Face]]:
+    verts: List[Vec3] = [
+        (ox, oy, oz),
+        (ox + sx, oy, oz),
+        (ox + sx, oy + sy, oz),
+        (ox, oy + sy, oz),
+        (ox, oy, oz + sz),
+        (ox + sx, oy, oz + sz),
+        (ox + sx, oy + sy, oz + sz),
+        (ox, oy + sy, oz + sz),
+    ]
+    faces: List[Face] = [
+        (0, 1, 2, 3),
+        (4, 7, 6, 5),
+        (0, 4, 5, 1),
+        (1, 5, 6, 2),
+        (2, 6, 7, 3),
+        (3, 7, 4, 0),
+    ]
+    return verts, faces
+
+
+def _merge_verts_faces(
+    parts: Sequence[Tuple[List[Vec3], List[Face]]],
+) -> Tuple[List[Vec3], List[Face]]:
+    verts: List[Vec3] = []
+    faces: List[Face] = []
+    for part_verts, part_faces in parts:
+        base = len(verts)
+        verts.extend(part_verts)
+        faces.extend(tuple(i + base for i in f) for f in part_faces)
+    return verts, faces
+
+
+def straight_stair_verts_faces(
+    sx: float,
+    sy: float,
+    sz: float,
+    *,
+    steps: Optional[int] = None,
+) -> Tuple[List[Vec3], List[Face]]:
+    """Stacked tread/riser blocks along +X — import-safe (no bpy).
+
+    Each step is a solid box from its tread nose to the next riser so tread
+    fronts read clearly in viewport renders (not a single ramp slab).
+    """
+    n = steps if steps is not None else _STRAIGHT_STAIR_STEPS
+    if n < 1:
+        raise ValueError("steps must be >= 1")
+    tread_d = sx / n
+    riser_h = sz / n
+    parts: List[Tuple[List[Vec3], List[Face]]] = []
+    for i in range(n):
+        parts.append(
+            _box_verts_faces(
+                i * tread_d,
+                0.0,
+                i * riser_h,
+                tread_d,
+                sy,
+                riser_h,
+            )
+        )
+    return _merge_verts_faces(parts)
 
 
 def stair_straight() -> PrimitiveDescriptor:
@@ -94,7 +172,7 @@ def all_stairs() -> tuple:
 
 
 def build_stair_mesh(desc: PrimitiveDescriptor, *, name: Optional[str] = None):
-    """Simple solid proxy AABB; tread detailing is a later polish pass."""
+    """Author stair meshes — stepped straight run or annular spiral proxy."""
     from pae.primitives import bpy_util
 
     bpy_util.require_bpy()
@@ -108,4 +186,6 @@ def build_stair_mesh(desc: PrimitiveDescriptor, *, name: Optional[str] = None):
         obj = bpy_util.mesh_from_verts_faces(obj_name, verts, faces)
         bpy_util.smooth_shade_curved_faces(obj)
         return obj
-    return bpy_util.box_mesh(obj_name, desc.size_cm, origin_at_min_corner=True)
+    sx, sy, sz = desc.size_cm
+    verts, faces = straight_stair_verts_faces(sx, sy, sz)
+    return bpy_util.mesh_from_verts_faces(obj_name, verts, faces)
