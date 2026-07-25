@@ -1192,6 +1192,31 @@ def _place_stairs(
         )
 
 
+def _rect_cover(cells: Set[Tuple[int, int]]) -> List[Tuple[int, int, int, int]]:
+    """Cover a cell set with maximal axis-aligned rectangles: ``(x0, y0, w, h)``.
+
+    Greedy and deterministic: take the lowest remaining cell, grow east while the set
+    allows, then grow north while every cell of the next row is present. Good enough for
+    stairwells and light wells, which are small and rectangular, and it never emits
+    overlapping rectangles because consumed cells are removed as it goes.
+    """
+    remaining = set(cells)
+    out: List[Tuple[int, int, int, int]] = []
+    while remaining:
+        x0, y0 = min(remaining, key=lambda c: (c[1], c[0]))
+        w = 1
+        while (x0 + w, y0) in remaining:
+            w += 1
+        h = 1
+        while all((x0 + i, y0 + h) in remaining for i in range(w)):
+            h += 1
+        for i in range(w):
+            for j in range(h):
+                remaining.discard((x0 + i, y0 + j))
+        out.append((x0, y0, w, h))
+    return out
+
+
 def _punch_stair_exit_holes(
     *,
     fp: FloorPlan,
@@ -1215,25 +1240,33 @@ def _punch_stair_exit_holes(
         top_level = stair.level + 1
         if top_level >= len(fp.storeys):
             continue
-        for cell in covered_cells(stair):
-            key = (top_level, cell)
-            if key in existing:
-                continue
-            existing.add(key)
-            pid = _next_piece_id(counters, "floor_hole", cell, top_level)
-            placements.append(
-                SolidPlacement(
-                    piece_id=pid,
-                    asset_id=hole_piece.asset_id,
-                    kind="floor",
-                    cell=cell,
-                    level=top_level,
-                    yaw=0,
-                    offset_cm=(0.0, 0.0, -FLOOR_T_CM),
-                    size_cm=hole_piece.size_cm,
-                    tags=hole_piece.tags,
-                )
+        # ONE opening matching the run's own footprint. Punching a 1x1 hole per covered
+        # cell gave a 2x1 stairwell two separate square holes instead of the single 2x1
+        # well the stair needs. A stair is one spanning placement; so is its opening.
+        cells = covered_cells(stair)
+        if all((top_level, c) in existing for c in cells):
+            continue
+        existing |= {(top_level, c) for c in cells}
+        pid = _next_piece_id(counters, "floor_hole", stair.cell, top_level)
+        placements.append(
+            SolidPlacement(
+                piece_id=pid,
+                asset_id=hole_piece.asset_id,
+                kind="floor",
+                cell=stair.cell,
+                level=top_level,
+                yaw=stair.yaw,
+                # Plan extent copied from the run; thickness stays the deck's.
+                offset_cm=(stair.offset_cm[0], stair.offset_cm[1], -FLOOR_T_CM),
+                size_cm=(
+                    stair.size_cm[0],
+                    stair.size_cm[1],
+                    hole_piece.size_cm[2],
+                ),
+                rotates_about_center=stair.rotates_about_center,
+                tags=hole_piece.tags,
             )
+        )
 
 
 def _circulation_edges(fp: FloorPlan) -> List[CirculationEdge]:
@@ -2135,26 +2168,34 @@ def assemble(
                     tags=floor_piece.tags,
                 )
             )
-            for (cx, cy), role in grid.cells.items():
-                # Punch stairwell openings: plan VOIDs, and any stair-run cell on
-                # upper decks (multi-storey wells keep STAIR on intermediate floors).
-                needs_hole = role in (CellRole.VOID, CellRole.DOUBLE_VOID) or (
-                    level > 0 and (cx, cy) in floor_plan.stair_cells
-                )
-                if not needs_hole:
-                    continue
-                hole = catalog.get("floor_hole")
-                pid = _next_piece_id(counters, "floor_hole", (cx, cy), level)
+            # Punch stairwell openings: plan VOIDs, and any stair-run cell on upper
+            # decks (multi-storey wells keep STAIR on intermediate floors).
+            hole_cells = {
+                (cx, cy)
+                for (cx, cy), role in grid.cells.items()
+                if role in (CellRole.VOID, CellRole.DOUBLE_VOID)
+                or (level > 0 and (cx, cy) in floor_plan.stair_cells)
+            }
+            # Merge into RECTANGLES. One hole per cell gave a 2x1 stairwell two separate
+            # square openings instead of the single 2x1 well the run needs — the deck
+            # read as two punched squares with a rib of floor left between them.
+            hole = catalog.get("floor_hole")
+            for (hx, hy, hw, hh) in _rect_cover(hole_cells):
+                pid = _next_piece_id(counters, "floor_hole", (hx, hy), level)
                 placements.append(
                     SolidPlacement(
                         piece_id=pid,
                         asset_id=hole.asset_id,
                         kind="floor",
-                        cell=(cx, cy),
+                        cell=(hx, hy),
                         level=level,
                         yaw=0,
                         offset_cm=(0.0, 0.0, floor_z_off),
-                        size_cm=hole.size_cm,
+                        size_cm=(
+                            hw * MODULE_CM,
+                            hh * MODULE_CM,
+                            hole.size_cm[2],
+                        ),
                         tags=hole.tags,
                     )
                 )
