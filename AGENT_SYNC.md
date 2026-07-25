@@ -207,6 +207,7 @@ Suite at close: 405 passed, 1 failed (@TOWER_ATTACH above). Renders: Saved/Scree
 >>> TRIGGER @VAL_BANDING — Fix banding course Z drift (83cm).
 >>> TRIGGER @RM_M9_ENSEMBLE — Phase 1.3 grand entrance ensemble greybox + existence.
 >>> TRIGGER @RM_ALIGN_1_4 — Phase 1.4 aperture_alignment check.
+>>> DONE @RM_ALIGN_1_4 — Phase 1.4 aperture_alignment: validate._check_aperture_alignment (warning); APERTURE_ALIGNMENT_TOL_CM=TOL_CM; test_aperture_alignment.py 6 passed; did not touch aperture_reachability.
 >>> TRIGGER @RM_ROOMS_CORRIDOR — Phase 2.3 corridor spine / reachability.
 >>> TRIGGER @DOCS_SYNC — Roadmap status + ledger for closed items only.
 
