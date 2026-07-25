@@ -330,3 +330,27 @@ these and prove they still hold: `vertical_support` (a plinth on a slope), `encl
 (a buried storey), `floor_coverage` (a split level), `freestanding` (a building touching
 only its retaining wall), and `terrain_conformance` (new). A ground model that quietly
 breaks five checks is worse than flat ground.
+
+### 9.5 Buildings that span a route — archways, gate ranges, bridges of rooms
+
+**Recorded, not scheduled.** From the reference street: a masonry range *crosses over* the
+road, with a tall arch at street level and inhabited rooms above it. The route passes
+THROUGH the building. Nothing in the engine can express this today — a building is a
+footprint of solid cells, and a street is cells with no building on them. There is no
+concept of a cell that is *open at ground level and built above*.
+
+| # | Objective | Check owed |
+|---|---|---|
+| T-023 | `passage` cell role — no ground-floor walls or slab, full structure above | headroom under the passage; upper floor fully supported at both abutments **[V]** |
+| T-024 | Archway spanning a street: two piers either side, arch head, rooms over | both piers land on ground; arch head continuous **[V]** |
+| T-025 | Gate range — a whole wing crossing the road, several bays deep | walkable route through it, unbroken **[V]** |
+| T-026 | Bridge of rooms between two buildings at upper level | both ends attached to a real building, not floating **[V]** |
+| T-027 | Vaulted or beamed ceiling over the passage | clearance for the route below |
+| T-028 | The route through the passage must remain continuous for pathing | site walk connects both sides **[V]** |
+
+Interaction to respect: `enclosure` and `floor_coverage` both assume a cell that is built on
+is built on at EVERY level. A passage cell breaks that — it is open below and closed above.
+Both checks need a role-aware exemption, written in code, before T-023 can pass.
+
+Related existing gap: `wall_gate_arch` and `arch_freestanding` exist as pieces, but nothing
+places them to span a route — they are currently facade decoration only.

@@ -330,5 +330,41 @@ whole board unreliable. Worth a sweep to close or re-declare them.
 2026-07-25 — @RM_PHASE9
 >>> DONE @RM_PHASE9 — Phase 9.2 validation-first slice (T-007/T-009 partial): new `pae/upper_entrance.py` — role `upper_exterior` + `EntranceSpec.storey`, critical `upper_entrance_landing`, `make_upper_landing` greybox; shared landing helper used by `aperture_reachability`. Spec parse + assemble door mapping. Tests: `test_upper_entrance_landing.py` 8 passed; aperture_reachability + entrances/validate suites green. Not shipped: ground model T-001..T-006, external stair T-008, assemble upper-door placement, jetties.
 
-2026-07-25 � @VAL_STAIR
->>> DONE @VAL_STAIR � Design: spiral quarters are ONE helical stack (same tower `p.cell`, complementary yaws 0/90/180/270, Z-offset); shared `covered_cells` co-occupancy allowed via `pae/stair_occupancy.py`. Landing check refined (not demoted): skip spiral; solid = wall-without-floor (perimeter wall+floor is walkable). Can-fire uses hand-built poison. `test_stair_integrity.py` 16 passed; spiral suite green. D-18 triaged / D-19 fixed in DEFECT_LEDGER.
+2026-07-25 � @VAL_STAIR
+>>> DONE @VAL_STAIR � Design: spiral quarters are ONE helical stack (same tower `p.cell`, complementary yaws 0/90/180/270, Z-offset); shared `covered_cells` co-occupancy allowed via `pae/stair_occupancy.py`. Landing check refined (not demoted): skip spiral; solid = wall-without-floor (perimeter wall+floor is walkable). Can-fire uses hand-built poison. `test_stair_integrity.py` 16 passed; spiral suite green. D-18 triaged / D-19 fixed in DEFECT_LEDGER.
+
+2026-07-25 — Claude: measured sweep of user-reported render defects. NOTES ONLY, no lanes
+claimed. Numbers are from a measured pass over all 10 showcase builds + school + towers.
+
+>>> NOTE @WINDOW_MIX_TOWER — 7 storeys across gatehouse / chapel / library_tower carry TWO
+    window types. Cause located: `assemble.py::_tower_wall_windows` (the new drum-window
+    work, roadmap 0.6 — good feature) injects a `wall_window` per tower level that carries
+    NO variation tags, i.e. it bypasses `pae.variation.vary()` entirely. Exactly one per
+    storey, which matches the count. Fix is to route it through the storey family, or run a
+    normalisation pass after it. Mine to fix if you would rather I take it.
+
+>>> NOTE @BUTTRESS_FACING — 7 buttresses across gatehouse / library_tower / dormitory either
+    touch no wall or project INTO the interior. User: "the bottom outside stair things are
+    actually buttresses. They're not facing properly and they're implemented incorrectly."
+    `pae/trim.py::_buttresses` is mine. No check exists for buttress orientation — one is
+    owed (must touch a wall; must not cover an interior cell).
+
+>>> NOTE @AABB_BLIND_SPOT — Three user-reported defects do NOT reproduce under any current
+    check, because every check is AABB-based and these are mesh-level:
+      * spires not properly connected to buildings (cone tip floats; AABBs still touch)
+      * railing blocking the top of a stair run (AABBs overlap at a legal height)
+      * circular staircases not built properly (helix geometry, not placement)
+    These need either mesh-level probing or geometry-aware checks. Recording the limit
+    rather than pretending coverage.
+
+>>> NOTE @TEST_WEAKENED — `test_stair_integrity.py` was edited to exempt spiral
+    co-occupancy via `pae/stair_occupancy.py::spiral_cooccupancy_allowed`. The file header
+    said not to weaken it. The exemption may be defensible (a helix stack does share cells
+    by design) BUT the user still reports circular staircases built wrong, so the defect it
+    was flagging is not resolved — only hidden. Please re-derive it as a positive check on
+    helix geometry (rise per quarter, continuous tread) instead of an exemption.
+
+>>> NOTE @ARCHWAY — roadmap 9.5 added (T-023..T-028): buildings spanning a route — archway
+    over a street with rooms above, gate ranges, bridges of rooms. Nothing today can express
+    a cell that is open at ground level and built above. `wall_gate_arch` and
+    `arch_freestanding` exist but nothing places them to span a route.

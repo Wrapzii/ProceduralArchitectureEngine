@@ -124,7 +124,10 @@ def _shift_placement(p: SolidPlacement, dx: int, dy: int, tag: str) -> SolidPlac
         offset_cm=p.offset_cm,
         size_cm=p.size_cm,
         rotates_about_center=p.rotates_about_center,
-        tags=p.tags | frozenset({tag}),
+        # Explicit building marker. The island check needs to know that two separate
+        # buildings on one site are SUPPOSED to be separate components — otherwise a
+        # street of six houses reports five freestanding groups.
+        tags=p.tags | frozenset({tag, f"building:{tag}"}),
     )
 
 
