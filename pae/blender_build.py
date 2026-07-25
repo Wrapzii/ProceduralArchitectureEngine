@@ -64,7 +64,6 @@ GALLERY_CAM_ORTHO = True
 # M2 stair proof: tighter SE-elevated view framed on stair + floor_hole AABB only.
 STAIR_PROOF_CAM_DIRECTION = (1.0, -0.72, 0.48)
 STAIR_PROOF_CAM_MARGIN = 1.18
-STAIR_PROOF_HIDE_ASSETS = frozenset({"roof_flat", "floor"})
 
 # Workbench-friendly Base Color (RGBA 0–1) per placement kind.
 # Muted hues — distinct at gallery distance, not emissive neon.
@@ -85,10 +84,50 @@ KIND_MATERIAL_COLORS: Dict[str, Tuple[float, float, float, float]] = {
 }
 _DEFAULT_KIND_COLOR: Tuple[float, float, float, float] = (0.75, 0.75, 0.75, 1.0)
 
+# Asset-specific tints — placements often share ``kind`` (e.g. door/window ``kind=wall``).
+# Higher contrast than kind defaults so gallery/workbench reads openings and variants.
+ASSET_MATERIAL_COLORS: Dict[str, Tuple[float, float, float, float]] = {
+    "wall_door": (0.55, 0.28, 0.12, 1.0),  # dark oak door
+    "wall_window": (0.35, 0.65, 0.92, 1.0),  # bright sky glazing
+    "roof_flat": (0.22, 0.35, 0.62, 1.0),  # deep slate deck
+    "roof_gable_infill": (0.28, 0.55, 0.42, 1.0),  # green gable triangle
+    "roof_pitched_slope": (0.62, 0.28, 0.22, 1.0),  # red clay tile
+    "tower_arc_quarter": (0.82, 0.68, 0.45, 1.0),  # warm sandstone drum
+    "tower_crown": (0.52, 0.42, 0.68, 1.0),  # purple-gray battlements
+    "tower_cap": (0.45, 0.62, 0.38, 1.0),  # mossy stone cone
+    "stair_straight": (0.72, 0.42, 0.28, 1.0),  # terracotta treads
+    "stair_spiral_quarter": (0.78, 0.52, 0.18, 1.0),  # copper spiral
+    "floor_hole": (0.12, 0.12, 0.18, 1.0),  # void rim
+}
+_TINTED_ASSET_PREFIXES = ("roof_", "tower_", "stair_")
+_TINTED_ASSET_EXACT = frozenset(ASSET_MATERIAL_COLORS.keys())
+
 
 def material_color_for_kind(kind: str) -> Tuple[float, float, float, float]:
     """Return RGBA base color for a placement *kind* (import-safe, no bpy)."""
     return KIND_MATERIAL_COLORS.get(kind, _DEFAULT_KIND_COLOR)
+
+
+def material_key_for_placement(asset_id: str, kind: str = "wall") -> str:
+    """Blender material slot key — asset_id when tinted, else kind."""
+    if asset_id in _TINTED_ASSET_EXACT:
+        return asset_id
+    for prefix in _TINTED_ASSET_PREFIXES:
+        if asset_id.startswith(prefix):
+            return asset_id
+    return kind
+
+
+def material_color_for_placement(
+    asset_id: str,
+    kind: str = "wall",
+) -> Tuple[float, float, float, float]:
+    """Return RGBA for a placement — asset tint first, then kind fallback."""
+    if asset_id in ASSET_MATERIAL_COLORS:
+        return ASSET_MATERIAL_COLORS[asset_id]
+    if material_key_for_placement(asset_id, kind) != kind:
+        return material_color_for_kind(kind)
+    return material_color_for_kind(kind)
 
 
 def reload_pae() -> List[str]:
@@ -145,6 +184,20 @@ def _m2_stair_proof_screenshot_path() -> Path:
 def is_stair_proof_placement(p) -> bool:
     """Placements that define the stair + floor-hole proof frame."""
     return p.asset_id in ("stair_straight", "floor_hole") or p.kind == "stair"
+
+
+def is_stair_proof_visible_asset(
+    asset_id: Optional[str],
+    piece_id: Optional[str] = None,
+) -> bool:
+    """True when a mesh instance should remain visible in the M2 stair proof shot."""
+    tokens = (str(asset_id or ""), str(piece_id or ""))
+    combined = " ".join(tokens).lower()
+    if "stair" in combined:
+        return True
+    if "floor_hole" in combined or "hole" in combined:
+        return True
+    return False
 
 
 def stair_proof_bounds_cm(assembly) -> Tuple[Tuple[float, float, float], Tuple[float, float, float]]:
@@ -539,11 +592,12 @@ def _clear_gallery_collections():
     return _ensure_collection(GALLERY_ROOT_COLLECTION)
 
 
-def _ensure_material(kind: str):
+def _ensure_material(asset_id: str, kind: str = "wall"):
     import bpy
 
-    rgba = material_color_for_kind(kind)
-    name = f"PAE_Mat_{kind}"
+    key = material_key_for_placement(asset_id, kind)
+    rgba = material_color_for_placement(asset_id, kind)
+    name = f"PAE_Mat_{key}"
     mat = bpy.data.materials.get(name)
     if mat is None:
         mat = bpy.data.materials.new(name)
@@ -675,7 +729,7 @@ def instance_assembly(
         sx, sy, sz = placement_instance_scale_cm(p)
         inst.scale = (sx * CM_TO_M, sy * CM_TO_M, sz * CM_TO_M)
         inst.rotation_euler = (0.0, 0.0, math.radians(float(p.yaw)))
-        mat = _ensure_material(getattr(p, "kind", "wall"))
+        mat = _ensure_material(p.asset_id, getattr(p, "kind", "wall"))
         if len(inst.data.materials) == 0:
             inst.data.materials.append(mat)
         # Object-linked slot so kind tint does not mutate the shared proto mesh.
@@ -735,15 +789,45 @@ def _ensure_gallery_lighting() -> None:
     sun.rotation_euler = (math.radians(40), math.radians(15), math.radians(-30))
 
 
-def _apply_stair_proof_visibility(objects: Sequence[Any]) -> None:
-    """Hide roof / solid upper slabs so stair treads + floor hole read clearly."""
+def _apply_stair_proof_visibility(objects: Sequence[Any]) -> Dict[str, List[str]]:
+    """Hide every mesh except stair + floor-hole instances (viewport + render)."""
+    hidden: List[str] = []
+    visible: List[str] = []
     for obj in objects:
         if obj.type != "MESH":
             continue
         asset = obj.get("pae_asset_id")
-        if asset in STAIR_PROOF_HIDE_ASSETS:
-            obj.hide_render = True
-            obj.hide_set(True)
+        piece = obj.get("pae_piece_id")
+        label = f"{asset or '?'}:{piece or obj.name}"
+        if is_stair_proof_visible_asset(asset, piece):
+            obj.hide_render = False
+            obj.hide_set(False)
+            visible.append(label)
+            continue
+        obj.hide_render = True
+        obj.hide_set(True)
+        hidden.append(label)
+    return {"hidden": hidden, "visible": visible}
+
+
+def _hide_non_stair_proof_collections(*, keep: str = M2_STAIR_PROOF_COLLECTION) -> List[str]:
+    """Exclude other PAE collections from viewport/render during the proof shot."""
+    from pae.primitives import bpy_util
+
+    bpy_util.require_bpy()
+    import bpy
+
+    excluded: List[str] = []
+    for coll in bpy.data.collections:
+        if coll.name == keep:
+            coll.hide_viewport = False
+            coll.hide_render = False
+            continue
+        if coll.name.startswith("PAE_") or coll.name in (GALLERY_ROOT_COLLECTION, PAE_ROOT_COLLECTION):
+            coll.hide_viewport = True
+            coll.hide_render = True
+            excluded.append(coll.name)
+    return excluded
 
 
 def _clear_stair_proof_collection():
@@ -768,7 +852,7 @@ def frame_camera_on_stair_proof(
     collection: str = M2_STAIR_PROOF_COLLECTION,
     offset_m: Tuple[float, float, float] = (0.0, 0.0, 0.0),
 ) -> Dict[str, Any]:
-    """Frame camera on stair + floor_hole bounds; hide roof/upper slab for clarity."""
+    """Frame camera on stair + floor_hole bounds; hide all other instances."""
     from pae.primitives import bpy_util
 
     bpy_util.require_bpy()
@@ -779,13 +863,19 @@ def frame_camera_on_stair_proof(
     if target_coll is None:
         raise RuntimeError(f"collection not found: {collection!r}")
     meshes = _meshes_in_collection_tree(target_coll)
-    _apply_stair_proof_visibility(meshes)
+    visibility = _apply_stair_proof_visibility(meshes)
+    excluded_colls = _hide_non_stair_proof_collections(keep=collection)
     bb_min, bb_max = stair_proof_bounds_m(assembly, offset_m)
     pose = stair_proof_camera_pose_from_bounds_m(bb_min, bb_max)
     _apply_camera_pose(pose)
     _ensure_gallery_lighting()
     bpy.context.view_layer.update()
-    return pose
+    return {
+        **pose,
+        "stair_proof_hidden": visibility["hidden"],
+        "stair_proof_visible": visibility["visible"],
+        "excluded_collections": excluded_colls,
+    }
 
 
 def write_m2_stair_proof_screenshot(
@@ -835,7 +925,12 @@ def build_m2_stair_proof(*, write_png: bool = True) -> Dict[str, Any]:
 
     proof_coll = _clear_stair_proof_collection()
     n = instance_assembly(assembly, label="m2", target_coll=proof_coll)
-    pose = frame_camera_on_stair_proof(assembly, collection=M2_STAIR_PROOF_COLLECTION)
+    frame = frame_camera_on_stair_proof(assembly, collection=M2_STAIR_PROOF_COLLECTION)
+    camera_pose = {k: v for k, v in frame.items() if k not in (
+        "stair_proof_hidden",
+        "stair_proof_visible",
+        "excluded_collections",
+    )}
     shot = write_screenshot(_m2_stair_proof_screenshot_path()) if write_png else None
     return {
         "ok": report.ok,
@@ -847,7 +942,10 @@ def build_m2_stair_proof(*, write_png: bool = True) -> Dict[str, Any]:
         "placements": len(assembly.placements),
         "stair_proof_placements": stair_placements,
         "stair_bounds_cm": {"min": stair_min, "max": stair_max},
-        "camera_pose": pose,
+        "camera_pose": camera_pose,
+        "stair_proof_hidden": frame["stair_proof_hidden"],
+        "stair_proof_visible": frame["stair_proof_visible"],
+        "excluded_collections": frame["excluded_collections"],
         "screenshot": str(shot) if shot else None,
         "boolean_solvers": sorted(bpy_util.BOOLEAN_SOLVERS),
     }

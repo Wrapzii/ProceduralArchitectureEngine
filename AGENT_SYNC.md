@@ -106,3 +106,12 @@ Project root: `C:\Users\WhiteWidow\Documents\GitHub\ProceduralArchitectureEngine
 >>> DONE @STAIR_PROVE � build_m2_stair_proof() -> Saved/Screenshots/m2_stair_proof.png; deterministic camera from stair+floor_hole AABB; hides roof_flat + upper floor deck; tools/pae_build_in_blender.py --stair-proof; optional build_gallery(stair_proof=True); headless tests in test_blender_build.py.
 >>> TRIGGER @UE_BIND — Doc + tool mapping spawn_table asset_id to Content path stub for RE. Own Docs + tools only.
 >>> DONE @UE_BIND � `tools/ue_asset_bind_table.py` (`--milestone` ? `Saved/exports/{milestone}_asset_bind.json`; `pae.asset_bind/1`: asset_id/suggested_content_path/lod0/collision_profile stubs under `/Game/RE/PAE/...`; optional spawn-table id source); `pae/tests/unit/test_ue_asset_bind_table.py`; `Docs/UE_MANIFEST_CONSUMER.md` bind + UE fill section.
+
+2026-07-24 — Master: Wave J swarm — stair isolate, mat tint by asset, wall thickness read, opening prove shot, ground skirt.
+>>> TRIGGER @STAIR_ISO — Hide ALL non stair/floor_hole in stair proof (walls/ground too). Own blender_build.py only.
+>>> DONE @STAIR_ISO � is_stair_proof_visible_asset() allow-list; _apply_stair_proof_visibility hides viewport+render on every mesh except stair/floor_hole/hole tokens; _hide_non_stair_proof_collections excludes other PAE collections; camera still framed on stair+hole AABB; tests in test_blender_build.py.
+>>> TRIGGER @MAT_TINT — Tint door/window by asset_id not just kind=wall. Own blender_build.py materials.
+>>> DONE @MAT_TINT � ASSET_MATERIAL_COLORS + material_key_for_placement() / material_color_for_placement(); instance_assembly + _ensure_material tint by asset_id (wall_door, wall_window, roof_*, tower_*, stair_*, floor_hole); higher-contrast workbench hues. Tests: test_material_key_for_placement_*, test_asset_material_colors_* in test_blender_build.py.
+>>> TRIGGER @OPEN_PROVE — Dedicated m1_openings_proof.png camera on door+windows exterior. Own blender_build.py.
+>>> TRIGGER @WALL_READ — Ensure wall thickness WALL_T reads in gallery (not paper-thin illusion). Own walls size/assemble if needed.
+>>> TRIGGER @GROUND_SKIRT — Continuous ground under footprint (single slab or flush plinths) — no checkerboard gaps. Own assemble ground.

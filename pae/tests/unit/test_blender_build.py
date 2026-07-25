@@ -334,3 +334,71 @@ def test_kind_material_colors_workbench_friendly():
         assert 0.15 <= g <= 0.85
         assert 0.15 <= b <= 0.85
         assert a == 1.0
+
+
+_TINTED_ASSET_IDS = (
+    "wall_door",
+    "wall_window",
+    "roof_flat",
+    "roof_gable_infill",
+    "roof_pitched_slope",
+    "tower_arc_quarter",
+    "tower_crown",
+    "tower_cap",
+    "stair_straight",
+    "stair_spiral_quarter",
+    "floor_hole",
+)
+
+
+def test_material_key_for_placement_uses_asset_id_for_tints():
+    from pae.blender_build import material_key_for_placement
+
+    assert material_key_for_placement("wall_door", "wall") == "wall_door"
+    assert material_key_for_placement("wall_window", "wall") == "wall_window"
+    assert material_key_for_placement("roof_flat", "roof") == "roof_flat"
+    assert material_key_for_placement("tower_crown", "tower_crown") == "tower_crown"
+    assert material_key_for_placement("stair_straight", "stair") == "stair_straight"
+    assert material_key_for_placement("floor_hole", "floor") == "floor_hole"
+    assert material_key_for_placement("wall_plain", "wall") == "wall"
+    assert material_key_for_placement("floor", "floor") == "floor"
+
+
+def test_material_color_door_window_differ_from_plain_wall():
+    from pae.blender_build import material_color_for_placement
+
+    wall = material_color_for_placement("wall_plain", "wall")
+    door = material_color_for_placement("wall_door", "wall")
+    window = material_color_for_placement("wall_window", "wall")
+    assert door != wall
+    assert window != wall
+    assert door != window
+    for a, b in ((door, wall), (window, wall), (door, window)):
+        dist = sum(abs(a[i] - b[i]) for i in range(3))
+        assert dist > 0.12
+
+
+def test_asset_material_colors_required_keys():
+    from pae.blender_build import ASSET_MATERIAL_COLORS
+
+    assert set(_TINTED_ASSET_IDS) <= set(ASSET_MATERIAL_COLORS.keys())
+
+
+def test_asset_material_colors_are_distinct():
+    from pae.blender_build import material_color_for_placement
+
+    rgbs = [
+        material_color_for_placement(asset_id, asset_id.split("_", 1)[0])[:3]
+        for asset_id in _TINTED_ASSET_IDS
+    ]
+    for i, a in enumerate(rgbs):
+        for b in rgbs[i + 1 :]:
+            dist = sum(abs(a[j] - b[j]) for j in range(3))
+            assert dist > 0.12, f"colors too similar: {a} vs {b}"
+
+
+def test_material_color_for_placement_kind_fallback():
+    from pae.blender_build import material_color_for_kind, material_color_for_placement
+
+    assert material_color_for_placement("wall_plain", "wall") == material_color_for_kind("wall")
+    assert material_color_for_placement("floor", "floor") == material_color_for_kind("floor")
