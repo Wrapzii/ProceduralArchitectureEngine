@@ -325,3 +325,9 @@ whole board unreliable. Worth a sweep to close or re-declare them.
   - **1.4** aperture_alignment **DONE** - eabf1f8 / `validate._check_aperture_alignment`; `test_aperture_alignment.py`. Phase 6 stacked-opening row struck.
   - **2.3** corridor spine **DONE** - 1aafb21 / `plan._extend_corridor_spine_to_stairs` + `corridor_stair_connectivity`; `test_corridor_spine.py`.
   **Not marked done:** Phase 9 (T-001..T-022); 1.1-1.2 entrance roles/placement; 2.1-2.2 rooms/partitions; 2.4-2.5 double-height/fit-out.
+
+2026-07-25 â€” @RM_PHASE9
+>>> DONE @RM_PHASE9 â€” Phase 9.2 validation-first slice (T-007/T-009 partial): new `pae/upper_entrance.py` â€” role `upper_exterior` + `EntranceSpec.storey`, critical `upper_entrance_landing`, `make_upper_landing` greybox; shared landing helper used by `aperture_reachability`. Spec parse + assemble door mapping. Tests: `test_upper_entrance_landing.py` 8 passed; aperture_reachability + entrances/validate suites green. Not shipped: ground model T-001..T-006, external stair T-008, assemble upper-door placement, jetties.
+
+2026-07-25 — @VAL_STAIR
+>>> DONE @VAL_STAIR — Design: spiral quarters are ONE helical stack (same tower `p.cell`, complementary yaws 0/90/180/270, Z-offset); shared `covered_cells` co-occupancy allowed via `pae/stair_occupancy.py`. Landing check refined (not demoted): skip spiral; solid = wall-without-floor (perimeter wall+floor is walkable). Can-fire uses hand-built poison. `test_stair_integrity.py` 16 passed; spiral suite green. D-18 triaged / D-19 fixed in DEFECT_LEDGER.

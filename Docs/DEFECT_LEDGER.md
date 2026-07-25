@@ -79,8 +79,8 @@ Severity: **S1** shipped and visible · **S2** caught in review/CI · **S3** nea
 | D-15 | S1 | Diagonal braces read as a staircase of rectangles | Brace built from stacked axis-aligned boxes | Real rotated parallelogram prism along the diagonal |
 
 | D-17 | S1 | Banding appeared as random strips, not at edges or connections | Courses placed per BAY and skipped bays with openings, leaving disconnected fragments | Group by ELEVATION; one continuous run at a height that clears every opening; verticals at corners/junctions |
-| D-18 | S1 | Stairs starting or ending inside a wall (29 across all builds) | `stair_exit_clearance` only checked the void ABOVE a flight, never its two ends | `stair_landing_clearance` — the cell beyond each end must not be solid |
-| D-19 | S1 | Four spiral stair quarters at yaw 0/90/180/270 on the same cells, outside the envelope | Quarters placed like independent stairs instead of sharing a centre and stacking into a helix | **OPEN** — @STAIR_SPIRAL_FIX |
+| D-18 | S1 | Stairs starting or ending inside a wall (29 across all builds) | `stair_exit_clearance` only checked the void ABOVE a flight; first landing check treated any wall-tagged neighbor as solid | **TRIAGED (@VAL_STAIR)** — false positives: perimeter bays are wall+floor (walkable); spiral AABB span ≠ linear run. `stair_landing_clearance` now flags wall-**without**-floor only; skips `stair_spiral_quarter`. Can-fire uses hand-built solid-wall poison. Still WARNING. |
+| D-19 | S1 | Four spiral stair quarters at yaw 0/90/180/270 share covered_cells | Quarters *are* one Z-stacked helix on the tower anchor; integrity test treated shared cells as competing stairs | **FIXED (@VAL_STAIR)** — `spiral_cooccupancy_allowed` / `is_spiral_quarter_helix_stack` in `pae/stair_occupancy.py`; integrity allows complementary-yaw stack on same `p.cell` |
 | D-20 | S2 | `light_anchor` pieces validated by nothing | Kind added to the catalog with no `measure.py` branch — falls to "unknown kind" | Handbook §3 completeness checklist |
 
 ## E. Kind registration

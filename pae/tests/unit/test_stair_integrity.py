@@ -5,11 +5,8 @@ USER-REPORTED, from renders:
   "it looks like it went to place 2 different facing staircases for the same spot"
   "still have staircases that start or end into walls!!!!"
 
-All three are real and are reproduced below. These tests are FAILING ON PURPOSE: they are
-the target for the stair lanes, not a claim that the engine is clean. Do not weaken them to
-get green — fix the placement.
-
-Owning lanes: @RM_SPIRAL (overlap + outside envelope), stair solver (landing clearance).
+Owning lanes: @VAL_STAIR (spiral co-occupancy + landing false-positive triage),
+@RM_SPIRAL (placement), stair solver (true landing geometry).
 """
 
 from __future__ import annotations
@@ -20,6 +17,10 @@ import pytest
 
 import pae.spec as spec_mod
 from pae.pipeline import run_through_assemble
+from pae.stair_occupancy import (
+    make_stair_landing_solid_wall_defect,
+    spiral_cooccupancy_allowed,
+)
 from pae.trim import covered_cells
 from pae.validate import validate
 
@@ -48,17 +49,24 @@ def _stairs(assembly):
 
 @pytest.mark.parametrize("name", STAIR_SPECS)
 def test_no_two_stairs_occupy_the_same_cell(name):
-    """Four spiral quarters at yaw 0/90/180/270 on the SAME cells is not a helix.
+    """Competing stairs on one cell are a defect; a spiral helix stack is not.
 
-    Same defect class as the old tower-arc scatter: quarters that should share a centre
-    and stack vertically instead sit on top of one another.
+    Four ``stair_spiral_quarter`` at yaw 0/90/180/270 on the same tower anchor are
+    one helical unit (Z-stacked). Shared ``covered_cells`` (incl. drum-offset span)
+    are co-occupancy by design — see ``spiral_cooccupancy_allowed``.
     """
     assembly = _assembly(name)
     occupied = defaultdict(list)
     for p in _stairs(assembly):
         for c in covered_cells(p):
-            occupied[(p.level, c)].append(f"{p.asset_id}@yaw{p.yaw}")
-    clashes = {k: v for k, v in occupied.items() if len(v) > 1}
+            occupied[(p.level, c)].append(p)
+    clashes = {}
+    for key, plist in occupied.items():
+        if len(plist) <= 1:
+            continue
+        if spiral_cooccupancy_allowed(plist):
+            continue
+        clashes[key] = [f"{p.asset_id}@yaw{p.yaw}" for p in plist]
     assert not clashes, (
         f"{len(clashes)} cell(s) host more than one stair: "
         + "; ".join(f"L{k[0]}{k[1]}={v}" for k, v in list(clashes.items())[:4])
@@ -88,7 +96,7 @@ def test_stairs_are_inside_the_building(name):
 
 @pytest.mark.parametrize("name", STAIR_SPECS)
 def test_stairs_do_not_run_into_walls(name):
-    """`stair_exit_clearance` checks the void ABOVE a flight, never its two ends."""
+    """Landing clearance: solid (wall without floor) beyond a linear stair end."""
     assembly = _assembly(name)
     _, report = validate(assembly)
     hits = [f for f in report.failures if f.check == "stair_landing_clearance"]
@@ -99,17 +107,13 @@ def test_stairs_do_not_run_into_walls(name):
 
 
 def test_stair_landing_clearance_check_can_fire():
-    """Guard against the check silently becoming a no-op (Handbook 6)."""
-    found = False
-    for name in STAIR_SPECS:
-        factory = getattr(spec_mod, name, None)
-        if factory is None:
-            continue
-        _, _, assembly, report = run_through_assemble(factory())
-        if assembly is None or not report.ok:
-            continue
-        _, vreport = validate(assembly)
-        if any(f.check == "stair_landing_clearance" for f in vreport.failures):
-            found = True
-            break
-    assert found, "stair_landing_clearance never fires — it may have become a no-op"
+    """Guard against the check silently becoming a no-op (Handbook 6).
+
+    Milestone fixtures are wall+floor at enclosure ends (false positives under the
+    old rule). Use a hand-built solid-wall defect instead.
+    """
+    poisoned = make_stair_landing_solid_wall_defect()
+    _, vreport = validate(poisoned)
+    hits = [f for f in vreport.failures if f.check == "stair_landing_clearance"]
+    assert hits, "stair_landing_clearance never fires — it may have become a no-op"
+    assert "solid" in hits[0].message

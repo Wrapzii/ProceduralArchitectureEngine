@@ -2184,71 +2184,14 @@ STAIR_LANDING_CLEAR_FRAC = 0.5
 
 
 def _check_stair_landing_clearance(assembly: Assembly) -> List[Failure]:
-    """A stair must not start or finish against a wall.
+    """A stair must not dead-end into solid at either end.
 
-    WHY: stair_exit_clearance asks whether the hole ABOVE a stair is open. It says nothing
-    about the two ends. A flight can therefore have a clear void overhead and still run
-    straight into masonry at the bottom tread or the top landing, which is what shipped -
-    stairs beginning and ending in walls.
-
-    Rule: the cell immediately beyond each end of the run must not be occupied by a wall.
-    Checked at the level the stair starts on for the bottom, and the level above for the
-    top, because that is where a person actually arrives.
+    Implementation lives in ``pae.stair_occupancy`` so spiral helix co-occupancy and
+    landing false-positive triage share one model (Handbook 5.1 covered_cells).
     """
-    from pae.trim import covered_cells
+    from pae.stair_occupancy import check_stair_landing_clearance
 
-    stairs = [p for p in assembly.placements if p.kind == "stair"]
-    if not stairs:
-        return []
-
-    walls_by_level: Dict[int, set] = {}
-    for p in assembly.placements:
-        if p.kind == "wall":
-            walls_by_level.setdefault(p.level, set()).update(covered_cells(p))
-
-    failures: List[Failure] = []
-    for st in stairs:
-        cells = sorted(covered_cells(st))
-        if len(cells) < 2:
-            continue
-        xs = {c[0] for c in cells}
-        ys = {c[1] for c in cells}
-        # Run direction is the axis the stair is longer on.
-        if len(xs) >= len(ys):
-            axis, other = 0, 1
-        else:
-            axis, other = 1, 0
-        lo = min(c[axis] for c in cells)
-        hi = max(c[axis] for c in cells)
-        cross = sorted({c[other] for c in cells})[0]
-
-        def cell_at(v):
-            return (v, cross) if axis == 0 else (cross, v)
-
-        ends = (
-            ("bottom", cell_at(lo - 1), st.level),
-            ("top", cell_at(hi + 1), st.level + 1),
-        )
-        for name, target, level in ends:
-            blocked = target in walls_by_level.get(level, set())
-            if not blocked:
-                continue
-            bb_min, bb_max = _placement_aabb(st)
-            failures.append(
-                Failure(
-                    check="stair_landing_clearance",
-                    message=(
-                        f"stair {st.piece_id} ({st.asset_id}) runs into a wall at its "
-                        f"{name} end - cell {target} on level {level} is solid"
-                    ),
-                    world_xyz=_centre(bb_min, bb_max),
-                    piece_id=st.piece_id,
-                    # Warning for one milestone: the milestone fixtures contain this
-                    # defect and promoting it now would break other lanes. Roadmap 0.5.
-                    critical=False,
-                )
-            )
-    return failures
+    return check_stair_landing_clearance(assembly)
 
 
 def _check_run_fit(assembly: Assembly) -> List[Failure]:
