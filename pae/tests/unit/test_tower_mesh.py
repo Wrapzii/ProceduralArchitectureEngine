@@ -178,7 +178,11 @@ def test_cap_cone_aabb_and_apex():
 
 
 def test_tower_crown_cap_stack_z_offsets():
-    """Junction sits on drum top; crown on junction; cap on crown."""
+    """Junction at/above drum top; crown on junction; cap on crown.
+
+    When a hall roof AABB overlaps the drum (m3 pitched), junction rises above
+    the nominal drum plate so deck/crenels clear the roof — still stacked.
+    """
     from pae.plan import plan
     from pae.solver import solve
     from pae.spec import load_style, m3_keep_tower_spec
@@ -202,6 +206,6 @@ def test_tower_crown_cap_stack_z_offsets():
     j_z = junctions[0].level * STOREY_CM + junctions[0].offset_cm[2]
     crown_z = crowns[0].level * STOREY_CM + crowns[0].offset_cm[2]
     cap_z = caps[0].level * STOREY_CM + caps[0].offset_cm[2]
-    assert j_z == pytest.approx(drum_top_z, abs=1.0)
+    assert j_z >= drum_top_z - 1.0
     assert crown_z == pytest.approx(j_z + junction_desc.size_cm[2], abs=2.0)
     assert cap_z == pytest.approx(crown_z + crown_desc.size_cm[2], abs=2.0)
