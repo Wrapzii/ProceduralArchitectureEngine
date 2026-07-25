@@ -329,6 +329,64 @@ def m1_box_house_spec(*, seed: int = 1) -> BuildingSpec:
     )
 
 
+def m2_two_storey_stair_spec(*, seed: int = 2) -> BuildingSpec:
+    """Factory for Milestone 2 — two-storey 4×3 box with straight stair.
+
+    Solver auto-places a 2-module straight run; plan marks VOID above the
+    stair top; assembly emits ``stair_straight`` + ``floor_hole``.
+    """
+    return BuildingSpec(
+        name="m2_two_storey_stair",
+        style="townhouse",
+        footprint=FootprintSpec(kind="rect", bays_x=4, bays_y=3),
+        storeys=2,
+        storey_use=["hall", "hall"],
+        towers=[],
+        roof=RoofSpec(kind="flat", pitch=1.0),
+        circulation=CirculationSpec(stair_kind="straight", stair_cells=[]),
+        openings=OpeningPolicy(
+            windows_per_bay=1,
+            doors_ground=1,
+            windows_ground=2,
+            skip_ground_windows=False,
+        ),
+        seed=seed,
+        ground_slab=True,
+    )
+
+
+def m2_two_storey_stair_dict(*, seed: int = 2) -> dict:
+    """JSON-serialisable form of the M2 factory (for loader round-trips)."""
+    spec = m2_two_storey_stair_spec(seed=seed)
+    return {
+        "name": spec.name,
+        "style": spec.style,
+        "footprint": {
+            "kind": spec.footprint.kind,
+            "bays_x": spec.footprint.bays_x,
+            "bays_y": spec.footprint.bays_y,
+            "wing_depth": spec.footprint.wing_depth,
+            "courtyard": spec.footprint.courtyard,
+        },
+        "storeys": spec.storeys,
+        "storey_use": list(spec.storey_use),
+        "towers": [],
+        "roof": {"kind": spec.roof.kind, "pitch": spec.roof.pitch},
+        "circulation": {
+            "stair_kind": spec.circulation.stair_kind,
+            "stair_cells": [],
+        },
+        "openings": {
+            "windows_per_bay": spec.openings.windows_per_bay,
+            "doors_ground": spec.openings.doors_ground,
+            "windows_ground": spec.openings.windows_ground,
+            "skip_ground_windows": spec.openings.skip_ground_windows,
+        },
+        "seed": spec.seed,
+        "ground_slab": spec.ground_slab,
+    }
+
+
 def m1_box_house_dict(*, seed: int = 1) -> dict:
     """JSON-serialisable form of the M1 factory (for loader round-trips)."""
     spec = m1_box_house_spec(seed=seed)
@@ -345,6 +403,71 @@ def m1_box_house_dict(*, seed: int = 1) -> dict:
         "storeys": spec.storeys,
         "storey_use": list(spec.storey_use),
         "towers": [],
+        "roof": {"kind": spec.roof.kind, "pitch": spec.roof.pitch},
+        "circulation": {
+            "stair_kind": spec.circulation.stair_kind,
+            "stair_cells": [],
+        },
+        "openings": {
+            "windows_per_bay": spec.openings.windows_per_bay,
+            "doors_ground": spec.openings.doors_ground,
+            "windows_ground": spec.openings.windows_ground,
+            "skip_ground_windows": spec.openings.skip_ground_windows,
+        },
+        "seed": spec.seed,
+        "ground_slab": spec.ground_slab,
+    }
+
+
+def m3_keep_tower_spec(*, seed: int = 3) -> BuildingSpec:
+    """Factory for Milestone 3 — keep with pitched roof + corner round tower.
+
+    Does not alter M1/M2 factories. Tower cell sits on the SW corner outside
+    the rect footprint so arcs share one cell (§2.2 centred exception).
+    """
+    return BuildingSpec(
+        name="m3_keep_tower",
+        style="keep",
+        footprint=FootprintSpec(kind="rect", bays_x=4, bays_y=4),
+        storeys=2,
+        storey_use=["hall", "hall"],
+        towers=[TowerSpec(cell=(-1, -1), storeys=3, attached_to="corner")],
+        roof=RoofSpec(kind="pitched", pitch=0.9),
+        circulation=CirculationSpec(stair_kind="straight", stair_cells=[]),
+        openings=OpeningPolicy(
+            windows_per_bay=1,
+            doors_ground=1,
+            windows_ground=None,
+            skip_ground_windows=True,
+        ),
+        seed=seed,
+        ground_slab=True,
+    )
+
+
+def m3_keep_tower_dict(*, seed: int = 3) -> dict:
+    """JSON-serialisable form of the M3 factory."""
+    spec = m3_keep_tower_spec(seed=seed)
+    return {
+        "name": spec.name,
+        "style": spec.style,
+        "footprint": {
+            "kind": spec.footprint.kind,
+            "bays_x": spec.footprint.bays_x,
+            "bays_y": spec.footprint.bays_y,
+            "wing_depth": spec.footprint.wing_depth,
+            "courtyard": spec.footprint.courtyard,
+        },
+        "storeys": spec.storeys,
+        "storey_use": list(spec.storey_use),
+        "towers": [
+            {
+                "cell": list(t.cell),
+                "storeys": t.storeys,
+                "attached_to": t.attached_to,
+            }
+            for t in spec.towers
+        ],
         "roof": {"kind": spec.roof.kind, "pitch": spec.roof.pitch},
         "circulation": {
             "stair_kind": spec.circulation.stair_kind,
