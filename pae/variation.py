@@ -53,7 +53,12 @@ class VariationSpec:
     #: Never leave an elevation with fewer than this many lights per storey.
     min_lights_per_elevation: int = 1
     #: Upper storeys may use a different window type from the ground floor.
-    vary_type_by_storey: bool = True
+    #: DEFAULT OFF. A real building wears ONE window family top to bottom; varying it
+    #: per storey is what produced "a mix of every single window on buildings". Seeded
+    #: variety belongs BETWEEN buildings (each picks its own family from the seed), not
+    #: between the floors of one. Turn it on deliberately if a design wants a different
+    #: ground-floor treatment; it is not something to get by accident.
+    vary_type_by_storey: bool = False
     #: Demote upper-level doors that open onto nothing.
     fix_unreachable_doors: bool = True
     demote_door_to: str = "wall_window"

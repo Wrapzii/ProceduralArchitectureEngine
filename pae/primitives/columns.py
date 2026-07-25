@@ -33,7 +33,10 @@ _BASE_H_FRAC = 0.05  # of STOREY
 _BASE_FLARE = 1.35
 _PILASTER_D_FRAC = 0.5  # projection from wall face, of WALL_T
 _PILASTER_W_FRAC = 0.22  # of MODULE
-_BUTTRESS_D_FRAC = 0.85  # projection, of MODULE
+# Projection, of MODULE. Was 0.85 — a 3.4 m lump sticking out of the wall, nearly as
+# deep as it was tall, which read as an unidentifiable block rather than as masonry.
+# User: "the buttresses or whatever ... I don't even know what they are."
+_BUTTRESS_D_FRAC = 0.28  # projection, of MODULE
 _BUTTRESS_W_FRAC = 0.30  # of MODULE
 _BUTTRESS_BATTER = 0.45  # top depth / bottom depth — sloped weathering
 _BUTTRESS_STEPS = 4

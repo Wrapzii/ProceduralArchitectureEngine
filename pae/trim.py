@@ -234,6 +234,33 @@ def _open_edges(cells: Set[Cell], blocked: Set[Cell]) -> List[Tuple[Cell, str]]:
 # ---------------------------------------------------------------------------
 
 
+def _stair_landing_edges(assembly: Assembly) -> Set[Tuple[int, Cell, Cell]]:
+    """``(deck_level, hole_cell, deck_cell)`` triples a stair run arrives through.
+
+    A straight run climbs along its long axis, so the cell it steps off onto is one bay
+    past its top end in that direction. Both that cell and the well cell it leaves are
+    needed, because the railing loop works per (hole cell, neighbouring deck cell) pair
+    and only that ONE pair may be left unguarded — every other edge of the well is still
+    a fall and still gets a rail.
+    """
+    edges: Set[Tuple[int, Cell, Cell]] = set()
+    for p in _by_kind(assembly, "stair"):
+        cells = sorted(covered_cells(p))
+        if len(cells) < 2:
+            continue
+        (x0, y0), (x1, y1) = cells[0], cells[-1]
+        sx = (x1 > x0) - (x1 < x0)
+        sy = (y1 > y0) - (y1 < y0)
+        if sx == 0 and sy == 0:
+            continue
+        # Either end may be the head — the run's yaw decides which way it climbs, and
+        # yaw is not reliably recoverable here, so open BOTH ends of the well. An extra
+        # open edge is a missing rail on one side; a wrong closed edge is a dead end.
+        for tail, step in (((x1, y1), (sx, sy)), ((x0, y0), (-sx, -sy))):
+            edges.add((p.level + 1, tail, (tail[0] + step[0], tail[1] + step[1])))
+    return edges
+
+
 def _railings(assembly: Assembly, opts: TrimOptions) -> List[SolidPlacement]:
     """Railings on open upper-deck edges and around every floor hole."""
     out: List[SolidPlacement] = []
@@ -263,6 +290,12 @@ def _railings(assembly: Assembly, opts: TrimOptions) -> List[SolidPlacement]:
     # Floor holes: guard the void, but stand the railing on the DECK cell beside it, not
     # on the hole cell. A railing placed in the hole has nothing under it — the validator
     # correctly reports it as floating, because you would be bolting a handrail to air.
+    # Where a stair ARRIVES on the deck, the guarding must stop. Railing all four sides
+    # of a well fences the person climbing it in at the top — user: "the top of that
+    # staircase has the railing blocking you from exiting it." The landing edge is the
+    # one pair (hole cell, deck cell) the run travels through as it reaches the deck.
+    landings = _stair_landing_edges(assembly)
+
     for level, hole_cells in holes.items():
         # The upper deck is emitted as ONE spanning slab covering the hole cells too, so
         # "is there deck beside this hole" is only meaningful after subtracting the holes.
@@ -273,6 +306,8 @@ def _railings(assembly: Assembly, opts: TrimOptions) -> List[SolidPlacement]:
                 n = (cx + dx, cy + dy)
                 if n not in deck:
                     continue  # no deck beside it — nothing to stand on
+                if (level, (cx, cy), n) in landings:
+                    continue  # the way out — leave it open
                 out.append(
                     _placement(
                         opts.railing_piece,
@@ -351,6 +386,22 @@ def _buttresses(assembly: Assembly, opts: TrimOptions) -> List[SolidPlacement]:
         if cand is None:
             continue  # no sound face on this bay — a missing buttress beats a wrong one
         out.append(cand)
+        # STACK IT UP THE WALL. One storey of buttress against a three-storey elevation
+        # is a lump sitting on the ground, not masonry taking thrust — it stops at
+        # first-floor level and reads as an object rather than as part of the building.
+        # A buttress rises with the wall it braces, stopping a storey short of the head
+        # so the roofline and its parapet stay clear.
+        for lvl in range(1, max(1, assembly.storeys - 1)):
+            out.append(
+                _placement(
+                    opts.buttress_piece,
+                    cand.cell,
+                    lvl,
+                    yaw=cand.yaw,
+                    offset_cm=cand.offset_cm,
+                    suffix=f"{cand.piece_id.rsplit('_', 1)[-1]}_l{lvl}",
+                )
+            )
     return out
 
 

@@ -1176,21 +1176,69 @@ def _place_stairs(
                     )
                 )
             continue
-        pid = _next_piece_id(counters, "stair", anchor, level)
+        # REVERSE ALTERNATE FLIGHTS. Placing the same anchor and yaw on every level
+        # stacked identical runs directly on top of one another, all climbing the same
+        # way — you arrive at the head of one flight facing the foot of the next, which
+        # is not how a stair works and reads as floating steps repeated. Real stacked
+        # flights turn back on themselves. Flip 180 degrees on odd levels and re-derive
+        # the anchor so the run still occupies exactly the same well.
+        lvl_yaw, lvl_anchor, lvl_off = yaw, anchor, (ox, oy)
+        if level % 2:
+            flipped = (yaw + 180) % 360
+            fox, foy = rotation_offset_cm(
+                flipped, sx, sy,
+                rotates_about_center=stair_def.rotates_about_center,
+            )
+            same_cells = _placement_cells(
+                anchor, level, flipped, stair_def.size_cm, (fox, foy, 0.0),
+                stair_def.rotates_about_center,
+            ) == _placement_cells(
+                anchor, level, yaw, stair_def.size_cm, (ox, oy, 0.0),
+                stair_def.rotates_about_center,
+            )
+            if same_cells:
+                lvl_yaw, lvl_off = flipped, (fox, foy)
+        ox_l, oy_l = lvl_off
+        pid = _next_piece_id(counters, "stair", lvl_anchor, level)
         placements.append(
             SolidPlacement(
                 piece_id=pid,
                 asset_id=stair_def.asset_id,
                 kind="stair",
-                cell=anchor,
+                cell=lvl_anchor,
                 level=level,
-                yaw=yaw,
-                offset_cm=(ox, oy, 0.0),
+                yaw=lvl_yaw,
+                offset_cm=(ox_l, oy_l, 0.0),
                 size_cm=stair_def.size_cm,
                 rotates_about_center=stair_def.rotates_about_center,
                 tags=stair_def.tags,
             )
         )
+
+
+def _placement_cells(
+    cell: Tuple[int, int],
+    level: int,
+    yaw: int,
+    size_cm: Tuple[float, float, float],
+    offset_cm: Tuple[float, float, float],
+    rotates_about_center: bool,
+) -> Set[Tuple[int, int]]:
+    """Grid cells a hypothetical placement would cover — used to test a pose before use."""
+    mn, mx = placement_world_aabb(
+        cell[0], cell[1], level, yaw, size_cm, offset_cm,
+        rotates_about_center=rotates_about_center,
+    )
+    eps = MODULE_CM * 0.25
+    out: Set[Tuple[int, int]] = set()
+    x = mn[0] + eps
+    while x < mx[0] - eps * 0.5:
+        y = mn[1] + eps
+        while y < mx[1] - eps * 0.5:
+            out.add((int(x // MODULE_CM), int(y // MODULE_CM)))
+            y += MODULE_CM
+        x += MODULE_CM
+    return out
 
 
 def _rect_cover(cells: Set[Tuple[int, int]]) -> List[Tuple[int, int, int, int]]:
