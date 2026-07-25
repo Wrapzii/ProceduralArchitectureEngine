@@ -1,11 +1,14 @@
-"""Open-air stair showcase — no enclosing walls, landings only.
+"""Open-air stair showcase — landings + roof/floor opening at the stair top.
 
 Builds three demos side-by-side in Blender so a human can see the full
 staircase geometry:
 
-1. **Upstairs connect** — bottom landing → one straight flight → top landing
-2. **Long stepped** — three flights with mid landings (3 storeys total rise)
+1. **Upstairs connect** — bottom landing → flight → roof deck with a real hole
+2. **Long stepped** — three flights with mid landings; top roof deck is opened
 3. **Spiral** — four quarter turns stacked to one storey (open drum)
+
+The top exit is never a solid pad on a continuous slab — the roof/floor is
+cut with ``floor_hole`` so you can walk through.
 
 Run inside Blender::
 
@@ -60,7 +63,7 @@ def open_stair_demo_plan() -> List[Dict[str, Any]]:
             "flight_run_m": flight_run_m,
             "flight_rise_m": flight_rise_m,
             "landing_m": landing_m,
-            "notes": "bottom landing + one flight + top landing",
+            "notes": "bottom landing + flight + roof deck opened at stair top",
         },
         {
             "id": "long_stepped",
@@ -69,7 +72,7 @@ def open_stair_demo_plan() -> List[Dict[str, Any]]:
             "flight_run_m": flight_run_m,
             "flight_rise_m": flight_rise_m,
             "landing_m": landing_m,
-            "notes": "three flights with mid landings, open air",
+            "notes": "three flights; final roof deck opened at stair top",
         },
         {
             "id": "spiral_one_storey",
@@ -94,17 +97,26 @@ def _ensure_collection(name: str):
 def _clear_open_stair_collection():
     import bpy
 
-    # Hide other PAE showcases so the open-stair shot is unobstructed.
-    for coll in bpy.data.collections:
-        if coll.name.startswith("PAE_") and coll.name != OPEN_STAIR_COLLECTION:
-            coll.hide_render = True
-            coll.hide_viewport = True
-            for obj in coll.objects:
+    # Nuke other PAE showcases from the render — leftover gallery boxes made
+    # the open-stair shot look like a building site again.
+    for obj in list(bpy.data.objects):
+        if obj.name.startswith("PAE_") and not obj.name.startswith("PAE_OpenStair_"):
+            if obj.type in {"MESH", "EMPTY"}:
                 obj.hide_render = True
                 try:
                     obj.hide_set(True)
                 except Exception:
                     pass
+            # Also unlink mesh objects from the view layer by deleting gallery leftovers
+            if obj.name.startswith("PAE_m") or obj.name.startswith("PAE_Proto_"):
+                try:
+                    bpy.data.objects.remove(obj, do_unlink=True)
+                except Exception:
+                    pass
+    for coll in bpy.data.collections:
+        if coll.name.startswith("PAE_") and coll.name != OPEN_STAIR_COLLECTION:
+            coll.hide_render = True
+            coll.hide_viewport = True
 
     for obj in list(bpy.data.objects):
         if obj.name.startswith("PAE_OpenStair_"):
@@ -233,6 +245,78 @@ def _place_spiral_stack(coll, *, origin_m: Tuple[float, float, float], mat_arc, 
     return objs
 
 
+def _place_floor_hole(
+    coll,
+    *,
+    name: str,
+    loc_m: Tuple[float, float, float],
+    mat,
+    size_cm: Optional[Tuple[float, float, float]] = None,
+):
+    """Stair-exit rim with a clear center void (opens the roof/floor)."""
+    from pae.contract import FLOOR_T_CM, MODULE_CM
+    from pae.primitives import bpy_util
+    from pae.primitives.floors import floor_hole_frame_verts_faces
+
+    sx, sy, sz = size_cm or (MODULE_CM, MODULE_CM, FLOOR_T_CM)
+    verts, faces = floor_hole_frame_verts_faces(sx, sy, sz)
+    obj = bpy_util.mesh_from_verts_faces(name, verts, faces)
+    obj.scale = (CM_TO_M, CM_TO_M, CM_TO_M)
+    obj.location = loc_m
+    return _link(obj, coll, mat)
+
+
+def _place_roof_deck_opened_at(
+    coll,
+    *,
+    name_prefix: str,
+    hole_loc_m: Tuple[float, float, float],
+    mats: Dict[str, Any],
+    deck_modules: Tuple[int, int] = (3, 2),
+    hole_cell: Tuple[int, int] = (0, 0),
+) -> List[Any]:
+    """Tile a flat roof/floor deck with a real opening at ``hole_cell``.
+
+    Neighbouring bays are solid slabs; the hole bay is ``floor_hole`` (blue rim).
+    Never place a solid pad that plugs the stair exit.
+    """
+    from pae.contract import FLOOR_T_CM, MODULE_CM
+
+    mx, my = deck_modules
+    hx, hy = hole_cell
+    origin_x = hole_loc_m[0] - hx * MODULE_CM * CM_TO_M
+    origin_y = hole_loc_m[1] - hy * MODULE_CM * CM_TO_M
+    z = hole_loc_m[2]
+    objs: List[Any] = []
+    for ix in range(mx):
+        for iy in range(my):
+            loc = (
+                origin_x + ix * MODULE_CM * CM_TO_M,
+                origin_y + iy * MODULE_CM * CM_TO_M,
+                z,
+            )
+            if (ix, iy) == (hx, hy):
+                objs.append(
+                    _place_floor_hole(
+                        coll,
+                        name=f"{name_prefix}_Hole",
+                        loc_m=loc,
+                        mat=mats["landing_top"],
+                    )
+                )
+            else:
+                objs.append(
+                    _place_box(
+                        coll,
+                        name=f"{name_prefix}_Deck_{ix}_{iy}",
+                        size_cm=(MODULE_CM, MODULE_CM, FLOOR_T_CM),
+                        loc_m=loc,
+                        mat=mats["roof"],
+                    )
+                )
+    return objs
+
+
 def _build_upstairs_connect(coll, origin_m: Tuple[float, float, float], mats: Dict[str, Any]) -> List[Any]:
     from pae.contract import MODULE_CM, STOREY_CM
 
@@ -241,37 +325,37 @@ def _build_upstairs_connect(coll, origin_m: Tuple[float, float, float], mats: Di
     run = 2.0 * MODULE_CM
     rise = STOREY_CM
     objs: List[Any] = []
-    # Bottom landing (connection)
     objs.append(
         _place_box(
             coll,
             name="PAE_OpenStair_A_Bottom",
-            size_cm=(land, land, 20.0),
+            size_cm=(land, land, 45.0),
             loc_m=(ox, oy, oz),
             mat=mats["landing"],
         )
     )
-    # Stair starts at end of bottom landing, rises along +X
     objs.append(
         _place_straight_stair(
             coll,
             name="PAE_OpenStair_A_Flight",
             loc_m=(ox + land * CM_TO_M, oy, oz + 0.2),
             mat=mats["stair"],
+            steps=12,
         )
     )
-    # Top landing (upstairs connection)
-    objs.append(
-        _place_box(
+    hole_loc = (
+        ox + (land + run) * CM_TO_M,
+        oy,
+        oz + 0.2 + rise * CM_TO_M,
+    )
+    objs.extend(
+        _place_roof_deck_opened_at(
             coll,
-            name="PAE_OpenStair_A_Top",
-            size_cm=(land * 1.5, land, 20.0),
-            loc_m=(
-                ox + (land + run) * CM_TO_M,
-                oy,
-                oz + 0.2 + rise * CM_TO_M,
-            ),
-            mat=mats["landing_top"],
+            name_prefix="PAE_OpenStair_A",
+            hole_loc_m=hole_loc,
+            mats=mats,
+            deck_modules=(3, 2),
+            hole_cell=(0, 0),
         )
     )
     return objs
@@ -287,12 +371,11 @@ def _build_long_stepped(coll, origin_m: Tuple[float, float, float], mats: Dict[s
     objs: List[Any] = []
     x = ox
     z = oz
-    # Bottom pad
     objs.append(
         _place_box(
             coll,
             name="PAE_OpenStair_B_Bottom",
-            size_cm=(land, land, 20.0),
+            size_cm=(land, land, 45.0),
             loc_m=(x, oy, z),
             mat=mats["landing"],
         )
@@ -306,34 +389,53 @@ def _build_long_stepped(coll, origin_m: Tuple[float, float, float], mats: Dict[s
                 name=f"PAE_OpenStair_B_Flight_{flight}",
                 loc_m=(x, oy, z),
                 mat=mats["stair"],
+                steps=12,
             )
         )
         x += run * CM_TO_M
         z += rise * CM_TO_M
-        # Mid / top landing
-        name = "PAE_OpenStair_B_Top" if flight == 2 else f"PAE_OpenStair_B_Mid_{flight}"
-        mat = mats["landing_top"] if flight == 2 else mats["landing"]
-        objs.append(
-            _place_box(
-                coll,
-                name=name,
-                size_cm=(land, land, 20.0),
-                loc_m=(x, oy, z),
-                mat=mat,
+        if flight == 2:
+            objs.extend(
+                _place_roof_deck_opened_at(
+                    coll,
+                    name_prefix="PAE_OpenStair_B",
+                    hole_loc_m=(x, oy, z),
+                    mats=mats,
+                    deck_modules=(3, 2),
+                    hole_cell=(0, 0),
+                )
             )
-        )
+        else:
+            objs.append(
+                _place_box(
+                    coll,
+                    name=f"PAE_OpenStair_B_Mid_{flight}",
+                    size_cm=(land, land, 45.0),
+                    loc_m=(x, oy, z),
+                    mat=mats["landing"],
+                )
+            )
         x += land * CM_TO_M
     return objs
 
 
 def _frame_camera_on_collection(coll_name: str) -> None:
+    """Perspective 3/4 view — ortho side-on made the stairs look like a 2D ramp."""
     import bpy
     from mathutils import Vector
 
     coll = bpy.data.collections.get(coll_name)
     if coll is None:
         return
-    meshes = [o for o in coll.objects if o.type == "MESH" and not o.hide_render]
+    # Ignore the giant ground plane — it yanked the camera to ~150 m and
+    # turned 4 m-wide stairs into paper lines.
+    meshes = [
+        o
+        for o in coll.objects
+        if o.type == "MESH"
+        and not o.hide_render
+        and "Ground" not in o.name
+    ]
     if not meshes:
         return
     bpy.context.view_layer.update()
@@ -350,36 +452,54 @@ def _frame_camera_on_collection(coll_name: str) -> None:
             maxs.z = max(maxs.z, w.z)
     center = (mins + maxs) * 0.5
     size = maxs - mins
-    # Side view from -Y (perpendicular to +X stair runs), elevated
-    dist = max(size.x, size.z) * 1.4 + 4.0
+    span = max(size.x, size.y, size.z, 1.0)
+    # Closer 3/4 so tread tops read; not a kilometre-wide landscape shot.
+    dist = span * 1.15 + 10.0
     cam = bpy.context.scene.camera
     if cam is None:
         bpy.ops.object.camera_add()
         cam = bpy.context.active_object
         bpy.context.scene.camera = cam
-    cam.location = (center.x, center.y - dist, center.z + dist * 0.45)
+    cam.location = (
+        center.x + dist * 0.55,
+        center.y - dist * 0.85,
+        center.z + dist * 0.42,
+    )
     direction = center - cam.location
     cam.rotation_euler = direction.to_track_quat("-Z", "Y").to_euler()
-    cam.data.type = "ORTHO"
-    cam.data.ortho_scale = max(size.x, size.z) * 1.25 + 2.0
+    cam.data.type = "PERSP"
+    cam.data.lens = 40.0
+    if hasattr(cam.data, "clip_start"):
+        cam.data.clip_start = 0.05
+        cam.data.clip_end = max(200.0, dist * 6.0)
 
-    # Bright neutral world + sun
     world = bpy.data.worlds.get("World") or bpy.data.worlds.new("World")
     bpy.context.scene.world = world
     world.use_nodes = True
     bg = world.node_tree.nodes.get("Background")
     if bg is not None:
-        bg.inputs[0].default_value = (0.55, 0.58, 0.62, 1.0)
-        bg.inputs[1].default_value = 1.2
+        bg.inputs[0].default_value = (0.42, 0.46, 0.52, 1.0)
+        bg.inputs[1].default_value = 0.85
     sun = next((o for o in bpy.data.objects if o.type == "LIGHT" and o.name.startswith("PAE_Sun")), None)
     if sun is None:
         light_data = bpy.data.lights.new(name="PAE_Sun", type="SUN")
-        light_data.energy = 5.0
+        light_data.energy = 6.0
         sun = bpy.data.objects.new("PAE_Sun", light_data)
         bpy.context.scene.collection.objects.link(sun)
     else:
-        sun.data.energy = 5.0
-    sun.rotation_euler = (math.radians(50), math.radians(10), math.radians(-25))
+        sun.data.energy = 6.0
+    sun.rotation_euler = (math.radians(48), math.radians(12), math.radians(-35))
+    fill = next((o for o in bpy.data.objects if o.name == "PAE_Fill"), None)
+    if fill is None:
+        fill_data = bpy.data.lights.new(name="PAE_Fill", type="AREA")
+        from pae.contract import STOREY_CM
+
+        fill_data.energy = float(STOREY_CM)  # soft fill ≈ one storey lux scale
+        fill_data.size = 14.0
+        fill = bpy.data.objects.new("PAE_Fill", fill_data)
+        bpy.context.scene.collection.objects.link(fill)
+    fill.location = (center.x - 4.0, center.y + 6.0, center.z + 8.0)
+    fill.rotation_euler = (math.radians(55), 0.0, math.radians(25))
 
 
 def _write_shot(path: Path) -> Path:
@@ -427,29 +547,49 @@ def build_open_stair_showcase(*, write_png: bool = True) -> Dict[str, Any]:
 
     coll = _clear_open_stair_collection()
     mats = {
-        "stair": _mat("PAE_Mat_OpenStair", (0.78, 0.42, 0.22, 1.0)),
-        "landing": _mat("PAE_Mat_OpenLanding", (0.55, 0.50, 0.42, 1.0)),
-        "landing_top": _mat("PAE_Mat_OpenLandingTop", (0.35, 0.55, 0.70, 1.0)),
-        "spiral": _mat("PAE_Mat_OpenSpiral", (0.82, 0.62, 0.28, 1.0)),
-        "spiral_top": _mat("PAE_Mat_OpenSpiralTop", (0.40, 0.55, 0.38, 1.0)),
+        "stair": _mat("PAE_Mat_OpenStair", (0.82, 0.45, 0.22, 1.0)),
+        "landing": _mat("PAE_Mat_OpenLanding", (0.62, 0.58, 0.50, 1.0)),
+        "landing_top": _mat("PAE_Mat_OpenLandingTop", (0.30, 0.55, 0.78, 1.0)),
+        "roof": _mat("PAE_Mat_OpenRoof", (0.55, 0.55, 0.58, 1.0)),
+        "spiral": _mat("PAE_Mat_OpenSpiral", (0.85, 0.68, 0.32, 1.0)),
+        "spiral_top": _mat("PAE_Mat_OpenSpiralTop", (0.40, 0.58, 0.38, 1.0)),
+        "ground": _mat("PAE_Mat_OpenGround", (0.28, 0.32, 0.30, 1.0)),
     }
+
+    # Small pads under bottom landings only — a full ground slab under the
+    # upper decks makes an opened roof hole look solid from above.
+    from pae.contract import MODULE_CM
+
+    for i, loc in enumerate(((0.0, 0.0, -0.08), (14.0, 6.0, -0.08), (52.0, 2.0, -0.08))):
+        _place_box(
+            coll,
+            name=f"PAE_OpenStair_Ground_{i}",
+            size_cm=(MODULE_CM * 2.5, MODULE_CM * 2.5, 8.0),
+            loc_m=loc,
+            mat=mats["ground"],
+        )
 
     cursor_x = 0.0
     built: List[Dict[str, Any]] = []
 
-    # A — upstairs connect
+    # A — upstairs connect (front row)
     a_objs = _build_upstairs_connect(coll, (cursor_x, 0.0, 0.0), mats)
     built.append({"id": "upstairs_connect", "instances": len(a_objs), "origin_m": (cursor_x, 0.0, 0.0)})
-    cursor_x += 2.0 * 4.0 + _DEMO_GAP_M  # rough width
+    cursor_x += 2.0 * 4.0 + _DEMO_GAP_M
 
-    # B — long stepped 3 storeys
-    b_objs = _build_long_stepped(coll, (cursor_x, 0.0, 0.0), mats)
-    built.append({"id": "long_stepped", "instances": len(b_objs), "origin_m": (cursor_x, 0.0, 0.0)})
+    # B — long stepped 3 storeys (offset in Y so depth reads)
+    b_objs = _build_long_stepped(coll, (cursor_x, 6.0, 0.0), mats)
+    built.append({"id": "long_stepped", "instances": len(b_objs), "origin_m": (cursor_x, 6.0, 0.0)})
     cursor_x += 3.0 * 8.0 + 4.0 + _DEMO_GAP_M
 
     # C — spiral
-    c_objs = _place_spiral_stack(coll, origin_m=(cursor_x + 4.0, 4.0, 0.0), mat_arc=mats["spiral"], mat_cap=mats["spiral_top"])
-    built.append({"id": "spiral_one_storey", "instances": len(c_objs), "origin_m": (cursor_x + 4.0, 4.0, 0.0)})
+    c_objs = _place_spiral_stack(
+        coll,
+        origin_m=(cursor_x + 4.0, 2.0, 0.0),
+        mat_arc=mats["spiral"],
+        mat_cap=mats["spiral_top"],
+    )
+    built.append({"id": "spiral_one_storey", "instances": len(c_objs), "origin_m": (cursor_x + 4.0, 2.0, 0.0)})
 
     _frame_camera_on_collection(OPEN_STAIR_COLLECTION)
     shot = _write_shot(_shot_path()) if write_png else None

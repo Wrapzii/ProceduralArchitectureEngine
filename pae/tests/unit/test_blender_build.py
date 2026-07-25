@@ -229,8 +229,10 @@ def test_stair_proof_visibility_allowlist():
     assert is_stair_proof_visible_asset("stair_straight")
     assert is_stair_proof_visible_asset("floor_hole")
     assert is_stair_proof_visible_asset("wall", piece_id="stair_landing")
-    assert not is_stair_proof_visible_asset("wall_segment")
+    assert is_stair_proof_visible_asset("floor", level=1)
+    assert not is_stair_proof_visible_asset("floor", level=0)
     assert not is_stair_proof_visible_asset("floor")
+    assert not is_stair_proof_visible_asset("wall_segment")
     assert not is_stair_proof_visible_asset("ground_slab")
     assert not is_stair_proof_visible_asset("roof_flat")
 
@@ -238,16 +240,18 @@ def test_stair_proof_visibility_allowlist():
     visible = [
         p
         for p in assembly.placements
-        if is_stair_proof_visible_asset(p.asset_id, p.piece_id)
+        if is_stair_proof_visible_asset(p.asset_id, p.piece_id, level=p.level)
     ]
     hidden = [
         p
         for p in assembly.placements
-        if not is_stair_proof_visible_asset(p.asset_id, p.piece_id)
+        if not is_stair_proof_visible_asset(p.asset_id, p.piece_id, level=p.level)
     ]
-    assert len(visible) == 3
-    assert len(hidden) == len(assembly.placements) - 3
-    assert {p.kind for p in hidden} >= {"wall", "floor", "roof"}
+    assert any(p.asset_id == "floor_hole" for p in visible)
+    assert any(p.asset_id == "floor" and p.level >= 1 for p in visible)
+    assert all(not (p.asset_id == "floor" and p.level >= 1) for p in hidden)
+    assert {p.kind for p in hidden} >= {"wall", "roof"}
+    assert len(visible) + len(hidden) == len(assembly.placements)
 
 
 def test_stair_proof_bounds_cm_includes_stair_and_holes():
@@ -258,6 +262,9 @@ def test_stair_proof_bounds_cm_includes_stair_and_holes():
     _, _, assembly, _ = run_through_assemble(m2_two_storey_stair_spec())
     proof = [p for p in assembly.placements if is_stair_proof_placement(p)]
     assert len(proof) == 3  # 1 stair + 2 floor_hole
+    assert any(p.asset_id == "stair_straight" or p.kind == "stair" for p in proof)
+    assert sum(1 for p in proof if p.asset_id == "floor_hole") == 2
+
     bb_min, bb_max = stair_proof_bounds_cm(assembly)
     assert bb_max[0] > bb_min[0]
     assert bb_max[1] > bb_min[1]

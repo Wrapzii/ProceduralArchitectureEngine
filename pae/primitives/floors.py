@@ -93,6 +93,79 @@ def floor_hole_inner_aabb_cm(
     return ((m, m, 0.0), (sx - m, sy - m, FLOOR_T_CM))
 
 
+def slab_with_rect_holes_verts_faces(
+    sx: float,
+    sy: float,
+    sz: float,
+    holes: Sequence[Tuple[float, float, float, float]],
+) -> Tuple[List[Vec3], List[Face]]:
+    """Solid slab with axis-aligned rectangular holes (x0,y0,x1,y1) in local cm.
+
+    Used to punch stair VOIDs out of a spanning upper-floor deck so the stair
+    top is an opening, not a solid ceiling/roof pad.
+    """
+    if not holes:
+        return _box_verts_faces(0.0, 0.0, 0.0, sx, sy, sz)
+
+    xs: List[float] = [0.0, sx]
+    ys: List[float] = [0.0, sy]
+    cleaned: List[Tuple[float, float, float, float]] = []
+    for x0, y0, x1, y1 in holes:
+        xa, xb = (x0, x1) if x0 <= x1 else (x1, x0)
+        ya, yb = (y0, y1) if y0 <= y1 else (y1, y0)
+        xa = max(0.0, min(sx, xa))
+        xb = max(0.0, min(sx, xb))
+        ya = max(0.0, min(sy, ya))
+        yb = max(0.0, min(sy, yb))
+        if xb - xa < 1e-6 or yb - ya < 1e-6:
+            continue
+        cleaned.append((xa, ya, xb, yb))
+        xs.extend((xa, xb))
+        ys.extend((ya, yb))
+    if not cleaned:
+        return _box_verts_faces(0.0, 0.0, 0.0, sx, sy, sz)
+
+    xs = sorted(set(xs))
+    ys = sorted(set(ys))
+
+    def _inside_hole(cx: float, cy: float) -> bool:
+        for x0, y0, x1, y1 in cleaned:
+            if x0 < cx < x1 and y0 < cy < y1:
+                return True
+        return False
+
+    parts: List[Tuple[List[Vec3], List[Face]]] = []
+    for i in range(len(xs) - 1):
+        for j in range(len(ys) - 1):
+            x0, x1 = xs[i], xs[i + 1]
+            y0, y1 = ys[j], ys[j + 1]
+            if x1 - x0 < 1e-6 or y1 - y0 < 1e-6:
+                continue
+            if _inside_hole(0.5 * (x0 + x1), 0.5 * (y0 + y1)):
+                continue
+            parts.append(_box_verts_faces(x0, y0, 0.0, x1 - x0, y1 - y0, sz))
+    if not parts:
+        raise ValueError("slab_with_rect_holes: holes consumed the entire slab")
+    return _merge_verts_faces(parts)
+
+
+def hole_rects_for_deck_cm(
+    deck_cell: Tuple[int, int],
+    hole_cells: Sequence[Tuple[int, int]],
+    *,
+    margin: Optional[float] = None,
+) -> List[Tuple[float, float, float, float]]:
+    """Local (x0,y0,x1,y1) hole rectangles for VOID cells on a spanning deck."""
+    m = _HOLE_MARGIN_CM if margin is None else margin
+    dx0, dy0 = deck_cell
+    rects: List[Tuple[float, float, float, float]] = []
+    for cx, cy in hole_cells:
+        ox = (cx - dx0) * MODULE_CM
+        oy = (cy - dy0) * MODULE_CM
+        rects.append((ox + m, oy + m, ox + MODULE_CM - m, oy + MODULE_CM - m))
+    return rects
+
+
 def _edge_sockets() -> tuple:
     tag = frozenset({module_tag(), "floor"})
     mid = MODULE_CM * 0.5

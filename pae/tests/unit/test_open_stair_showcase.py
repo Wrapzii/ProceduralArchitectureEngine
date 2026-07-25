@@ -22,3 +22,11 @@ def test_open_stair_long_stepped_is_three_flights():
 def test_open_stair_upstairs_connect_single_flight():
     a = next(d for d in open_stair_demo_plan() if d["id"] == "upstairs_connect")
     assert a["flights"] == 1
+    assert "opened" in a["notes"].lower()
+
+
+def test_open_stair_tops_open_the_roof():
+    plan = open_stair_demo_plan()
+    for demo_id in ("upstairs_connect", "long_stepped"):
+        demo = next(d for d in plan if d["id"] == demo_id)
+        assert "opened" in demo["notes"].lower()

@@ -394,6 +394,14 @@ Every `INTERIOR` cell has a slab beneath it. `VOID` cells are exempt by role.
 Walk the circulation graph from the ground storey. Any storey not reached is unreachable —
 report it.
 
+**Stair exit clearance (fail-closed).** Every stair top must open into a walkable bay:
+- Each stair footprint cell on the storey above requires a `floor_hole` (VOID opened).
+- A solid 1×1 floor pad on those cells is a critical defect (ceiling plug).
+- Head clearance above each hole must not be filled by a wall, roof, or solid floor.
+Spanning upper decks may cover the bay in AABB terms only when `floor_hole` rims exist;
+the mesh builder punches those openings. A stair that dead-ends into a ceiling or wall
+**must not** validate.
+
 ### 7.8 Run fit
 
 For each wall run, `length % MODULE` must be `< TOL` or `> MODULE − TOL`. Otherwise report

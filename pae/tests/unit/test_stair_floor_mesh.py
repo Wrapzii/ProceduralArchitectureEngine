@@ -26,11 +26,16 @@ def test_straight_stair_step_count_and_descriptor_aabb():
     assert (2.0 * MODULE_CM) / steps == pytest.approx(40.0)
 
     verts, faces = straight_stair_verts_faces(*desc.size_cm)
-    assert len(verts) == steps * 8
-    assert len(faces) == steps * 6
+    # Each step = riser box + tread box (8 verts / 6 faces each).
+    assert len(verts) == steps * 16
+    assert len(faces) == steps * 12
 
     bb_min, bb_max = mesh_aabb_from_verts(verts)
-    assert bb_min == pytest.approx((0.0, 0.0, 0.0), abs=TOL_CM)
+    # Nose overhang extends slightly past x=0; stay within one tread of origin.
+    assert bb_min[0] <= 0.0
+    assert bb_min[0] >= -50.0
+    assert bb_min[1] == pytest.approx(0.0, abs=TOL_CM)
+    assert bb_min[2] == pytest.approx(0.0, abs=TOL_CM)
     assert bb_max[0] == pytest.approx(desc.size_cm[0], abs=TOL_CM)
     assert bb_max[1] == pytest.approx(desc.size_cm[1], abs=TOL_CM)
     assert bb_max[2] == pytest.approx(desc.size_cm[2], abs=TOL_CM)
@@ -78,3 +83,56 @@ def test_floor_hole_frame_mesh_has_clear_center_void():
         if probe_inset < v[0] < probe_limit and probe_inset < v[1] < probe_limit
     ]
     assert inside_hole == []
+
+
+def test_spanning_deck_mesh_punches_stair_voids():
+    """Upper floor deck must open at VOID bays — not a solid ceiling at stair top."""
+    from pae.primitives.floors import (
+        hole_rects_for_deck_cm,
+        slab_with_rect_holes_verts_faces,
+    )
+
+    sx, sy, sz = 4.0 * MODULE_CM, 3.0 * MODULE_CM, FLOOR_T_CM
+    hole_cells = [(1, 0), (1, 1)]
+    rects = hole_rects_for_deck_cm((0, 0), hole_cells)
+    assert len(rects) == 2
+    verts, faces = slab_with_rect_holes_verts_faces(sx, sy, sz, rects)
+    assert faces
+    bb_min, bb_max = mesh_aabb_from_verts(verts)
+    assert bb_min == pytest.approx((0.0, 0.0, 0.0), abs=TOL_CM)
+    assert bb_max == pytest.approx((sx, sy, sz), abs=TOL_CM)
+
+    margin = floor_hole_margin_cm()
+    # Center of first VOID bay must contain no geometry.
+    cx = 1.0 * MODULE_CM + 0.5 * MODULE_CM
+    cy = 0.0 * MODULE_CM + 0.5 * MODULE_CM
+    inside = [
+        v
+        for v in verts
+        if abs(v[0] - cx) < (MODULE_CM * 0.5 - margin - 2.0)
+        and abs(v[1] - cy) < (MODULE_CM * 0.5 - margin - 2.0)
+    ]
+    assert inside == []
+
+
+def test_is_spanning_floor_deck_and_hole_rects():
+    from types import SimpleNamespace
+
+    from pae.blender_build import is_spanning_floor_deck, spanning_floor_hole_rects_cm
+
+    deck = SimpleNamespace(
+        asset_id="floor",
+        kind="floor",
+        cell=(0, 0),
+        level=1,
+        size_cm=(4.0 * MODULE_CM, 3.0 * MODULE_CM, FLOOR_T_CM),
+    )
+    assert is_spanning_floor_deck(deck)
+    holes = [
+        SimpleNamespace(asset_id="floor_hole", cell=(1, 0), level=1),
+        SimpleNamespace(asset_id="floor_hole", cell=(1, 1), level=1),
+        SimpleNamespace(asset_id="floor_hole", cell=(1, 0), level=2),  # other storey
+    ]
+    rects = spanning_floor_hole_rects_cm(deck, holes)
+    assert len(rects) == 2
+    assert rects[0][0] == pytest.approx(MODULE_CM + floor_hole_margin_cm())

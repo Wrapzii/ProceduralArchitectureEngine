@@ -41,6 +41,7 @@ def validate(assembly: Assembly) -> Tuple[Assembly, Report]:
     failures.extend(_check_enclosure(assembly))
     failures.extend(_check_floor_coverage(assembly))
     failures.extend(_check_stair_reachability(assembly))
+    failures.extend(_check_stair_exit_clearance(assembly))
     failures.extend(_check_run_fit(assembly))
     failures.extend(_check_aperture_sanity(assembly))
     failures = _sort_failures(failures)
@@ -768,6 +769,201 @@ def _check_stair_reachability(assembly: Assembly) -> List[Failure]:
                     critical=True,
                 )
             )
+    return failures
+
+
+# --- §7.7b stair exit clearance (no wall / ceiling dead-ends) ----------------
+
+
+def placement_footprint_cells(p: SolidPlacement) -> List[Tuple[int, int]]:
+    """Module cells covered by a placement's XY footprint (anchor = min corner)."""
+    sx, sy = float(p.size_cm[0]), float(p.size_cm[1])
+    yaw = int(p.yaw) % 360
+    if yaw in (90, 270):
+        sx, sy = sy, sx
+    nx = max(1, int(round(sx / MODULE_CM)))
+    ny = max(1, int(round(sy / MODULE_CM)))
+    cx, cy = int(p.cell[0]), int(p.cell[1])
+    return [(cx + i, cy + j) for i in range(nx) for j in range(ny)]
+
+
+def _is_module_solid_floor(p: SolidPlacement) -> bool:
+    """True for a 1×1 solid floor pad (not a hole rim, not a spanning deck)."""
+    if p.kind != "floor" or p.asset_id == "floor_hole":
+        return False
+    return (
+        float(p.size_cm[0]) <= MODULE_CM + TOL_CM
+        and float(p.size_cm[1]) <= MODULE_CM + TOL_CM
+    )
+
+
+def _is_spanning_floor(p: SolidPlacement) -> bool:
+    if p.kind != "floor" or p.asset_id == "floor_hole":
+        return False
+    return float(p.size_cm[0]) > MODULE_CM + TOL_CM or float(p.size_cm[1]) > MODULE_CM + TOL_CM
+
+
+def _hole_inner_world_aabb(
+    hole: SolidPlacement,
+) -> Tuple[Tuple[float, float, float], Tuple[float, float, float]]:
+    """Inner void AABB of a floor_hole placement (world cm)."""
+    from pae.primitives.floors import floor_hole_inner_aabb_cm
+
+    local_min, local_max = floor_hole_inner_aabb_cm(
+        float(hole.size_cm[0]), float(hole.size_cm[1])
+    )
+    # Hole placements use min-corner origin + yaw 0 in assemble.
+    ox = hole.cell[0] * MODULE_CM + hole.offset_cm[0]
+    oy = hole.cell[1] * MODULE_CM + hole.offset_cm[1]
+    oz = hole.level * STOREY_CM + hole.offset_cm[2]
+    return (
+        (ox + local_min[0], oy + local_min[1], oz + local_min[2]),
+        (ox + local_max[0], oy + local_max[1], oz + local_max[2]),
+    )
+
+
+def _stair_head_clearance_aabbs(
+    stair: SolidPlacement,
+    hole_by_cell: Dict[Tuple[int, int], SolidPlacement],
+) -> List[Tuple[Tuple[float, float, float], Tuple[float, float, float]]]:
+    """Character-pass probes above each top-exit hole (must stay clear).
+
+    Uses a centred corridor inside the hole, not the full void AABB — perimeter
+    walls that only kiss the hole rim are not blockers.
+    """
+    # ~80 cm pass-through (half-extent); well inside the 380 cm hole opening.
+    half = 40.0
+    boxes: List[Tuple[Tuple[float, float, float], Tuple[float, float, float]]] = []
+    for cell in placement_footprint_cells(stair):
+        hole = hole_by_cell.get(cell)
+        if hole is None:
+            continue
+        hmin, hmax = _hole_inner_world_aabb(hole)
+        cx = 0.5 * (hmin[0] + hmax[0])
+        cy = 0.5 * (hmin[1] + hmax[1])
+        z0 = hmax[2]
+        z1 = z0 + CHEST_HEIGHT_CM
+        boxes.append(
+            (
+                (cx - half, cy - half, z0),
+                (cx + half, cy + half, z1),
+            )
+        )
+    return boxes
+
+
+def _solid_blocks_headroom(
+    solid: SolidPlacement,
+    head_min: Tuple[float, float, float],
+    head_max: Tuple[float, float, float],
+) -> bool:
+    """True when a wall/roof/solid floor meaningfully fills the exit head box."""
+    if solid.asset_id == "floor_hole":
+        return False
+    if solid.kind not in ("wall", "roof", "floor", "prop"):
+        return False
+    # Spanning floors are opened at holes by mesh contract; AABB still covers
+    # the bay — do not treat them as blockers when holes exist (checked separately).
+    if _is_spanning_floor(solid):
+        return False
+    smin, smax = _placement_aabb(solid)
+    # Require real plug: > TOL on XY and meaningful Z bite into headroom.
+    ox = min(head_max[0], smax[0]) - max(head_min[0], smin[0])
+    oy = min(head_max[1], smax[1]) - max(head_min[1], smin[1])
+    oz = min(head_max[2], smax[2]) - max(head_min[2], smin[2])
+    return ox > TOL_CM and oy > TOL_CM and oz > TOL_CM
+
+
+def _check_stair_exit_clearance(assembly: Assembly) -> List[Failure]:
+    """Fail-closed: stair tops must open — never dead-end into floor/roof/wall.
+
+    For each stair:
+    1. Every footprint cell on the storey above needs a ``floor_hole``.
+    2. No solid 1×1 floor pad may sit on those cells (plugs the exit).
+    3. Headroom above each hole must not be filled by wall / roof / solid floor.
+    """
+    failures: List[Failure] = []
+    stairs = [p for p in assembly.placements if p.kind == "stair"]
+    if not stairs:
+        return failures
+
+    holes = [
+        p
+        for p in assembly.placements
+        if p.asset_id == "floor_hole" and p.kind == "floor"
+    ]
+
+    for stair in stairs:
+        top_level = stair.level + 1
+        cells = placement_footprint_cells(stair)
+        hole_by_cell = {
+            h.cell: h for h in holes if h.level == top_level and h.cell in set(cells)
+        }
+        smin, smax = _placement_aabb(stair)
+        top_xyz = (
+            0.5 * (smin[0] + smax[0]),
+            0.5 * (smin[1] + smax[1]),
+            smax[2],
+        )
+
+        for cell in cells:
+            if cell not in hole_by_cell:
+                failures.append(
+                    Failure(
+                        check="stair_exit_clearance",
+                        message=(
+                            f"stair {stair.piece_id} top blocked — missing floor_hole "
+                            f"at cell {cell} level {top_level} (ceiling/floor not opened)"
+                        ),
+                        world_xyz=top_xyz,
+                        piece_id=stair.piece_id,
+                        critical=True,
+                    )
+                )
+
+        for p in assembly.placements:
+            if p.level != top_level or not _is_module_solid_floor(p):
+                continue
+            if p.cell not in set(cells):
+                continue
+            failures.append(
+                Failure(
+                    check="stair_exit_clearance",
+                    message=(
+                        f"stair {stair.piece_id} top plugged by solid floor "
+                        f"{p.piece_id} at cell {p.cell} — use floor_hole, not a pad"
+                    ),
+                    world_xyz=top_xyz,
+                    piece_id=p.piece_id,
+                    critical=True,
+                )
+            )
+
+        for head_min, head_max in _stair_head_clearance_aabbs(stair, hole_by_cell):
+            for other in assembly.placements:
+                if other.piece_id == stair.piece_id:
+                    continue
+                if other.asset_id == "floor_hole":
+                    continue
+                if not _solid_blocks_headroom(other, head_min, head_max):
+                    continue
+                failures.append(
+                    Failure(
+                        check="stair_exit_clearance",
+                        message=(
+                            f"stair {stair.piece_id} exit blocked by {other.kind} "
+                            f"{other.piece_id} ({other.asset_id}) in head clearance"
+                        ),
+                        world_xyz=(
+                            0.5 * (head_min[0] + head_max[0]),
+                            0.5 * (head_min[1] + head_max[1]),
+                            0.5 * (head_min[2] + head_max[2]),
+                        ),
+                        piece_id=other.piece_id,
+                        critical=True,
+                    )
+                )
+
     return failures
 
 

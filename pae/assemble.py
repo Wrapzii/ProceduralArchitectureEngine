@@ -1232,6 +1232,8 @@ def assemble(
                     )
         else:
             # Upper storeys: one spanning deck (perimeter walls carry the span).
+            # VOID bays also get floor_hole rims; the Blender mesh punches those
+            # openings out of the deck so the stair top is not a solid ceiling.
             modules_x = x1 - x0 + 1
             modules_y = y1 - y0 + 1
             pid = _next_piece_id(counters, "floor_deck", (x0, y0), level)
@@ -1244,7 +1246,12 @@ def assemble(
                     level=level,
                     yaw=0,
                     offset_cm=(0.0, 0.0, floor_z_off),
-                    size_cm=roof_flat_span_size_cm(modules_x, modules_y),
+                    # Exact module span — no roof eaves (those belong on roof_flat only).
+                    size_cm=(
+                        modules_x * MODULE_CM,
+                        modules_y * MODULE_CM,
+                        FLOOR_T_CM,
+                    ),
                     tags=floor_piece.tags,
                 )
             )

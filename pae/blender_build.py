@@ -240,6 +240,8 @@ def is_stair_proof_placement(p) -> bool:
 def is_stair_proof_visible_asset(
     asset_id: Optional[str],
     piece_id: Optional[str] = None,
+    *,
+    level: Optional[int] = None,
 ) -> bool:
     """True when a mesh instance should remain visible in the M2 stair proof shot."""
     tokens = (str(asset_id or ""), str(piece_id or ""))
@@ -247,6 +249,9 @@ def is_stair_proof_visible_asset(
     if "stair" in combined:
         return True
     if "floor_hole" in combined or "hole" in combined:
+        return True
+    # Show upper floor slabs so the stair exit reads as an opening, not a floating rim.
+    if asset_id == "floor" and level is not None and level >= 1:
         return True
     return False
 
@@ -832,6 +837,51 @@ def build_framed_opening_fallback(
     return core
 
 
+def is_spanning_floor_deck(p) -> bool:
+    """True for upper-storey floor decks larger than one module bay."""
+    from pae.contract import MODULE_CM
+
+    return (
+        getattr(p, "asset_id", None) == "floor"
+        and getattr(p, "kind", None) == "floor"
+        and float(p.size_cm[0]) > MODULE_CM + 0.5
+        and float(p.size_cm[1]) > MODULE_CM + 0.5
+    )
+
+
+def spanning_floor_hole_rects_cm(deck, hole_placements) -> List[Tuple[float, float, float, float]]:
+    """Local hole rectangles for VOID ``floor_hole`` placements on a spanning deck."""
+    from pae.primitives.floors import hole_rects_for_deck_cm
+
+    cells = [
+        tuple(h.cell)
+        for h in hole_placements
+        if getattr(h, "asset_id", None) == "floor_hole"
+        and getattr(h, "level", None) == getattr(deck, "level", None)
+    ]
+    return hole_rects_for_deck_cm(tuple(deck.cell), cells)
+
+
+def _mesh_for_spanning_floor_deck(p, hole_placements, *, cache: Dict[str, Any]) -> Any:
+    """Full-size spanning floor mesh with stair VOIDs punched open."""
+    from pae.primitives import bpy_util
+    from pae.primitives.floors import slab_with_rect_holes_verts_faces
+
+    bpy_util.require_bpy()
+    key = f"floor_deck::{p.piece_id}::{tuple(p.size_cm)}"
+    if key in cache:
+        return cache[key]
+    rects = spanning_floor_hole_rects_cm(p, hole_placements)
+    sx, sy, sz = tuple(p.size_cm)
+    verts, faces = slab_with_rect_holes_verts_faces(sx, sy, sz, rects)
+    proto_name = f"PAE_Proto_floor_deck_{p.piece_id}"
+    obj = bpy_util.mesh_from_verts_faces(proto_name, verts, faces)
+    obj.hide_set(True)
+    obj.hide_render = True
+    cache[key] = obj
+    return obj
+
+
 def _mesh_for_asset(
     asset_id: str,
     size_cm: Tuple[float, float, float],
@@ -900,8 +950,19 @@ def instance_assembly(
     cache: Dict[str, Any] = {}
     count = 0
     ox, oy, oz = offset_m
+    hole_placements = [
+        hp
+        for hp in assembly.placements
+        if getattr(hp, "asset_id", None) == "floor_hole"
+    ]
     for p in assembly.placements:
-        proto = _mesh_for_asset(p.asset_id, tuple(p.size_cm), cache=cache)
+        if is_spanning_floor_deck(p):
+            # Full-size mesh with VOID openings already cut — uniform cm→m only.
+            proto = _mesh_for_spanning_floor_deck(p, hole_placements, cache=cache)
+            sx = sy = sz = 1.0
+        else:
+            proto = _mesh_for_asset(p.asset_id, tuple(p.size_cm), cache=cache)
+            sx, sy, sz = placement_instance_scale_cm(p)
         loc_cm = placement_loc_cm(p)
         loc_m = (
             loc_cm[0] * CM_TO_M + ox,
@@ -915,7 +976,6 @@ def instance_assembly(
         inst.hide_set(False)
         inst.hide_render = False
         inst.location = Vector(loc_m)
-        sx, sy, sz = placement_instance_scale_cm(p)
         inst.scale = (sx * CM_TO_M, sy * CM_TO_M, sz * CM_TO_M)
         inst.rotation_euler = (0.0, 0.0, math.radians(float(p.yaw)))
         mat = _ensure_material(p.asset_id, getattr(p, "kind", "wall"))
@@ -932,6 +992,7 @@ def instance_assembly(
         coll.objects.link(inst)
         inst["pae_piece_id"] = p.piece_id
         inst["pae_asset_id"] = p.asset_id
+        inst["pae_level"] = int(getattr(p, "level", 0))
         count += 1
     return count
 
@@ -979,7 +1040,7 @@ def _ensure_gallery_lighting() -> None:
 
 
 def _apply_stair_proof_visibility(objects: Sequence[Any]) -> Dict[str, List[str]]:
-    """Hide every mesh except stair + floor-hole instances (viewport + render)."""
+    """Hide every mesh except stair + floor-hole + upper floor slabs."""
     hidden: List[str] = []
     visible: List[str] = []
     for obj in objects:
@@ -987,8 +1048,13 @@ def _apply_stair_proof_visibility(objects: Sequence[Any]) -> Dict[str, List[str]
             continue
         asset = obj.get("pae_asset_id")
         piece = obj.get("pae_piece_id")
+        level = obj.get("pae_level")
+        try:
+            level_i = int(level) if level is not None else None
+        except (TypeError, ValueError):
+            level_i = None
         label = f"{asset or '?'}:{piece or obj.name}"
-        if is_stair_proof_visible_asset(asset, piece):
+        if is_stair_proof_visible_asset(asset, piece, level=level_i):
             obj.hide_render = False
             obj.hide_set(False)
             visible.append(label)

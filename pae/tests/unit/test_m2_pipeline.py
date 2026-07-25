@@ -76,7 +76,15 @@ def test_m2_assemble_stair_and_floor_hole():
         for p in assembly.placements
         if p.level == 1 and p.kind == "floor" and p.asset_id == "floor"
     }
+    # Spanning deck at origin (walls carry the span); holes punch the void bays.
     assert upper_solids == {(0, 0)}
+    deck = next(
+        p
+        for p in assembly.placements
+        if p.level == 1 and p.asset_id == "floor"
+    )
+    assert deck.size_cm[0] > MODULE_CM
+    assert deck.size_cm[1] > MODULE_CM
 
 
 def test_m2_east_north_boundary_unchanged():

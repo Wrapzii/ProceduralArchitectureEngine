@@ -14,12 +14,13 @@ def test_broken_fixture_fails_validation():
     assert len(report.critical) > 0
 
 
-def test_broken_fixture_detects_all_nine_check_classes():
+def test_broken_fixture_detects_all_check_classes():
     assembly = make_broken_assembly()
     _, report = validate(assembly)
     found = {f.check for f in report.failures}
     missing = EXPECTED_CHECKS - found
     assert not missing, f"missing defect checks: {sorted(missing)}; found={sorted(found)}"
+    assert "stair_exit_clearance" in found
 
 
 def test_broken_fixture_critical_categories():

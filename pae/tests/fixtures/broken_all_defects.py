@@ -257,6 +257,22 @@ def make_broken_assembly() -> Assembly:
         CirculationEdge(piece_id="stair_ground_only", from_level=0, to_level=0),
     ]
 
+    # §7.7b — stair with no floor_hole above → exit blocked (ceiling not opened)
+    # Keep off (1,1) so this does not support prop_float or fix floor_coverage.
+    placements.append(
+        SolidPlacement(
+            piece_id="stair_blocked_top",
+            asset_id="stair_straight",
+            kind="stair",
+            cell=(2, 1),
+            level=0,
+            yaw=0,
+            offset_cm=(0.0, 0.0, 0.0),
+            size_cm=(MODULE_CM, MODULE_CM, STOREY_CM),
+            tags=frozenset({"stair"}),
+        )
+    )
+
     floor_z_l0 = 0.0
     apertures = [
         # §7.9 — window sill at floor
@@ -306,6 +322,7 @@ EXPECTED_CHECKS = frozenset(
         "enclosure",
         "floor_coverage",
         "stair_reachability",
+        "stair_exit_clearance",
         "run_fit",
         "aperture_sanity",
     }
