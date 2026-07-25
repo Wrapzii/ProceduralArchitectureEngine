@@ -156,6 +156,37 @@ def _bmesh_add_axis_aligned_box(bm, origin: Vec3, size: Vec3) -> None:
             continue
 
 
+def build_mesh_from_box_parts(
+    name: str,
+    parts: Sequence[Tuple[Vec3, Vec3]],
+    *,
+    origin_at_min_corner: bool = True,
+    location: Vec3 = (0.0, 0.0, 0.0),
+    collection=None,
+):
+    """Weld axis-aligned box parts into one mesh object."""
+    require_bpy()
+    if not parts:
+        return box_mesh(
+            name,
+            (0.0, 0.0, 0.0),
+            origin_at_min_corner=origin_at_min_corner,
+            location=location,
+            collection=collection,
+        )
+
+    obj = new_empty_mesh_object(name, collection=collection)
+    bm = bmesh.new()
+    for part_origin, part_size in parts:
+        _bmesh_add_axis_aligned_box(bm, part_origin, part_size)
+    bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=1e-4)
+    bm.normal_update()
+    bm.to_mesh(obj.data)
+    bm.free()
+    obj.location = Vector(location)
+    return obj
+
+
 def build_box_with_rect_aperture_along_x(
     name: str,
     size_cm: Vec3,
@@ -172,26 +203,13 @@ def build_box_with_rect_aperture_along_x(
     avoids boolean corner voids on door/window bases.  ``opening_*`` Y/Z are
     clamped to the wall interior; the opening spans the full wall thickness in X.
     """
+    from pae.primitives.walls import wall_aperture_frame_parts_cm
+
     require_bpy()
     wx, wy, wz = size_cm
-    _, oy0, oz0 = opening_min
-    _, oy1, oz1 = opening_max
-    oy0 = max(0.0, min(wy, oy0))
-    oy1 = max(oy0, min(wy, oy1))
-    oz0 = max(0.0, min(wz, oz0))
-    oz1 = max(oz0, min(wz, oz1))
-
-    eps = 1e-5
-    parts: List[Tuple[Vec3, Vec3]] = []
-    if oz0 > eps:
-        parts.append(((0.0, 0.0, 0.0), (wx, wy, oz0)))
-    if oz1 < wz - eps:
-        parts.append(((0.0, 0.0, oz1), (wx, wy, wz - oz1)))
-    if oy0 > eps:
-        parts.append(((0.0, 0.0, oz0), (wx, oy0, oz1 - oz0)))
-    if oy1 < wy - eps:
-        parts.append(((0.0, oy1, oz0), (wx, wy - oy1, oz1 - oz0)))
-
+    _, run0, z0 = opening_min
+    _, run1, z1 = opening_max
+    parts = wall_aperture_frame_parts_cm(size_cm, run0, run1, z0, z1)
     if not parts:
         return box_mesh(
             name,
@@ -200,17 +218,13 @@ def build_box_with_rect_aperture_along_x(
             location=location,
             collection=collection,
         )
-
-    obj = new_empty_mesh_object(name, collection=collection)
-    bm = bmesh.new()
-    for part_origin, part_size in parts:
-        _bmesh_add_axis_aligned_box(bm, part_origin, part_size)
-    bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=1e-4)
-    bm.normal_update()
-    bm.to_mesh(obj.data)
-    bm.free()
-    obj.location = Vector(location)
-    return obj
+    return build_mesh_from_box_parts(
+        name,
+        parts,
+        origin_at_min_corner=origin_at_min_corner,
+        location=location,
+        collection=collection,
+    )
 
 
 def apply_aperture_boolean_cut(

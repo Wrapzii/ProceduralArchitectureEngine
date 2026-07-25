@@ -6,9 +6,9 @@ Arcade arch is cut **into** the module so the outer footprint still fills one ba
 
 from __future__ import annotations
 
-from typing import Optional, Tuple
+from typing import List, Optional, Tuple
 
-from pae.contract import MODULE_CM, STOREY_CM, WALL_T_CM
+from pae.contract import MODULE_CM, STOREY_CM, TOL_CM, WALL_T_CM
 from pae.primitives.types import (
     ApertureDesc,
     PrimitiveDescriptor,
@@ -32,10 +32,38 @@ _ARCH_SPRING = 0.18  # fraction of STOREY — arch starts above plinth band
 _CUTTER_PAD_X_FRAC = 0.25  # each face — pierces both wall skins
 _CUTTER_PAD_YZ_CM = 0.5  # coplanar guard for boolean fallback
 
+# Wall kit: thin in local X (``WALL_T``), run along Y (``MODULE``), vertical Z.
+WALL_THIN_AXIS_INDEX = 0
+WALL_RUN_AXIS_INDEX = 1
+WALL_VERTICAL_AXIS_INDEX = 2
+
+
+def aperture_opening_run_vertical(
+    ap: ApertureDesc,
+    wall_size_cm: Tuple[float, float, float],
+) -> Tuple[float, float, float, float]:
+    """Opening span on run (Y) and vertical (Z); thin axis (X) is always through-punched.
+
+    Descriptor layout: ``min_cm = (-pad_x, run0, z0)``, ``max_cm = (WALL_T+pad_x, run1, z1)``.
+    Run width must live on axis 1 — if it were stored on axis 0 the mesh would cut a
+    side notch along the module run instead of punching the exterior thin face.
+    """
+    wx, wy, _wz = wall_size_cm
+    run0, run1 = ap.min_cm[WALL_RUN_AXIS_INDEX], ap.max_cm[WALL_RUN_AXIS_INDEX]
+    z0, z1 = ap.min_cm[WALL_VERTICAL_AXIS_INDEX], ap.max_cm[WALL_VERTICAL_AXIS_INDEX]
+    run_w = run1 - run0
+    thick_w = ap.max_cm[WALL_THIN_AXIS_INDEX] - ap.min_cm[WALL_THIN_AXIS_INDEX]
+    if run_w < wy * 0.05 and thick_w > wx + TOL_CM:
+        raise ValueError(
+            "wall aperture run/thickness axes appear swapped on descriptor "
+            f"(run_w={run_w:.1f} cm on Y, thick_w={thick_w:.1f} cm on X)"
+        )
+    return (run0, run1, z0, z1)
+
 
 def aperture_opening_yz(ap: ApertureDesc) -> Tuple[float, float, float, float]:
     """Logical Y/Z opening inside the bay (ignores X cutter pad on the descriptor)."""
-    return (ap.min_cm[1], ap.max_cm[1], ap.min_cm[2], ap.max_cm[2])
+    return aperture_opening_run_vertical(ap, (WALL_T_CM, MODULE_CM, STOREY_CM))
 
 
 def aperture_cutter_bounds(
@@ -46,26 +74,83 @@ def aperture_cutter_bounds(
     wx, _wy, wz = wall_size_cm
     pad_x = WALL_T_CM * _CUTTER_PAD_X_FRAC
     pad_yz = _CUTTER_PAD_YZ_CM
-    y0, y1, z0, z1 = aperture_opening_yz(ap)
+    run0, run1, z0, z1 = aperture_opening_run_vertical(ap, wall_size_cm)
     return (
-        (-pad_x, y0 - pad_yz, z0 - pad_yz),
-        (wx + pad_x, y1 + pad_yz, min(wz, z1 + pad_yz)),
+        (-pad_x, run0 - pad_yz, z0 - pad_yz),
+        (wx + pad_x, run1 + pad_yz, min(wz, z1 + pad_yz)),
     )
 
 
 def _wall_aperture_desc(
     kind: str,
-    y0: float,
-    y1: float,
+    run0: float,
+    run1: float,
     z0: float,
     z1: float,
 ) -> ApertureDesc:
+    """Aperture in wall-local cm: through thin X, opening rectangle in YZ."""
     pad_x = WALL_T_CM * _CUTTER_PAD_X_FRAC
     return ApertureDesc(
         kind=kind,
-        min_cm=(-pad_x, y0, z0),
-        max_cm=(WALL_T_CM + pad_x, y1, z1),
+        min_cm=(-pad_x, run0, z0),
+        max_cm=(WALL_T_CM + pad_x, run1, z1),
     )
+
+
+def wall_aperture_frame_parts_cm(
+    size_cm: Tuple[float, float, float],
+    run0: float,
+    run1: float,
+    z0: float,
+    z1: float,
+) -> List[Tuple[Tuple[float, float, float], Tuple[float, float, float]]]:
+    """Frame boxes leaving a through-opening along thin X (exterior/interior faces).
+
+    Each part spans the full wall thickness ``[0, wx]`` on X.  The void is
+    ``run ∈ [run0, run1]``, ``z ∈ [z0, z1]`` — never a partial-X side notch.
+    """
+    wx, wy, wz = size_cm
+    run0 = max(0.0, min(wy, run0))
+    run1 = max(run0, min(wy, run1))
+    z0 = max(0.0, min(wz, z0))
+    z1 = max(z0, min(wz, z1))
+
+    eps = 1e-5
+    parts: List[Tuple[Tuple[float, float, float], Tuple[float, float, float]]] = []
+    run_span = run1 - run0
+
+    # Full-height side pillars (thin axis X always spans [0, wx]).
+    if run0 > eps:
+        parts.append(((0.0, 0.0, 0.0), (wx, run0, wz)))
+    if run1 < wy - eps:
+        parts.append(((0.0, run1, 0.0), (wx, wy - run1, wz)))
+
+    # Sill / lintel only between jambs (avoids boolean-style corner ears at floor).
+    if z0 > eps and run_span > eps:
+        parts.append(((0.0, run0, 0.0), (wx, run_span, z0)))
+    if z1 < wz - eps and run_span > eps:
+        parts.append(((0.0, run0, z1), (wx, run_span, wz - z1)))
+
+    return parts
+
+
+def wall_aperture_is_solid_at(
+    parts: List[Tuple[Tuple[float, float, float], Tuple[float, float, float]]],
+    lx: float,
+    ly: float,
+    lz: float,
+) -> bool:
+    """True when ``(lx, ly, lz)`` lies inside any frame part (import-safe probe)."""
+    for origin, size in parts:
+        ox, oy, oz = origin
+        sx, sy, sz = size
+        if (
+            ox - 1e-9 <= lx <= ox + sx + 1e-9
+            and oy - 1e-9 <= ly <= oy + sy + 1e-9
+            and oz - 1e-9 <= lz <= oz + sz + 1e-9
+        ):
+            return True
+    return False
 
 
 def _wall_sockets() -> tuple:
@@ -204,13 +289,10 @@ def build_wall_mesh(desc: PrimitiveDescriptor, *, name: Optional[str] = None):
         return bpy_util.box_mesh(obj_name, desc.size_cm, origin_at_min_corner=True)
 
     ap = desc.aperture
-    y0, y1, z0, z1 = aperture_opening_yz(ap)
-    wx = desc.size_cm[0]
-    # Bmesh frame: opening spans full wall thickness; Y/Z from contract fractions.
-    return bpy_util.build_box_with_rect_aperture_along_x(
+    run0, run1, z0, z1 = aperture_opening_run_vertical(ap, desc.size_cm)
+    parts = wall_aperture_frame_parts_cm(desc.size_cm, run0, run1, z0, z1)
+    return bpy_util.build_mesh_from_box_parts(
         obj_name,
-        desc.size_cm,
-        opening_min=(0.0, y0, z0),
-        opening_max=(wx, y1, z1),
+        parts,
         origin_at_min_corner=True,
     )

@@ -19,7 +19,10 @@ from pae.primitives.walls import (
     _WINDOW_SILL,
     _WINDOW_W,
     aperture_cutter_bounds,
+    aperture_opening_run_vertical,
     aperture_opening_yz,
+    wall_aperture_frame_parts_cm,
+    wall_aperture_is_solid_at,
 )
 
 
@@ -112,3 +115,59 @@ def test_m1_door_aperture_width_sane_band():
     width_cm = y1 - y0
     assert 100.0 <= width_cm <= 170.0
     assert width_cm <= MODULE_CM * 0.45
+
+
+def _door_frame_parts():
+    door = get("wall_door")
+    run0, run1, z0, z1 = aperture_opening_run_vertical(door.aperture, door.size_cm)
+    return door.size_cm, wall_aperture_frame_parts_cm(door.size_cm, run0, run1, z0, z1)
+
+
+def test_wall_frame_punches_full_thin_axis():
+    """Opening must be hollow through the entire wall thickness (X), not a side notch."""
+    size_cm, parts = _door_frame_parts()
+    wx, wy, wz = size_cm
+    run0, run1, z0, z1 = aperture_opening_run_vertical(
+        get("wall_door").aperture, size_cm
+    )
+    for lx in (0.0, wx * 0.5, wx):
+        for ly in (run0 + 4.0, (run0 + run1) * 0.5, run1 - 4.0):
+            for lz in (z0 + 4.0, (z0 + z1) * 0.5, z1 - 4.0):
+                assert not wall_aperture_is_solid_at(parts, lx, ly, lz)
+
+
+def test_wall_frame_exterior_face_void_is_rectangle():
+    """Thin face (x=0) void must be a single run×vertical rectangle — no P/flag ears."""
+    size_cm, parts = _door_frame_parts()
+    wx, wy, wz = size_cm
+    run0, run1, z0, z1 = aperture_opening_run_vertical(
+        get("wall_door").aperture, size_cm
+    )
+    step = 5.0
+    for ly in range(0, int(wy) + 1, int(step)):
+        for lz in range(0, int(wz) + 1, int(step)):
+            is_void = not wall_aperture_is_solid_at(parts, 0.0, float(ly), float(lz))
+            inside = run0 < ly < run1 and z0 <= lz <= z1
+            if inside:
+                assert is_void, f"opening blocked at thin face (0, {ly}, {lz})"
+            elif is_void:
+                pytest.fail(f"unexpected void outside opening at (0, {ly}, {lz})")
+
+
+def test_wall_frame_no_run_end_notch():
+    """Run-axis end faces (y=0 / y=wy) stay solid — no side-slot notch."""
+    size_cm, parts = _door_frame_parts()
+    wx, wy, wz = size_cm
+    for ly in (0.0, wy):
+        for lz in range(0, int(wz) + 1, 20):
+            for lx in (0.0, wx * 0.5, wx):
+                assert wall_aperture_is_solid_at(parts, lx, ly, float(lz))
+
+
+def test_wall_frame_parts_span_full_thickness():
+    """Every frame box must span the full thin axis [0, wx]."""
+    size_cm, parts = _door_frame_parts()
+    wx = size_cm[0]
+    for origin, size in parts:
+        assert origin[0] == pytest.approx(0.0)
+        assert size[0] == pytest.approx(wx)

@@ -95,6 +95,7 @@ Project root: `C:\Users\WhiteWidow\Documents\GitHub\ProceduralArchitectureEngine
 
 2026-07-24 — Master: Wave I swarm (Composer 2.5) — aperture facing, eaves, materials, floaters, stair prove, UE bind note.
 >>> TRIGGER @APERTURE_FACE — Door/window openings must face outward on correct wall axis; kill P-shaped silhouette. Own walls.py + assemble wall yaw only if required.
+>>> DONE @APERTURE_FACE — Wall aperture frame punches thin X only (`wall_aperture_frame_parts_cm`: full-height pillars + sill/lintel between jambs); `aperture_opening_run_vertical` guards run/thickness axis swap; bpy `build_mesh_from_box_parts`. Tests: through-hole, exterior rect void, no run-end notch. Suite: 285 passed.
 >>> TRIGGER @EAVES — Small roof overhang past walls (flat + pitched) so roofs read as roofs. Own roofs.py + assemble roof size/offset.
 >>> DONE @EAVES — `EAVE_OVERHANG_CM = WALL_T_CM * 0.5` (30 cm); flat + pitched roofs grow/offset via roof span helpers; per-wing interior seams zero overhang. m1/m3/m4 validate ok. Suite: 304 passed.
 >>> TRIGGER @MAT_READ — Distinct Blender materials per kind (wall/roof/floor/tower/stair) for gallery readability. Own blender_build.py materials only.
