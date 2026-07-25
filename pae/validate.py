@@ -2876,6 +2876,13 @@ def _check_no_bare_aperture_holes(assembly: Assembly) -> List[Failure]:
 
 
 def _check_aperture_sanity(assembly: Assembly) -> List[Failure]:
+    """Sill bands + door side walkability.
+
+    `tower_entry` hall↔drum doors are a through-passage: both sides use
+    stairwell/hall roles (see `_check_door_walkable(..., tower_entry=True)`).
+    Ordinary exterior doors still require EXTERIOR/COURTYARD outside — this is
+    not a global demotion of aperture_sanity.
+    """
     failures: List[Failure] = []
     policy = assembly.aperture_policy
     layer_map = assembly.floor_plan
