@@ -52,7 +52,11 @@ def test_m1_manifest_written_when_validate_ok(tmp_path: Path):
     assert data["module_cm"] == MODULE_CM
     assert data["storey_cm"] == STOREY_CM
     assert data["origin_convention"] == "min_corner"
+    assert data["contract"]["module_cm"] == MODULE_CM
     assert data["validation"]["ok"] is True
+    assert "failures" in data["validation"]
+    assert data["collision"], "expected per-asset collision stubs"
+    assert all(set(a["lod"]) == {"0", "1", "2"} for a in data["assets"])
     assert len(data["placements"]) == len(assembly.placements)
     assert data["placements"], "expected at least one placement"
 
