@@ -103,6 +103,30 @@ def footprint_contract_errors(
                 f"{desc.id}.size.x: barrier thickness {sx:.1f} cm exceeds "
                 f"WALL_T {WALL_T_CM:.1f} cm"
             )
+    elif kind == "surface":
+        # Ground surfaces tile the grid: full module square, thin. Kerbs are a strip, so
+        # X is allowed to be narrower than a module.
+        errors.extend(_axis_err(f"{desc.id}.size.y", sy, my * MODULE_CM, tol_cm))
+        if sx > mx * MODULE_CM + tol_cm:
+            errors.append(
+                f"{desc.id}.size.x: {sx:.1f} cm overflows its "
+                f"{mx}-module footprint ({mx * MODULE_CM:.1f} cm)"
+            )
+        # Flat surfaces stay slab-thin; a step run is a surface that deliberately climbs,
+        # so it is measured against its declared storey fraction instead.
+        if "steps" in desc.tags:
+            errors.extend(
+                _axis_err(
+                    f"{desc.id}.size.z",
+                    sz,
+                    desc.height_storeys * STOREY_CM,
+                    tol_cm,
+                )
+            )
+        elif sz > FLOOR_T_CM * 2.0:
+            errors.append(
+                f"{desc.id}.size.z: surface {sz:.1f} cm is thicker than a floor slab"
+            )
     elif kind in ("column", "roofline"):
         # Sub-bay pieces must FIT their declared footprint but need not fill it: a chimney
         # is not a module wide, and padding it to one would put a 4 m box around it.

@@ -12,6 +12,7 @@ from pae.primitives.railings import all_railings
 from pae.primitives.roofs import all_roofs
 from pae.primitives.spires import all_spires
 from pae.primitives.stairs import all_stairs
+from pae.primitives.surfaces import all_surfaces
 from pae.primitives.towers import all_towers
 from pae.primitives.types import PrimitiveDescriptor
 from pae.primitives.walls import all_walls
@@ -29,6 +30,7 @@ def all_descriptors() -> List[PrimitiveDescriptor]:
     pieces.extend(all_columns())
     pieces.extend(all_railings())
     pieces.extend(all_spires())
+    pieces.extend(all_surfaces())
     return pieces
 
 
@@ -59,6 +61,7 @@ def build_mesh(piece_id: str, *, name: Optional[str] = None):
         roofs,
         spires,
         stairs,
+        surfaces,
         towers,
         walls,
     )
@@ -77,6 +80,7 @@ def build_mesh(piece_id: str, *, name: Optional[str] = None):
         "column": columns.build_column_mesh,
         "barrier": railings.build_railing_mesh,
         "roofline": spires.build_spire_mesh,
+        "surface": surfaces.build_surface_mesh,
     }
     builder = builders.get(desc.kind)
     if builder is None:

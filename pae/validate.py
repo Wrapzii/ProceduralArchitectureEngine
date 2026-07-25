@@ -201,7 +201,9 @@ def _check_vertical_support(assembly: Assembly) -> List[Failure]:
                 top = omax[2]
                 if abs(top - bottom_z) > tol:
                     continue
-            if _xy_footprint_overlap(bb_min, bb_max, omin, omax, tol):
+            if _xy_footprint_overlap(
+                bb_min, bb_max, omin, omax, _support_overlap_tol(bb_min, bb_max, tol)
+            ):
                 supported = True
                 break
         if not supported:
@@ -218,6 +220,25 @@ def _check_vertical_support(assembly: Assembly) -> List[Failure]:
                 )
             )
     return failures
+
+
+def _support_overlap_tol(
+    bb_min: Tuple[float, float, float],
+    bb_max: Tuple[float, float, float],
+    tol: float,
+) -> float:
+    """XY overlap a piece needs before it counts as supported.
+
+    The vertical tolerance (35 cm) was being reused as the horizontal one, so any piece
+    THINNER than 35 cm could never be supported by anything: an 11 cm railing standing
+    squarely on a floor slab reported as floating. The threshold has to scale with the
+    piece being tested, not with a constant that only suits walls and slabs.
+
+    Half the piece's smaller footprint dimension, capped at the vertical tolerance: a
+    railing needs 5.5 cm of slab under it, a wall still needs the full 35 cm.
+    """
+    smallest = min(bb_max[0] - bb_min[0], bb_max[1] - bb_min[1])
+    return min(tol, max(0.0, smallest * 0.5))
 
 
 def _xy_footprint_overlap(
