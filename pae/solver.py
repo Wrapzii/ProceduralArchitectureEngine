@@ -11,7 +11,7 @@ from typing import Dict, List, Optional, Set, Tuple
 
 from pae.contract import cell_to_world_cm
 from pae.report import Failure, Report
-from pae.spec import BuildingSpec, FootprintSpec, TowerSpec
+from pae.spec import BuildingSpec, FootprintSpec, TowerSpec, SUPPORTED_STAIR_KINDS
 
 
 # Enclosed building bodies (not courtyard). Includes school program roles.
@@ -301,7 +301,7 @@ def _place_school_academy(fp: FootprintSpec, storeys: int) -> List[Volume]:
         )
     cx0, cy0 = depth, depth
     cx1, cy1 = fp.bays_x - depth - 1, fp.bays_y - depth - 1
-    if cx1 >= cx0 and cy1 >= cy0:
+    if fp.courtyard and cx1 >= cx0 and cy1 >= cy0:
         vols.append(
             Volume(
                 id="courtyard",
@@ -525,7 +525,7 @@ def _local_repair_towers(volumes: List[Volume]) -> List[Volume]:
     Historical bug: interior tower cells ``_tower_touches`` the body via overlap,
     so repair skipped them and ``volumes_no_overlap`` failed the solve.
     """
-    mains = [v for v in volumes if v.role in ("main", "wing")]
+    mains = [v for v in volumes if v.role in WING_ROLES]
     if not mains:
         return volumes
     candidates = _exterior_tower_candidates(mains)
@@ -639,11 +639,41 @@ def solve(spec: BuildingSpec) -> Tuple[Optional[Massing], Report]:
             ]
         )
 
+    failures: List[Failure] = []
+
+    if spec.footprint.kind == "school":
+        wing_vols = [v for v in volumes if v.role == "classroom_wing"]
+        if not wing_vols:
+            failures.append(
+                Failure(
+                    check="school_program",
+                    message=(
+                        "school footprint cannot produce classroom_wing volumes "
+                        f"(bays={spec.footprint.bays_x}x{spec.footprint.bays_y}, "
+                        f"wing_depth={spec.footprint.wing_depth})"
+                    ),
+                    world_xyz=None,
+                )
+            )
+
+    stair_kind = (spec.circulation.stair_kind or "straight").lower()
+    if spec.storeys > 1 and stair_kind not in SUPPORTED_STAIR_KINDS:
+        supported = ", ".join(sorted(SUPPORTED_STAIR_KINDS))
+        failures.append(
+            Failure(
+                check="stair_kind",
+                message=(
+                    f"unsupported stair_kind '{stair_kind}' for auto placement "
+                    f"— supported: {supported}"
+                ),
+                world_xyz=cell_to_world_cm(0, 0, 1),
+            )
+        )
+
     stair_cells = list(spec.circulation.stair_cells)
-    if spec.storeys > 1 and not stair_cells:
+    if spec.storeys > 1 and not stair_cells and not failures:
         stair_cells = _default_stair_cells(volumes, spec.circulation.stair_kind)
 
-    failures: List[Failure] = []
     failures.extend(_volumes_overlap_failures(volumes))
     failures.extend(_tower_attach_failures(volumes))
     failures.extend(_courtyard_role_failures(volumes))

@@ -14,6 +14,14 @@ from pae.report import Report
 from pae.solver import Massing
 
 
+def _merge_reports(*reports: Report) -> Report:
+    """Combine failures/warnings from multiple stage reports."""
+    failures = []
+    for report in reports:
+        failures.extend(report.failures)
+    return Report.from_failures(failures)
+
+
 def run_through_assemble(
     spec,
     *,
@@ -59,7 +67,7 @@ def run_through_validate_trim(
     *,
     asset_db=None,
 ) -> Tuple[Massing, FloorPlan, Assembly, Report]:
-    """spec → assemble → validate (fail-closed) → trim.
+    """spec → assemble → validate (fail-closed) → trim → re-validate.
 
     Wave 5 school default: never trim a shell that fails validation.
     """
@@ -79,7 +87,11 @@ def run_through_validate_trim(
     trimmed, treport = trim(assembly)
     if not treport.ok:
         return massing, floor_plan, trimmed, treport
-    return massing, floor_plan, trimmed, Report.from_failures([])
+
+    trimmed, post_report = validate(trimmed)
+    if not post_report.ok:
+        return massing, floor_plan, trimmed, post_report
+    return massing, floor_plan, trimmed, _merge_reports(vreport, treport, post_report)
 
 
 def run_through_decorate(
@@ -117,5 +129,11 @@ def run_through_decorate(
     )
     if not dreport.ok:
         return massing, floor_plan, decorated, dreport
+
+    from pae.validate import validate
+
+    decorated, vreport = validate(decorated)
+    if not vreport.ok:
+        return massing, floor_plan, decorated, vreport
     # Non-critical decorate warnings (empty DB) still return ok assembly.
-    return massing, floor_plan, decorated, dreport
+    return massing, floor_plan, decorated, _merge_reports(dreport, vreport)

@@ -6,6 +6,7 @@ import random
 from typing import List, Tuple
 
 from pae.spec import (
+    SUPPORTED_STAIR_KINDS,
     BuildingSpec,
     CirculationSpec,
     FootprintSpec,
@@ -118,7 +119,7 @@ def random_building_spec(rng: random.Random | None = None) -> BuildingSpec:
         towers=towers,
         roof=RoofSpec(kind=rng.choice(["flat", "pitched"]), pitch=1.0),
         circulation=CirculationSpec(
-            stair_kind=rng.choice(["straight", "spiral", "switchback", "wide"]),
+            stair_kind=rng.choice(sorted(SUPPORTED_STAIR_KINDS)),
             stair_cells=stair_cells,
         ),
         openings=OpeningPolicy(

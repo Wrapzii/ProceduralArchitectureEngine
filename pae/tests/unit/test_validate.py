@@ -2,7 +2,13 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
+from pae.assemble import assemble
 from pae.contract import MODULE_CM, STOREY_CM, TOL_CM, WALL_T_CM, placement_world_aabb, rotation_offset_cm
+from pae.plan import plan
+from pae.spec import load_style, school_academy_spec
+from pae.solver import solve
 from pae.tests.fixtures.broken_all_defects import EXPECTED_CHECKS, make_broken_assembly
 from pae.validate import validate
 
@@ -174,3 +180,30 @@ def test_placement_world_aabb_yaw90_wall():
     )
     assert abs(bb_max[0] - bb_min[0] - MODULE_CM) < TOL_CM
     assert abs(bb_max[1] - bb_min[1] - WALL_T_CM) < TOL_CM
+
+
+def test_classroom_door_wrong_face_fails_validate():
+    """Partition door must face the corridor neighbor, not merely exist on the cell."""
+    spec = school_academy_spec()
+    massing, _ = solve(spec)
+    floor_plan, preport = plan(massing)
+    assert preport.ok
+    style, _ = load_style(spec.style)
+    assembly, _ = assemble(floor_plan, None, style)
+    _, ok_report = validate(assembly)
+    assert ok_report.critical == []
+
+    door = next(
+        p
+        for p in assembly.placements
+        if "partition" in p.tags and "door" in p.tags
+    )
+    face_tag = next(t for t in door.tags if t.startswith("face_"))
+    wrong_faces = {"face_west", "face_east", "face_north", "face_south"} - {face_tag}
+    bad_tags = (set(door.tags) - {face_tag}) | {next(iter(wrong_faces))}
+    idx = assembly.placements.index(door)
+    assembly.placements[idx] = replace(door, tags=frozenset(bad_tags))
+
+    _, report = validate(assembly)
+    corridor_fails = [f for f in report.critical if f.check == "classroom_corridor"]
+    assert corridor_fails, "wrong partition face should fail classroom_corridor"

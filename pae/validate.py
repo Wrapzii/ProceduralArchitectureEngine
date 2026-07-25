@@ -755,7 +755,7 @@ def _check_floor_coverage(assembly: Assembly) -> List[Failure]:
                         Failure(
                             check="floor_coverage",
                             message=(
-                                f"missing floor slab under INTERIOR cell "
+                                f"missing floor slab under {role.name} cell "
                                 f"({cx}, {cy}) level {level}"
                             ),
                             world_xyz=xyz,
@@ -803,26 +803,58 @@ def _check_stair_reachability(assembly: Assembly) -> List[Failure]:
 
 # --- school classroom ↔ corridor ---------------------------------------------
 
+_FACE_TOWARD_DELTA: Dict[str, Tuple[int, int]] = {
+    "east": (1, 0),
+    "west": (-1, 0),
+    "north": (0, 1),
+    "south": (0, -1),
+}
+
+
+def _face_toward(
+    from_cell: Tuple[int, int], to_cell: Tuple[int, int]
+) -> str | None:
+    fx, fy = from_cell
+    tx, ty = to_cell
+    for face, (dx, dy) in _FACE_TOWARD_DELTA.items():
+        if tx == fx + dx and ty == fy + dy:
+            return face
+    return None
+
+
+def _partition_face_from_tags(tags: Iterable[str]) -> str | None:
+    for tag in tags:
+        if tag.startswith("face_"):
+            return tag[5:]
+    return None
+
+
+def _is_partition_door(p: SolidPlacement) -> bool:
+    tags = set(getattr(p, "tags", ()) or ())
+    if "partition" not in tags:
+        return False
+    return "door" in tags or "door" in p.asset_id
+
 
 def _check_classroom_corridor_connectivity(assembly: Assembly) -> List[Failure]:
-    """Every CLASSROOM cell must reach a CORRIDOR via an interior door partition.
+    """Every CLASSROOM cell must reach a CORRIDOR via a door partition on the shared edge.
 
     Buildings without classrooms skip this check. Critical when classrooms exist.
     """
     failures: List[Failure] = []
-    door_cells: set = set()
+    door_faces: set[Tuple[int, int, int, str]] = set()
     for p in assembly.placements:
-        tags = set(getattr(p, "tags", ()) or ())
-        if "partition" not in tags:
+        if not _is_partition_door(p):
             continue
-        if "door" not in str(p.asset_id):
+        face = _partition_face_from_tags(p.tags)
+        if face is None:
             continue
-        door_cells.add((p.level, p.cell[0], p.cell[1]))
+        door_faces.add((p.level, p.cell[0], p.cell[1], face))
 
     for level, layer in sorted(assembly.floor_plan.items()):
         ox, oy = layer.origin_cell
         classrooms: List[Tuple[int, int]] = []
-        corridors: set = set()
+        corridors: set[Tuple[int, int]] = set()
         for ly in range(layer.height):
             for lx in range(layer.width):
                 role = layer.cells[ly][lx]
@@ -844,18 +876,40 @@ def _check_classroom_corridor_connectivity(assembly: Assembly) -> List[Failure]:
             )
             continue
         for cx, cy in classrooms:
-            touches = any(
-                (cx + dx, cy + dy) in corridors
+            corridor_neighbors = [
+                (cx + dx, cy + dy)
                 for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1))
-            )
-            has_door = (level, cx, cy) in door_cells
-            if not (touches and has_door):
+                if (cx + dx, cy + dy) in corridors
+            ]
+            if not corridor_neighbors:
                 failures.append(
                     Failure(
                         check="classroom_corridor",
                         message=(
                             f"classroom cell ({cx}, {cy}) level {level} "
-                            "has no door to a corridor"
+                            "does not adjoin a corridor"
+                        ),
+                        world_xyz=(
+                            cx * MODULE_CM + MODULE_CM * 0.5,
+                            cy * MODULE_CM + MODULE_CM * 0.5,
+                            float(level * STOREY_CM),
+                        ),
+                        critical=True,
+                    )
+                )
+                continue
+            has_door = any(
+                (level, cx, cy, face) in door_faces
+                for n in corridor_neighbors
+                if (face := _face_toward((cx, cy), n)) is not None
+            )
+            if not has_door:
+                failures.append(
+                    Failure(
+                        check="classroom_corridor",
+                        message=(
+                            f"classroom cell ({cx}, {cy}) level {level} "
+                            "has no door partition facing its corridor neighbor"
                         ),
                         world_xyz=(
                             cx * MODULE_CM + MODULE_CM * 0.5,

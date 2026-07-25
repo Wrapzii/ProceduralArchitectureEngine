@@ -557,10 +557,12 @@ code change.
 
 **M6 — Unreal round trip.** Manifest → instanced actors → terrain-bound → walkable in PIE.
 
-**M7 — School / academy.** Programmed massing (`school_academy_spec`), 2×2 switchback
-stairwells with fail-closed exit clearance, double-loaded corridor classrooms, style-driven
-facade walls, trim in the validate→trim pipeline, gallery `PAE_School` + school manifest
-dry-run. UE PIE remains a follow-on to M6.
+**M7 — School / academy.** Programmed massing (`school_academy_spec`) with fail-closed
+footprint / classroom program contract (`school_program`), 2×2 switchback stairwells with
+exit clearance, double-loaded corridor classrooms, style-driven facade walls. School export
+and gallery use **validate → trim → re-validate** (parity with campus path). Auto
+`stair_kind` is straight | switchback | wide; **spiral is rejected** (showcase kit only).
+Gallery `PAE_School` + school manifest dry-run. UE PIE remains a follow-on to M6.
 
 ---
 

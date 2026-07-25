@@ -26,6 +26,9 @@ _FORBIDDEN_KEY_RE = re.compile(
 
 _STYLES_DIR = Path(__file__).resolve().parent / "styles"
 
+# Auto-placed circulation kinds (spiral requires manual stair_cells + assemble support).
+SUPPORTED_STAIR_KINDS = frozenset({"straight", "switchback", "wide"})
+
 
 @dataclass
 class FootprintSpec:
@@ -53,7 +56,7 @@ class RoofSpec:
 
 @dataclass
 class CirculationSpec:
-    stair_kind: str = "straight"  # straight | spiral | switchback | wide
+    stair_kind: str = "straight"  # straight | switchback | wide (auto); spiral showcase-only
     stair_cells: List[Tuple[int, int]] = field(default_factory=list)
 
 
@@ -102,6 +105,34 @@ def _as_int_pair(value: Any, label: str) -> Tuple[int, int]:
     return (int(value[0]), int(value[1]))
 
 
+def _school_footprint_min_depth(fp_bays_x: int, fp_bays_y: int, wing_depth: int) -> int:
+    """Effective wing depth for school program (matches solver ``_place_school_academy``)."""
+    return max(
+        4,
+        min(wing_depth if wing_depth else 5, min(fp_bays_x, fp_bays_y) // 2 or 4),
+    )
+
+
+def _validate_school_footprint(
+    bays_x: int, bays_y: int, wing_depth: int
+) -> Optional[str]:
+    """Return error message when school cannot emit classroom_wing volumes."""
+    depth = _school_footprint_min_depth(bays_x, bays_y, wing_depth)
+    min_span = 2 * depth + 1
+    if bays_x < min_span or bays_y < min_span:
+        return (
+            f"school footprint too small for wing_depth={depth}: "
+            f"need bays_x and bays_y >= {min_span}, got {bays_x}x{bays_y}"
+        )
+    mid_h = bays_y - 2 * depth
+    if mid_h < 2:
+        return (
+            f"school footprint cannot fit classroom wings: "
+            f"mid_h={mid_h} < 2 (bays_y={bays_y}, depth={depth})"
+        )
+    return None
+
+
 def _parse_footprint(raw: dict) -> FootprintSpec:
     kind = str(raw.get("kind", "rect"))
     if kind not in ("rect", "L", "U", "courtyard", "compound", "school"):
@@ -112,6 +143,10 @@ def _parse_footprint(raw: dict) -> FootprintSpec:
         raise ValueError("bays_x and bays_y must be >= 1")
     wing_depth = int(raw.get("wing_depth", 2))
     courtyard = bool(raw.get("courtyard", kind == "courtyard"))
+    if kind == "school":
+        err = _validate_school_footprint(bays_x, bays_y, wing_depth)
+        if err:
+            raise ValueError(err)
     return FootprintSpec(
         kind=kind,
         bays_x=bays_x,
@@ -161,8 +196,14 @@ def _parse_circulation(raw: Any) -> CirculationSpec:
         raise ValueError("circulation must be an object")
     cells_raw = raw.get("stair_cells") or []
     cells = [_as_int_pair(c, "stair_cells") for c in cells_raw]
+    stair_kind = str(raw.get("stair_kind", "straight")).lower()
+    if stair_kind not in SUPPORTED_STAIR_KINDS:
+        supported = ", ".join(sorted(SUPPORTED_STAIR_KINDS))
+        raise ValueError(
+            f"unsupported stair_kind '{stair_kind}' — supported: {supported}"
+        )
     return CirculationSpec(
-        stair_kind=str(raw.get("stair_kind", "straight")),
+        stair_kind=stair_kind,
         stair_cells=cells,
     )
 

@@ -744,17 +744,31 @@ def _place_wall_run(
             )
 
 
+def _partition_aperture_cells(
+    face: str,
+    cell: Tuple[int, int],
+) -> Tuple[Tuple[int, int], Tuple[int, int]]:
+    """Classroom cell (interior) and corridor neighbor (exterior) for a partition door."""
+    cx, cy = cell
+    dx, dy = _FACE_DELTA[face.lower()]
+    return (cx, cy), (cx + dx, cy + dy)
+
+
 def _place_interior_partitions(
     *,
     fp: FloorPlan,
     catalog: _PieceCatalog,
+    style: StyleLike,
     placements: List[SolidPlacement],
+    apertures: List[Aperture],
     counters: Dict[str, int],
 ) -> None:
     """Place classroom↔corridor partition walls / doors from the plan carve."""
     for cx, cy, level, face, is_door in fp.interior_partitions:
         yaw = _YAW_FOR_VOID_FACE[face]
-        piece_def = catalog.get("wall_door" if is_door else "wall_plain")
+        piece_def = catalog.pick_wall(
+            is_door=is_door, is_window=False, style=style
+        )
         sx, sy, _ = piece_def.size_cm
         offset = rotation_offset_cm(
             yaw,
@@ -768,20 +782,42 @@ def _place_interior_partitions(
             (cx, cy),
             level,
         )
-        placements.append(
-            SolidPlacement(
-                piece_id=pid,
-                asset_id=piece_def.asset_id,
-                kind="wall",
-                cell=(cx, cy),
-                level=level,
-                yaw=yaw,
-                offset_cm=(offset[0], offset[1], 0.0),
-                size_cm=piece_def.size_cm,
-                rotates_about_center=piece_def.rotates_about_center,
-                tags=piece_def.tags | frozenset({"interior", "partition"}),
-            )
+        tags = piece_def.tags | frozenset(
+            {"interior", "partition", f"face_{face.lower()}"}
         )
+        if is_door:
+            tags = tags | frozenset({"door"})
+        sp = SolidPlacement(
+            piece_id=pid,
+            asset_id=piece_def.asset_id,
+            kind="wall",
+            cell=(cx, cy),
+            level=level,
+            yaw=yaw,
+            offset_cm=(offset[0], offset[1], 0.0),
+            size_cm=piece_def.size_cm,
+            rotates_about_center=piece_def.rotates_about_center,
+            tags=tags,
+        )
+        placements.append(sp)
+
+        if is_door:
+            interior, exterior = _partition_aperture_cells(face, (cx, cy))
+            floor_z = level * STOREY_CM
+            sill = _aperture_world(sp, "door")[2]
+            apertures.append(
+                Aperture(
+                    piece_id=f"door_{pid}",
+                    kind="door",
+                    wall_piece_id=pid,
+                    level=level,
+                    sill_z_cm=sill,
+                    floor_z_cm=floor_z,
+                    interior_cell=interior,
+                    exterior_cell=exterior,
+                    world_xyz=_aperture_world(sp, "door"),
+                )
+            )
 
 
 def _build_wall_runs(
@@ -856,6 +892,7 @@ def _place_stairs(
     catalog: _PieceCatalog,
     placements: List[SolidPlacement],
     counters: Dict[str, int],
+    failures: List[Failure],
 ) -> None:
     """Emit stair pieces per climbed storey (straight / switchback / wide)."""
     run_cells = list(fp.stair_cells)
@@ -900,6 +937,25 @@ def _place_stairs(
         # full 2×2 stairwell as STAIR before placing the kit mesh.
         check_cells = place_cells
         if not all(grid.get(*c) == CellRole.STAIR for c in check_cells):
+            if asset_id in ("stair_switchback", "stair_wide") and len(fp.storeys) > 1:
+                missing = [
+                    c for c in check_cells if grid.get(*c) != CellRole.STAIR
+                ]
+                failures.append(
+                    Failure(
+                        check="stair_well_cells",
+                        message=(
+                            f"{asset_id} requires 2×2 STAIR on level {level}; "
+                            f"missing or wrong role at {missing}"
+                        ),
+                        world_xyz=(
+                            anchor[0] * MODULE_CM + MODULE_CM * 0.5,
+                            anchor[1] * MODULE_CM + MODULE_CM * 0.5,
+                            float(level * STOREY_CM),
+                        ),
+                        critical=True,
+                    )
+                )
             continue
         pid = _next_piece_id(counters, "stair", anchor, level)
         placements.append(
@@ -1450,7 +1506,9 @@ def assemble(
     _place_interior_partitions(
         fp=floor_plan,
         catalog=catalog,
+        style=style,
         placements=placements,
+        apertures=apertures,
         counters=counters,
     )
 
@@ -1459,6 +1517,7 @@ def assemble(
         catalog=catalog,
         placements=placements,
         counters=counters,
+        failures=failures,
     )
 
     # Round towers: 4 arc quarters × same cell (§2.2 centred exception).

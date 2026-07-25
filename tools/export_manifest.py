@@ -3,6 +3,9 @@
 
 Supports milestones m1, m2, m3, m4_l, m4_u, m4_c, school. No Blender or Unreal
 Editor required. Fails closed when validation has critical defects.
+
+The school milestone uses ``run_through_validate_trim`` (assemble → validate →
+trim → re-validate), matching the gallery / campus pipeline path.
 """
 
 from __future__ import annotations
@@ -69,9 +72,24 @@ def milestone_from_manifest_path(path: Path) -> Optional[str]:
 
 
 def build_assembly(milestone: str):
-    """Run solve → plan → assemble for the given milestone."""
+    """Run solve → plan → assemble for the given milestone.
+
+    School uses ``run_through_validate_trim`` (gallery / campus path); other
+    milestones use bare assemble (``run_export`` validates before writing).
+    """
     factory = resolve_spec_factory(milestone)
     spec = factory()
+    if milestone == "school":
+        from pae.pipeline import run_through_validate_trim
+
+        _massing, _floor_plan, assembly, report = run_through_validate_trim(spec)
+        if not report.ok:
+            raise ValueError(
+                "school pipeline failed before export: "
+                + "; ".join(f.message for f in report.critical[:5])
+            )
+        return assembly
+
     massing, _ = solve(spec)
     floor_plan, _ = plan(massing)
     style, _ = load_style(spec.style)

@@ -90,8 +90,8 @@ class FloorPlan:
     roof_kind: str = "flat"
     roof_pitch: float = 1.0
     massing: Optional[Massing] = None
-    classroom_cells: List[Tuple[int, int]] = field(default_factory=list)
-    corridor_cells: List[Tuple[int, int]] = field(default_factory=list)
+    classroom_cells: List[Tuple[int, int, int]] = field(default_factory=list)
+    corridor_cells: List[Tuple[int, int, int]] = field(default_factory=list)
     # (cell_x, cell_y, level, face toward corridor, is_door)
     interior_partitions: List[Tuple[int, int, int, str, bool]] = field(
         default_factory=list
@@ -220,12 +220,15 @@ def _face_toward(
     return None
 
 
+_CARVE_STOREY_USES = frozenset({"classroom", "classrooms", "dormitory"})
+
+
 def _carve_double_loaded_wings(
     storeys: List[StoreyGrid],
     massing: Massing,
 ) -> Tuple[
-    List[Tuple[int, int]],
-    List[Tuple[int, int]],
+    List[Tuple[int, int, int]],
+    List[Tuple[int, int, int]],
     List[Tuple[int, int, int, str, bool]],
 ]:
     """Mark CORRIDOR / CLASSROOM in classroom wings; record interior door partitions.
@@ -234,15 +237,15 @@ def _carve_double_loaded_wings(
     remaining INTERIOR cells become CLASSROOM. Every classroom-corridor adjacency
     gets a partition; alternating adjacencies are doors.
     """
-    classroom_cells: List[Tuple[int, int]] = []
-    corridor_cells: List[Tuple[int, int]] = []
+    classroom_cells: List[Tuple[int, int, int]] = []
+    corridor_cells: List[Tuple[int, int, int]] = []
     partitions: List[Tuple[int, int, int, str, bool]] = []
     wings = [v for v in massing.volumes if v.role == "classroom_wing"]
     if not wings:
         return classroom_cells, corridor_cells, partitions
 
-    classroom_seen: Set[Tuple[int, int]] = set()
-    corridor_seen: Set[Tuple[int, int]] = set()
+    classroom_seen: Set[Tuple[int, int, int]] = set()
+    corridor_seen: Set[Tuple[int, int, int]] = set()
 
     for level, grid in enumerate(storeys):
         use = (
@@ -250,10 +253,8 @@ def _carve_double_loaded_wings(
             if level < len(massing.storey_use)
             else "hall"
         )
-        # Bias: carve whenever storey is classroom-oriented, or always for school wings.
-        if use not in ("classroom", "classrooms", "dormitory", "hall"):
-            # Still carve school wings — storey_use may say hall on ground.
-            pass
+        if use not in _CARVE_STOREY_USES:
+            continue
         for vol in wings:
             cells = [
                 (x, y)
@@ -282,9 +283,10 @@ def _carve_double_loaded_wings(
                 continue
             for c in sorted(corridor):
                 grid.set(c[0], c[1], CellRole.CORRIDOR)
-                if c not in corridor_seen:
-                    corridor_seen.add(c)
-                    corridor_cells.append(c)
+                key = (level, c[0], c[1])
+                if key not in corridor_seen:
+                    corridor_seen.add(key)
+                    corridor_cells.append(key)
             rooms = [c for c in cells if c not in corridor]
             for c in sorted(rooms):
                 touches_corridor = any(
@@ -300,9 +302,10 @@ def _carve_double_loaded_wings(
                     # Keep as INTERIOR (open hall bay) — not a room without a door.
                     continue
                 grid.set(c[0], c[1], CellRole.CLASSROOM)
-                if c not in classroom_seen:
-                    classroom_seen.add(c)
-                    classroom_cells.append(c)
+                key = (level, c[0], c[1])
+                if key not in classroom_seen:
+                    classroom_seen.add(key)
+                    classroom_cells.append(key)
                 door_placed = False
                 for nx, ny in (
                     (c[0] + 1, c[1]),
@@ -319,6 +322,34 @@ def _carve_double_loaded_wings(
                     door_placed = True
                     partitions.append((c[0], c[1], level, face, is_door))
     return classroom_cells, corridor_cells, partitions
+
+
+def _filter_stair_void_blocked(
+    storeys: List[StoreyGrid],
+    classroom_cells: List[Tuple[int, int, int]],
+    corridor_cells: List[Tuple[int, int, int]],
+    partitions: List[Tuple[int, int, int, str, bool]],
+) -> Tuple[
+    List[Tuple[int, int, int]],
+    List[Tuple[int, int, int]],
+    List[Tuple[int, int, int, str, bool]],
+]:
+    """Drop classroom/corridor/partition entries on cells marked STAIR or VOID."""
+    blocked = frozenset({CellRole.STAIR, CellRole.VOID})
+
+    def is_blocked(level: int, x: int, y: int) -> bool:
+        if level < 0 or level >= len(storeys):
+            return True
+        return storeys[level].get(x, y) in blocked
+
+    classrooms = [
+        c for c in classroom_cells if not is_blocked(c[0], c[1], c[2])
+    ]
+    corridors = [c for c in corridor_cells if not is_blocked(c[0], c[1], c[2])]
+    parts = [
+        p for p in partitions if not is_blocked(p[2], p[0], p[1])
+    ]
+    return classrooms, corridors, parts
 
 
 def _apply_stairs(
@@ -518,6 +549,10 @@ def plan(massing: Massing) -> Tuple[Optional[FloorPlan], Report]:
 
     failures.extend(_apply_stairs(storeys, massing, interior_by_level))
 
+    classroom_cells, corridor_cells, interior_partitions = _filter_stair_void_blocked(
+        storeys, classroom_cells, corridor_cells, interior_partitions
+    )
+
     graph, circ_failures = _build_circulation(massing, interior_by_level, storeys)
     failures.extend(circ_failures)
 
@@ -534,6 +569,18 @@ def plan(massing: Massing) -> Tuple[Optional[FloorPlan], Report]:
                         world_xyz=cell_to_world_cm(x, y, grid.level),
                     )
                 )
+
+    is_school = massing.name == "school_academy" or any(
+        v.role == "classroom_wing" for v in massing.volumes
+    )
+    if is_school and not classroom_cells:
+        failures.append(
+            Failure(
+                check="school_program",
+                message="school plan produced no classroom cells after carve",
+                world_xyz=None,
+            )
+        )
 
     if failures:
         return None, Report.from_failures(failures)

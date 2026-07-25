@@ -25,6 +25,17 @@ classrooms, UE walkable).
 | 4 Facade + trim | Done | Style tags → `wall_window_lancet` / gothic doors; `run_through_validate_trim` |
 | 5 Campus proof | Done | Gallery `PAE_School`, export milestone `school`, headless dry-run |
 
+## Export / validation parity
+
+School manifest export uses the same path as gallery: **assemble → validate → trim →
+re-validate** (`run_through_validate_trim`). Bare assemble is not exported for school.
+
+## Program contract (fail-closed)
+
+Undersized or invalid school footprints fail at **load** (`spec_parse`) and **solve**
+(`school_program`) — e.g. bays too small for hall + wings + courtyard program. No silent
+fallback to a generic rect footprint.
+
 ## Stair kit
 
 | Asset | Role |
@@ -33,7 +44,10 @@ classrooms, UE walkable).
 | `stair_half` + `stair_landing` | Compose dog-legs |
 | `stair_switchback` | Classic school stairwell (2×2 U) — **default for academy** |
 | `stair_wide` | Monumental entrance (2×2) |
-| `stair_spiral_quarter` | Helical tower stair (showcase / kit) |
+| `stair_spiral_quarter` | Helical tower stair (showcase / kit only — **not** auto-placed) |
+
+Auto `stair_kind` values: **straight**, **switchback**, **wide** only. **`spiral` is
+rejected** at spec load and solve until manual placement is implemented.
 
 Fail-closed: `stair_exit_clearance` refuses ceiling/wall-plugged tops.
 
