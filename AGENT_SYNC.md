@@ -120,3 +120,6 @@ Project root: `C:\Users\WhiteWidow\Documents\GitHub\ProceduralArchitectureEngine
 >>> DONE @RENDER_COLOR - Workbench gallery PNGs: configure_workbench_screenshot_scene (SOLID/STUDIO/MATERIAL + view_transform=Standard); apply_material_base_color sets Principled Base Color + mat.diffuse_color; write_screenshot uses helper. Tests: test_configure_workbench_screenshot_scene_*, test_apply_material_base_color_*.
 >>> TRIGGER @STAIR_CAM ? Perpendicular stair proof camera (not along tread run); Workbench MATERIAL proof colors.
 >>> DONE @STAIR_CAM ? stair_proof_camera_direction_from_bounds_m (longer X ? offset Y, longer Y ? offset X, elevated); stair_proof_ortho_scale_from_bounds_m tight on visible face; GALLERY_SUN_ENERGY 4.5; write_screenshot uses configure_workbench_screenshot_scene MATERIAL. Tests: test_stair_proof_camera_offset_* + test_m2_stair_proof_camera_perpendicular_to_y_run.
+
+2026-07-24 — Stair exit clearance (fail-closed).
+>>> DONE @STAIR_EXIT — validate stair_exit_clearance: missing floor_hole / solid pad / wall|roof in head clearance = critical. Spanning upper deck mesh punches VOID holes (slab_with_rect_holes). Open-stair tops use floor_hole rim + deck tiles (no solid plug). Proof: Saved/Screenshots/open_stair_roof_hole_proof.png + m2_stair_proof.png. Tests: test_stair_exit_clearance.py; suite stair-related green.
