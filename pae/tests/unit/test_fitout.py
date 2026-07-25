@@ -19,7 +19,7 @@ from pae.fitout import (
 from pae.pipeline import run_through_validate_trim
 from pae.plan import CellRole
 from pae.spec import m1_box_house_spec, school_academy_spec
-from pae.validate import validate
+from pae.validate import _cell_role_is, validate
 
 
 def _school_assembled():
@@ -40,13 +40,17 @@ def test_fitout_candidates_are_classroom_or_great_hall_only():
     for level, cell in candidates:
         assert is_fitout_cell(layers, level, cell, hall_declared=hall_declared)
         role = layers[level].role_at(cell[0], cell[1])
-        assert role in (CellRole.CLASSROOM, CellRole.INTERIOR)
-        if role == CellRole.INTERIOR:
+        assert _cell_role_is(role, CellRole.CLASSROOM) or _cell_role_is(
+            role, CellRole.INTERIOR
+        )
+        if _cell_role_is(role, CellRole.INTERIOR):
             assert level == 0, "great_hall cells are ground-floor INTERIOR only"
     corridor_hits = [
         c
         for c in candidates
-        if layers[c[0]].role_at(c[1][0], c[1][1]) == CellRole.CORRIDOR
+        if _cell_role_is(
+            layers[c[0]].role_at(c[1][0], c[1][1]), CellRole.CORRIDOR
+        )
     ]
     assert not corridor_hits
 
@@ -104,7 +108,7 @@ def test_fitout_prop_in_corridor_fails_containment():
         ox, oy = layer.origin_cell
         for ly in range(layer.height):
             for lx in range(layer.width):
-                if layer.cells[ly][lx] == CellRole.CORRIDOR:
+                if _cell_role_is(layer.cells[ly][lx], CellRole.CORRIDOR):
                     corridor_cell = (level, (ox + lx, oy + ly))
                     break
             if corridor_cell:

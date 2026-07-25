@@ -262,10 +262,17 @@ def test_stair_proof_bounds_cm_includes_stair_and_holes():
     from pae.spec import m2_two_storey_stair_spec
 
     _, _, assembly, _ = run_through_assemble(m2_two_storey_stair_spec())
+    from pae.trim import covered_cells
+
     proof = [p for p in assembly.placements if is_stair_proof_placement(p)]
-    assert len(proof) == 3  # 1 stair + 2 floor_hole
     assert any(p.asset_id == "stair_straight" or p.kind == "stair" for p in proof)
-    assert sum(1 for p in proof if p.asset_id == "floor_hole") == 2
+    # The well is OPEN over both void bays. Counting pieces asserted the emitter's
+    # packing instead: the well is now one 1x2 rectangle, not two squares.
+    open_cells: set = set()
+    for p in proof:
+        if p.asset_id == "floor_hole":
+            open_cells |= covered_cells(p)
+    assert len(open_cells) == 2
 
     bb_min, bb_max = stair_proof_bounds_cm(assembly)
     assert bb_max[0] > bb_min[0]
@@ -354,7 +361,9 @@ def test_build_m2_stair_proof_headless():
     result = build_m2_stair_proof(write_png=False)
     assert result["ok"] is True
     assert result["mode"] == "stair_proof"
-    assert result["stair_proof_placements"] == 3
+    # 1 stair + 1 spanning floor_hole. Was 3 when the well was punched one square per
+    # cell; the well is now a single 1x2 rectangle covering the same two bays.
+    assert result["stair_proof_placements"] == 2
     assert result["camera_pose"]["ortho"] is True
     if not HAS_BPY:
         assert result["blender"] is False
