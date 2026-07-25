@@ -36,10 +36,12 @@ _PILASTER_W_FRAC = 0.22  # of MODULE
 # Projection, of MODULE. Was 0.85 — a 3.4 m lump sticking out of the wall, nearly as
 # deep as it was tall, which read as an unidentifiable block rather than as masonry.
 # User: "the buttresses or whatever ... I don't even know what they are."
-_BUTTRESS_D_FRAC = 0.28  # projection, of MODULE
-_BUTTRESS_W_FRAC = 0.30  # of MODULE
-_BUTTRESS_BATTER = 0.45  # top depth / bottom depth — sloped weathering
-_BUTTRESS_STEPS = 4
+_BUTTRESS_D_FRAC = 0.16  # projection, of MODULE  (64 cm — about its own width)
+_BUTTRESS_W_FRAC = 0.17  # of MODULE               (68 cm)
+_BUTTRESS_BATTER = 0.62  # top depth / bottom depth — sloped weathering
+# Two set-offs, not four. Four coarse steps over one storey made a zigzag stack of
+# blocks rather than a batter; stacked up three storeys that read as twelve blocks.
+_BUTTRESS_STEPS = 2
 _ARCH_PIER_FRAC = 0.16  # of MODULE, each side of a free-standing arch
 _ARCH_SPRING_FRAC = 0.55  # of STOREY
 _ARCH_BANDS = 12

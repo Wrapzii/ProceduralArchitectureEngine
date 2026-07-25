@@ -335,7 +335,18 @@ def _buttresses(assembly: Assembly, opts: TrimOptions) -> List[SolidPlacement]:
     if assembly.storeys < BUTTRESS_MIN_STOREYS:
         return out
 
-    walls = [p for p in _by_kind(assembly, "wall") if p.level == 0]
+    # A round tower has no flat face to brace and no thrust to take: buttressing a drum
+    # plants piers inside the tower and across its door. User: "there's buttresses inside
+    # of the spire." Exclude every cell the drum occupies, at any level.
+    drum_cells: Set[Cell] = set()
+    for p in assembly.placements:
+        if p.kind in ("tower_arc", "tower_cap") or "tower_arc" in p.asset_id:
+            drum_cells |= covered_cells(p)
+
+    walls = [
+        p for p in _by_kind(assembly, "wall")
+        if p.level == 0 and not (covered_cells(p) & drum_cells)
+    ]
     if not walls:
         return out
 
@@ -377,7 +388,9 @@ def _buttresses(assembly: Assembly, opts: TrimOptions) -> List[SolidPlacement]:
             dx, dy = _NEIGHBOURS[f]
             if (cell[0] + dx, cell[1] + dy) in interior:
                 continue  # that face looks inward — bracing there would be in a room
-            yaw, off = outward_offset_cm(f, depth)
+            if (cell[0] + dx, cell[1] + dy) in drum_cells:
+                continue  # projecting into the tower drum
+            yaw, off = _pier_pose(f, depth)
             trial = _placement(
                 opts.buttress_piece, cell, 0, yaw=yaw, offset_cm=off, suffix=f,
             )
@@ -405,6 +418,36 @@ def _buttresses(assembly: Assembly, opts: TrimOptions) -> List[SolidPlacement]:
                 )
             )
     return out
+
+
+#: Which yaw puts a piece's local +X face against the wall on each face. A buttress
+#: mates to the wall with its BACK (``buttress()``'s socket sits at ``pos_cm=(depth,..)``
+#: with normal ``+X``), so it needs the OPPOSITE yaw to ``FACE_OUTWARD_YAW`` — that table
+#: is for pieces whose +X points away. Getting this backwards mounted every buttress with
+#: its battered face buried in the masonry and its flat back to the street, which is why
+#: they read as blocks that "aren't even facing the buildings".
+_PIER_BACK_YAW = {"west": 0, "east": 180, "south": 90, "north": 270}
+
+
+def _pier_pose(
+    face: str,
+    size_cm: Tuple[float, float, float],
+) -> Tuple[int, Tuple[float, float, float]]:
+    """Yaw + offset for a pier that BEARS on ``face`` with its back and projects out.
+
+    Takes the target footprint from :func:`outward_offset_cm` — which gets the position
+    right — then re-solves the offset for the yaw that actually points the piece's back
+    at the wall, so the piece lands in the same slot the right way round.
+    """
+    ref_yaw, ref_off = outward_offset_cm(face, size_cm)
+    want_min, _ = placement_world_aabb(0, 0, 0, ref_yaw, size_cm, ref_off)
+    yaw = _PIER_BACK_YAW[face]
+    got_min, _ = placement_world_aabb(0, 0, 0, yaw, size_cm, (0.0, 0.0, 0.0))
+    return yaw, (
+        want_min[0] - got_min[0],
+        want_min[1] - got_min[1],
+        0.0,
+    )
 
 
 def _buttress_is_sound(
