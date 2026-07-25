@@ -180,6 +180,61 @@ def test_m1_north_and_east_tuck_under_footprint_roof():
     assert n_min[1] < roof_max[1]
 
 
+def test_m1_outer_wall_faces_flush_roof_footprint():
+    """Outer wall AABB edges must match roof XY footprint within TOL (all four faces)."""
+    assembly, _ = _m1_assembly()
+    roof = next(p for p in assembly.placements if p.kind == "roof")
+    roof_min, roof_max = placement_world_aabb(
+        roof.cell[0], roof.cell[1], roof.level, roof.yaw, roof.size_cm, roof.offset_cm
+    )
+
+    def _aabb(p):
+        return placement_world_aabb(
+            p.cell[0], p.cell[1], p.level, p.yaw, p.size_cm, p.offset_cm
+        )
+
+    tol = 1.0
+    west_x = min(_aabb(p)[0][0] for p in assembly.placements if p.kind == "wall" and p.yaw == 0)
+    east_x = max(_aabb(p)[1][0] for p in assembly.placements if p.kind == "wall" and p.yaw == 180)
+    south_y = min(_aabb(p)[0][1] for p in assembly.placements if p.kind == "wall" and p.yaw == 270)
+    north_y = max(_aabb(p)[1][1] for p in assembly.placements if p.kind == "wall" and p.yaw == 90)
+
+    assert abs(west_x - roof_min[0]) < tol
+    assert abs(east_x - roof_max[0]) < tol
+    assert abs(south_y - roof_min[1]) < tol
+    assert abs(north_y - roof_max[1]) < tol
+
+
+def test_m1_corner_door_south_only_not_west():
+    """SW corner door must not boolean-cut both west and south (L-shaped hole)."""
+    assembly, _ = _m1_assembly()
+    sw = [p for p in assembly.placements if p.kind == "wall" and p.cell == (0, 0)]
+    by_yaw = {p.yaw: p.asset_id for p in sw}
+    assert by_yaw[270] == "wall_door"
+    assert by_yaw[0] == "wall_plain"
+
+
+def test_m1_window_on_west_not_north_corner():
+    """NW window cell (0,2) must not open on the north run at (0,3)."""
+    assembly, _ = _m1_assembly()
+    north_sw = next(p for p in assembly.placements if p.kind == "wall" and p.cell == (0, 3))
+    assert north_sw.asset_id == "wall_plain"
+    west_nw = next(p for p in assembly.placements if p.kind == "wall" and p.cell == (0, 2))
+    assert west_nw.asset_id == "wall_window"
+
+
+def test_m1_door_aperture_width_sane():
+    """Door opening ~1–1.6 m wide in a 4 m bay — not half the wall missing."""
+    from pae.primitives.catalog import get as get_prim
+
+    door = get_prim("wall_door")
+    ap = door.aperture
+    assert ap is not None
+    width_cm = ap.max_cm[1] - ap.min_cm[1]
+    assert 100.0 <= width_cm <= 170.0
+    assert width_cm <= MODULE_CM * 0.45
+
+
 def test_boundary_wall_corner_overlap_closes_perimeter():
     """SW corner is on both west and south runs (overlap) so no bay gap."""
     cells = _boundary_wall_cells(0, 0, 3, 2)
@@ -247,11 +302,14 @@ def test_pitched_roof_emits_gable_pieces():
     rise = roof_rise_cm(pitch, 3 * MODULE_CM)
     assert gables[0].size_cm[2] == pytest.approx(rise + FLOOR_T_CM)
     assert gables[0].size_cm[0] == MODULE_CM
-    assert gables[0].size_cm[1] == MODULE_CM
-    # 4×3 footprint: ridge along X → 2 gable rows × 4 cols = 8 gables, 1 interior slope row.
-    assert len(gables) == 8
-    assert len(slopes) == 1
+    assert gables[0].size_cm[1] == 3 * MODULE_CM
+    # 4×3 footprint: ridge along X → 2 gable end caps (span full Y), 3 slope rows.
+    assert len(gables) == 2
+    assert len(slopes) == 3
     assert slopes[0].size_cm[0] == 4 * MODULE_CM
+    gable_x = {p.cell[0] for p in gables}
+    assert gable_x == {0, 3}
+
 
 def test_m3_pitched_validate_passes():
     """M3 pitched-only spec must validate with no critical defects."""
@@ -278,6 +336,7 @@ def test_m3_pitched_validate_passes():
     assert report.critical == []
 
 
+def test_m3_tower_arcs_same_cell():
     """M3 — 4× tower_arc_quarter share one cell; rotates_about_center; XY offset 0.
 
     Historical bug: quarters offset to four cells → no curved wall.

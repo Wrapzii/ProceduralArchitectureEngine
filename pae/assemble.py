@@ -369,12 +369,57 @@ def _next_piece_id(
     return key if n == 1 else f"{key}_{n}"
 
 
+_OPENING_FACE_PRIORITY: Dict[str, Tuple[str, ...]] = {
+    # Plan places ground doors on the south run first (§plan._place_doors_windows).
+    "door": ("south", "north", "east", "west"),
+    # Windows on west/east wall-line cells must not bleed onto north/south corners.
+    "window": ("west", "east", "south", "north"),
+}
+
+
+def _perimeter_faces_for_footprint_cell(
+    cx: int,
+    cy: int,
+    bbox: Tuple[int, int, int, int],
+) -> Tuple[str, ...]:
+    """Exterior faces owned by a footprint wall-line cell (1 or 2 at corners)."""
+    x0, y0, x1, y1 = bbox
+    faces: List[str] = []
+    if cx == x0:
+        faces.append("west")
+    if cx == x1:
+        faces.append("east")
+    if cy == y0:
+        faces.append("south")
+    if cy == y1:
+        faces.append("north")
+    return tuple(faces)
+
+
+def _primary_opening_face(
+    cell: Tuple[int, int],
+    bbox: Tuple[int, int, int, int],
+    kind: str,
+) -> Optional[str]:
+    """Single perimeter face that carries a door/window on *cell* (corner-safe)."""
+    faces = _perimeter_faces_for_footprint_cell(cell[0], cell[1], bbox)
+    if not faces:
+        return None
+    if len(faces) == 1:
+        return faces[0]
+    for face in _OPENING_FACE_PRIORITY[kind]:
+        if face in faces:
+            return face
+    return faces[0]
+
+
 def _wall_asset_for_cell(
     fp: FloorPlan,
     cell: Tuple[int, int],
     face: str,
     catalog: _PieceCatalog,
     style: StyleLike,
+    bbox: Tuple[int, int, int, int],
 ) -> _ResolvedPiece:
     """Pick wall kit piece; map boundary-line cells back to footprint for openings."""
     x, y = cell
@@ -390,6 +435,14 @@ def _wall_asset_for_cell(
         grid.get(probe[0], probe[1]) == CellRole.DOOR for grid in fp.storeys
     )
     is_window = probe in fp.window_cells
+    if is_door:
+        primary = _primary_opening_face(probe, bbox, "door")
+        if primary is not None and face != primary:
+            is_door = False
+    if is_window:
+        primary = _primary_opening_face(probe, bbox, "window")
+        if primary is not None and face != primary:
+            is_window = False
     return catalog.pick_wall(is_door=is_door, is_window=is_window, style=style)
 
 
@@ -540,6 +593,7 @@ def _place_wall_run(
     fp: FloorPlan,
     catalog: _PieceCatalog,
     style: StyleLike,
+    bbox: Tuple[int, int, int, int],
     placements: List[SolidPlacement],
     apertures: List[Aperture],
     piece_ids: List[str],
@@ -549,7 +603,7 @@ def _place_wall_run(
     yaw = yaw_by_face[face]
     for cell in cells:
 
-        piece_def = _wall_asset_for_cell(fp, cell, face, catalog, style)
+        piece_def = _wall_asset_for_cell(fp, cell, face, catalog, style, bbox)
         offset = _boundary_wall_offset_cm(face, yaw, piece_def)
         pid = _next_piece_id(counters, f"wall_{face}", cell, level)
         sp = SolidPlacement(
@@ -756,11 +810,14 @@ def _place_pitched_roof(
     placements: List[SolidPlacement],
     counters: Dict[str, int],
 ) -> None:
-    """Place per-bay slope decks plus gable-end infill prisms (§6 pitched roof).
+    """Place slope decks plus gable-end infill prisms (§6 pitched roof).
 
-    Prior failure: walls stopped at the eaves and nothing filled the gable
-    triangle → 8 m holes. Gable rows/columns get ``roof_gable_infill``; interior
-    bays get ``roof_pitched_slope`` with pitch-scaled height.
+    Ridge along X (``modules_x >= modules_y``): gable infill only at the two
+    ridge ends (``x=rx0`` and ``x=rx1``), spanning full Y; slope wedges run
+  every Y row across full X.  Mirror when the ridge runs along Y.
+
+    Prior failure: gables on every eave bay → sawtooth silhouette.  Earlier
+    failure: no gable fill above eaves → open holes.
 
     Tower cells are excluded from the roof footprint — tower uses crown/cap.
     """
@@ -787,25 +844,25 @@ def _place_pitched_roof(
         span_modules = modules_y
         full_rise = roof_rise_cm(pitch, span_modules * MODULE_CM)
         gable_height = full_rise + FLOOR_T_CM
+        span_y = modules_y * MODULE_CM
         span_x = modules_x * MODULE_CM
-        for x in range(rx0, rx1 + 1):
-            for y in (ry0, ry1):
-                pid = _next_piece_id(counters, "roof_gable", (x, y), level)
-                placements.append(
-                    SolidPlacement(
-                        piece_id=pid,
-                        asset_id=gable_piece.asset_id,
-                        kind="roof",
-                        cell=(x, y),
-                        level=level,
-                        yaw=0,
-                        offset_cm=(0.0, 0.0, roof_z),
-                        size_cm=(MODULE_CM, MODULE_CM, gable_height),
-                        rotates_about_center=gable_piece.rotates_about_center,
-                        tags=gable_piece.tags,
-                    )
+        for x in (rx0, rx1):
+            pid = _next_piece_id(counters, "roof_gable", (x, ry0), level)
+            placements.append(
+                SolidPlacement(
+                    piece_id=pid,
+                    asset_id=gable_piece.asset_id,
+                    kind="roof",
+                    cell=(x, ry0),
+                    level=level,
+                    yaw=0,
+                    offset_cm=(0.0, 0.0, roof_z),
+                    size_cm=(MODULE_CM, span_y, gable_height),
+                    rotates_about_center=gable_piece.rotates_about_center,
+                    tags=gable_piece.tags,
                 )
-        for y in range(ry0 + 1, ry1):
+            )
+        for y in range(ry0, ry1 + 1):
             local_rise = local_slope_rise_cm(
                 pitch=pitch,
                 cell_index=y,
@@ -834,25 +891,25 @@ def _place_pitched_roof(
         span_modules = modules_x
         full_rise = roof_rise_cm(pitch, span_modules * MODULE_CM)
         gable_height = full_rise + FLOOR_T_CM
+        span_x = modules_x * MODULE_CM
         span_y = modules_y * MODULE_CM
-        for y in range(ry0, ry1 + 1):
-            for x in (rx0, rx1):
-                pid = _next_piece_id(counters, "roof_gable", (x, y), level)
-                placements.append(
-                    SolidPlacement(
-                        piece_id=pid,
-                        asset_id=gable_piece.asset_id,
-                        kind="roof",
-                        cell=(x, y),
-                        level=level,
-                        yaw=0,
-                        offset_cm=(0.0, 0.0, roof_z),
-                        size_cm=(MODULE_CM, MODULE_CM, gable_height),
-                        rotates_about_center=gable_piece.rotates_about_center,
-                        tags=gable_piece.tags,
-                    )
+        for y in (ry0, ry1):
+            pid = _next_piece_id(counters, "roof_gable", (rx0, y), level)
+            placements.append(
+                SolidPlacement(
+                    piece_id=pid,
+                    asset_id=gable_piece.asset_id,
+                    kind="roof",
+                    cell=(rx0, y),
+                    level=level,
+                    yaw=0,
+                    offset_cm=(0.0, 0.0, roof_z),
+                    size_cm=(span_x, MODULE_CM, gable_height),
+                    rotates_about_center=gable_piece.rotates_about_center,
+                    tags=gable_piece.tags,
                 )
-        for x in range(rx0 + 1, rx1):
+            )
+        for x in range(rx0, rx1 + 1):
             local_rise = local_slope_rise_cm(
                 pitch=pitch,
                 cell_index=x,
@@ -999,6 +1056,7 @@ def assemble(
                 fp=floor_plan,
                 catalog=catalog,
                 style=style,
+                bbox=(x0, y0, x1, y1),
                 placements=placements,
                 apertures=apertures,
                 piece_ids=run_piece_ids[face],

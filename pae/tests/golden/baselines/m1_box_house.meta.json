@@ -3,7 +3,7 @@
   "seed": 1,
   "asset_db_version": "0",
   "n_placements": 39,
-  "placement_hash": "cc9d6d41e667b73fe34fc16eec99b75820c491b952fc3e5ded6b42d6323dab04",
+  "placement_hash": "0d9c668f886d4e966b53f54a26e70c5088dc044f84bff387d5d82a198b0cbc8f",
   "stub_png": {
     "path": "pae/tests/golden/baselines/box_house_m1_Cam_Front.png",
     "width": 64,

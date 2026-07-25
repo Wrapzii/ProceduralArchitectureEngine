@@ -143,6 +143,34 @@ def assembly_footprint_extent_m(assembly) -> Tuple[float, float, float]:
     )
 
 
+def placement_instance_scale_cm(p) -> Tuple[float, float, float]:
+    """Per-axis scale from catalog prototype ``size_cm`` to placement ``size_cm``.
+
+    Spanning pieces (``roof_flat``, upper-storey floor decks) assemble with
+    XY larger than the 1×1 catalog mesh; instances must non-uniformly scale or
+    the roof reads as a recessed 4 m slab on a 16×12 m box.
+    """
+    from pae.primitives.catalog import catalog_by_id
+
+    cat = catalog_by_id()
+    desc = cat.get(p.asset_id)
+    if desc is None:
+        base = tuple(p.size_cm)
+    else:
+        base = desc.size_cm
+
+    def _ratio(placed: float, proto: float) -> float:
+        if proto <= 0.0:
+            return 1.0
+        return placed / proto
+
+    return (
+        _ratio(p.size_cm[0], base[0]),
+        _ratio(p.size_cm[1], base[1]),
+        _ratio(p.size_cm[2], base[2]),
+    )
+
+
 def assembly_world_bounds_m(
     assembly,
     offset_m: Tuple[float, float, float] = (0.0, 0.0, 0.0),
@@ -524,7 +552,8 @@ def instance_assembly(
         inst.hide_set(False)
         inst.hide_render = False
         inst.location = Vector(loc_m)
-        inst.scale = (CM_TO_M, CM_TO_M, CM_TO_M)
+        sx, sy, sz = placement_instance_scale_cm(p)
+        inst.scale = (sx * CM_TO_M, sy * CM_TO_M, sz * CM_TO_M)
         inst.rotation_euler = (0.0, 0.0, math.radians(float(p.yaw)))
         mat = _ensure_material(getattr(p, "kind", "wall"))
         if len(inst.data.materials) == 0:

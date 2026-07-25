@@ -69,3 +69,5 @@ Project root: `C:\Users\WhiteWidow\Documents\GitHub\ProceduralArchitectureEngine
 >>> DONE @GALLERY_FRAME — depsgraph update before bounds; hide sibling collections per-milestone; fixed tiny/empty PNGs.
 
 >>> DONE @TOWER_VISUAL — Real tower meshes: `annulus_quarter_verts` axis snap + 96-seg seams; `annulus_battlement_ring_verts` centred crown; `cone_verts` centred cap (removed proto `obj.location` hack lost on instance). `test_tower_mesh.py` (vert counts, seam continuity, AABB, crown/cap Z stack). Assemble stacking unchanged (crown_z=STOREY_CM on top level correct). Suite: +6 tower tests; 250 passed / 3 pre-existing fails (m1 golden hash, pitched roof floater).
+
+>>> DONE @M1_VISUAL - Corner opening ownership (_primary_opening_face): SW door south-only, NW window west-only. placement_instance_scale_cm non-uniform XY for spanning roof_flat (fixes recessed roof ledge). Measured wall/roof outer flush delta=0 cm all faces. Tests + golden hash updated.
