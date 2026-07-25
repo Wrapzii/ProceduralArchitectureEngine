@@ -254,8 +254,8 @@ and saying "the walls are sticking through the roof."
 levels, jettied upper floors overhanging the street, external stone stairs climbing to
 first-floor doors, ground-floor undercrofts opening onto the lower path.
 
-**Status: recorded, not scheduled. This phase blocks nothing and nobody is assigned to
-it.** It is written down so the capability is not lost.
+**Status: started (@RM_PHASE9).** Ground model (T-001..T-006) and jetties remain
+unscheduled. First verified slice is validation-first upper-storey entrances (below).
 
 It does change an assumption baked into the engine — everything today sits at z = 0 on flat
 ground — so the three facts below are what any future lane would start from. They are
@@ -287,9 +287,9 @@ or gallery reaching it. The feature and its access must land together.
 
 | # | Objective | Check owed |
 |---|---|---|
-| T-007 | `EntranceSpec` role `upper_exterior` — a door on storey N opening to outside air | must be paired with T-008 or T-009; `aperture_reachability` enforces it |
+| ~~T-007~~ | ~~`EntranceSpec` role `upper_exterior` — a door on storey N opening to outside air~~ | **DONE (partial @RM_PHASE9)** — role + `storey` field + parse defaults; must pair with landing; `aperture_reachability` + `upper_entrance_landing` enforce. Assemble placement of upper doors still future. |
 | T-008 | **External stair run** climbing a full storey against a facade, with landing | landing cell clear at both ends (`stair_landing_clearance`); railed on the open side |
-| T-009 | External **landing / porch platform** at storey height, reached by a stair | support; railed; door opens onto it |
+| ~~T-009~~ | ~~External **landing / porch platform** at storey height, reached by a stair~~ | **DONE (partial @RM_PHASE9)** — `make_upper_landing` greybox + critical `upper_entrance_landing`; shared helper with `aperture_reachability`. Stair climb to landing still T-008. |
 | T-010 | Stair may be perpendicular OR parallel to the facade it serves | no clash with openings on that facade **[V]** |
 | T-011 | Stairs shared between two buildings (one flight, two doors) | both doors reachable from the same landing |
 | T-012 | Ground-level door AND upper door on the same facade, vertically offset | aperture alignment; stair does not block the lower door **[V]** |

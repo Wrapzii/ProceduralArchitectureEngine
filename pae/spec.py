@@ -47,6 +47,7 @@ ENTRANCE_ROLES = frozenset(
         "gate",
         "balcony",
         "internal",
+        "upper_exterior",  # Phase 9.2 — door on storey N opening to outside air
     }
 )
 ENTRANCE_FACADES = frozenset({"south", "north", "east", "west"})
@@ -90,12 +91,12 @@ class OpeningPolicy:
     skip_ground_windows: bool = False
 
 
-EntranceRole = str  # grand | main | side | service | postern | gate | balcony | internal
+EntranceRole = str  # grand | main | side | service | postern | gate | balcony | internal | upper_exterior
 
 
 @dataclass
 class EntranceSpec:
-    """Declarative ground entrance — role drives piece choice; facade/bay place it.
+    """Declarative entrance — role drives piece choice; facade/bay place it.
 
     Every declared entrance is a *passage breach*: assemble must place a door or
     gate leaf (never a bare hole). Enforced by ``no_bare_aperture`` (roadmap §1.5).
@@ -103,12 +104,17 @@ class EntranceSpec:
     When ``ensemble`` is True (Phase 1.3), assemble expands the entrance into a
     greybox composition: arch leaf + exterior steps + flanking columns, and twin
     interior stairs when the building has ≥2 storeys and free interior cells.
+
+    Phase 9.2: ``role="upper_exterior"`` with ``storey >= 1`` declares a door that
+    opens to outside air. It must pair with an exterior landing
+    (``upper_entrance_landing`` / ``aperture_reachability``).
     """
 
     role: EntranceRole
     facade: Optional[str] = None  # south | north | east | west
     bay: Optional[int] = None  # 0-based index along the facade run
     ensemble: bool = False
+    storey: int = 0  # 0 = ground; upper_exterior requires >= 1
 
 
 @dataclass
@@ -334,8 +340,25 @@ def _parse_entrances(raw: Any) -> List[EntranceSpec]:
         if bay is not None and bay < 0:
             raise ValueError(f"entrances[{i}].bay must be >= 0")
         ensemble = bool(item.get("ensemble", False))
+        storey_raw = item.get("storey", 0)
+        storey = int(storey_raw)
+        if storey < 0:
+            raise ValueError(f"entrances[{i}].storey must be >= 0")
+        if role == "upper_exterior":
+            if "storey" not in item:
+                storey = 1
+            elif storey < 1:
+                raise ValueError(
+                    f"entrances[{i}].storey must be >= 1 for role upper_exterior"
+                )
         out.append(
-            EntranceSpec(role=role, facade=facade, bay=bay, ensemble=ensemble)
+            EntranceSpec(
+                role=role,
+                facade=facade,
+                bay=bay,
+                ensemble=ensemble,
+                storey=storey,
+            )
         )
     return out
 

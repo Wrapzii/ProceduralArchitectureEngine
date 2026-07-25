@@ -191,6 +191,8 @@ def _door_asset_for_role(role: Optional[str], style: StyleLike) -> str:
         return "wall_door"
     if role == "balcony":
         return "wall_door"
+    if role == "upper_exterior":
+        return "wall_door"
     if role == "internal":
         return "wall_door_plain"
     return _style_door_asset(style)

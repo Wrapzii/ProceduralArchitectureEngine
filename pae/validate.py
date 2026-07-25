@@ -61,6 +61,7 @@ def validate(assembly: Assembly) -> Tuple[Assembly, Report]:
     failures.extend(_check_roof_penetration(assembly))
     failures.extend(_check_band_attachment(assembly))
     failures.extend(_check_aperture_reachability(assembly))
+    failures.extend(_check_upper_entrance_landing(assembly))
     failures.extend(_check_storey_egress(assembly))
     failures.extend(_check_stair_landing_clearance(assembly))
     failures.extend(_check_headroom(assembly))
@@ -1860,8 +1861,14 @@ def _check_aperture_reachability(assembly: Assembly) -> List[Failure]:
     Rule: for a door above ground level, there must be a walkable surface — floor, deck,
     balcony or external surface — immediately outside it at that level. Ground-level doors
     are exempt (the site is outside them).
+
+    Phase 9.2: exterior porch landings tagged ``upper_landing`` count the same as
+    balcony deck (see ``pae.upper_entrance``).
     """
-    from pae.trim import covered_cells
+    from pae.upper_entrance import (
+        door_opens_onto_exterior_landing,
+        _walkable_and_interior,
+    )
 
     doors = [
         p for p in assembly.placements
@@ -1872,45 +1879,14 @@ def _check_aperture_reachability(assembly: Assembly) -> List[Failure]:
     if not doors:
         return []
 
-    # Walkable surfaces per level, by cell.
-    walkable: Dict[int, set] = {}
-    balcony_deck: Dict[int, set] = {}
-    for p in assembly.placements:
-        if p.kind in ("floor", "surface") and "hole" not in p.asset_id:
-            cells = covered_cells(p)
-            walkable.setdefault(p.level, set()).update(cells)
-            if p.kind == "floor" and "balcony" in p.tags:
-                balcony_deck.setdefault(p.level, set()).update(cells)
-        elif p.kind == "stair":
-            walkable.setdefault(p.level, set()).update(covered_cells(p))
-
-    # Interior cells per level — a door onto the room it is already in does not count.
-    interior: Dict[int, set] = {}
-    for p in assembly.placements:
-        if p.kind == "floor" and "hole" not in p.asset_id:
-            interior.setdefault(p.level, set()).update(covered_cells(p))
+    walkable, balcony_deck, interior = _walkable_and_interior(assembly)
 
     failures: List[Failure] = []
     for d in doors:
         bb_min, bb_max = _placement_aabb(d)
-        deck = walkable.get(d.level, set())
-        inside = interior.get(d.level, set())
-        cells = covered_cells(d)
-        # Somewhere adjacent to this door there must be deck that is NOT simply the room
-        # the door is standing in — i.e. an outside landing, balcony or gallery.
-        landing = balcony_deck.get(d.level, set())
-        reachable = False
-        for c in cells:
-            for dx, dy in ((0, 1), (0, -1), (1, 0), (-1, 0)):
-                n = (c[0] + dx, c[1] + dy)
-                # Gallery deck cells share a grid bay with interior floor at the
-                # wall line — still count as an outside landing when tagged balcony.
-                if n in deck and (n not in inside or n in landing):
-                    reachable = True
-                    break
-            if reachable:
-                break
-        if not reachable:
+        if not door_opens_onto_exterior_landing(
+            d, walkable, balcony_deck, interior
+        ):
             failures.append(
                 Failure(
                     check="aperture_reachability",
@@ -1924,6 +1900,13 @@ def _check_aperture_reachability(assembly: Assembly) -> List[Failure]:
                 )
             )
     return failures
+
+
+def _check_upper_entrance_landing(assembly: Assembly) -> List[Failure]:
+    """Phase 9.2 T-007/T-009 — role-tagged upper_exterior doors need a landing."""
+    from pae.upper_entrance import check_upper_entrance_landing
+
+    return check_upper_entrance_landing(assembly)
 
 
 # --- §7.17 storey egress -----------------------------------------------------
@@ -2456,4 +2439,5 @@ __all__ = [
     "_check_headroom",
     "_check_no_bare_aperture_holes",
     "_check_aperture_alignment",
+    "_check_upper_entrance_landing",
 ]
