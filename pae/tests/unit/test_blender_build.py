@@ -53,16 +53,18 @@ def test_assembly_bounds_cm_positive_extent():
 
 
 def test_placement_instance_scale_cm_roof_span():
-    """M1 roof spans 4×3 modules — Blender instance must scale XY, not 1×1 catalog."""
+    """M1 roof spans 4×3 modules plus eaves — Blender instance scales XY from catalog."""
     from pae.blender_build import placement_instance_scale_cm
+    from pae.contract import EAVE_OVERHANG_CM, MODULE_CM
     from pae.pipeline import run_through_assemble
     from pae.spec import m1_box_house_spec
 
     _, _, assembly, _ = run_through_assemble(m1_box_house_spec())
     roof = next(p for p in assembly.placements if p.kind == "roof")
     sx, sy, sz = placement_instance_scale_cm(roof)
-    assert sx == pytest.approx(4.0)
-    assert sy == pytest.approx(3.0)
+    oh = EAVE_OVERHANG_CM
+    assert sx == pytest.approx((4 * MODULE_CM + 2 * oh) / MODULE_CM)
+    assert sy == pytest.approx((3 * MODULE_CM + 2 * oh) / MODULE_CM)
     assert sz == pytest.approx(1.0)
 
     wall = next(p for p in assembly.placements if p.asset_id == "wall_plain")

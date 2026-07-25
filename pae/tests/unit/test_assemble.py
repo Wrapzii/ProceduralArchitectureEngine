@@ -6,6 +6,7 @@ import pytest
 
 from pae.assemble import _boundary_wall_cells, assemble
 from pae.contract import (
+    EAVE_OVERHANG_CM,
     FLOOR_T_CM,
     MODULE_CM,
     STOREY_CM,
@@ -19,7 +20,12 @@ from pae.contract import (
 )
 from pae.plan import plan
 from pae.primitives.catalog import get as get_primitive
-from pae.primitives.roofs import roof_flat_span_size_cm, roof_rise_cm
+from pae.primitives.roofs import (
+    roof_flat_span_size_cm,
+    roof_gable_end_size_cm,
+    roof_pitched_span_size_cm,
+    roof_rise_cm,
+)
 from pae.solver import solve
 from pae.spec import load_style, m1_box_house_spec, m3_keep_tower_spec
 from pae.validate import validate
@@ -175,14 +181,15 @@ def test_m1_north_and_east_tuck_under_footprint_roof():
     north = next(p for p in assembly.placements if p.cell == (1, 3) and p.kind == "wall")
     e_min, e_max = _aabb(east)
     n_min, n_max = _aabb(north)
-    assert abs(e_max[0] - roof_max[0]) < 1.0
-    assert abs(n_max[1] - roof_max[1]) < 1.0
-    assert e_min[0] < roof_max[0]  # thickness inward
-    assert n_min[1] < roof_max[1]
+    oh = EAVE_OVERHANG_CM
+    assert abs(e_max[0] - (roof_max[0] - oh)) < 1.0
+    assert abs(n_max[1] - (roof_max[1] - oh)) < 1.0
+    assert e_min[0] < roof_max[0] - oh  # thickness inward
+    assert n_min[1] < roof_max[1] - oh
 
 
-def test_m1_outer_wall_faces_flush_roof_footprint():
-    """Outer wall AABB edges must match roof XY footprint within TOL (all four faces)."""
+def test_m1_outer_wall_faces_inset_from_roof_eaves():
+    """Outer wall AABB edges sit inside roof XY by EAVE_OVERHANG on all four faces."""
     assembly, _ = _m1_assembly()
     roof = next(p for p in assembly.placements if p.kind == "roof")
     roof_min, roof_max = placement_world_aabb(
@@ -195,15 +202,16 @@ def test_m1_outer_wall_faces_flush_roof_footprint():
         )
 
     tol = 1.0
+    oh = EAVE_OVERHANG_CM
     west_x = min(_aabb(p)[0][0] for p in assembly.placements if p.kind == "wall" and p.yaw == 0)
     east_x = max(_aabb(p)[1][0] for p in assembly.placements if p.kind == "wall" and p.yaw == 180)
     south_y = min(_aabb(p)[0][1] for p in assembly.placements if p.kind == "wall" and p.yaw == 270)
     north_y = max(_aabb(p)[1][1] for p in assembly.placements if p.kind == "wall" and p.yaw == 90)
 
-    assert abs(west_x - roof_min[0]) < tol
-    assert abs(east_x - roof_max[0]) < tol
-    assert abs(south_y - roof_min[1]) < tol
-    assert abs(north_y - roof_max[1]) < tol
+    assert abs(west_x - (roof_min[0] + oh)) < tol
+    assert abs(east_x - (roof_max[0] - oh)) < tol
+    assert abs(south_y - (roof_min[1] + oh)) < tol
+    assert abs(north_y - (roof_max[1] - oh)) < tol
 
 
 def test_m1_corner_door_south_only_not_west():
@@ -252,19 +260,43 @@ def test_boundary_wall_corner_overlap_closes_perimeter():
     assert ((0, 0), 270) in pairs
 
 
+def test_roof_eave_overhang_visible_on_m1():
+    """Flat roof deck extends past outer wall faces by EAVE_OVERHANG_CM."""
+    assembly, _ = _m1_assembly()
+    roof = next(p for p in assembly.placements if p.kind == "roof")
+    roof_min, roof_max = placement_world_aabb(
+        roof.cell[0], roof.cell[1], roof.level, roof.yaw, roof.size_cm, roof.offset_cm
+    )
+    oh = EAVE_OVERHANG_CM
+    west_x = min(
+        placement_world_aabb(p.cell[0], p.cell[1], p.level, p.yaw, p.size_cm, p.offset_cm)[0][0]
+        for p in assembly.placements
+        if p.kind == "wall" and p.yaw == 0
+    )
+    assert roof_min[0] == pytest.approx(west_x - oh, abs=1.0)
+    assert roof_max[0] - roof_min[0] == pytest.approx(4 * MODULE_CM + 2 * oh, abs=1.0)
+
+
 def test_roof_flat_descriptor_and_m1_span():
     """roof_flat catalog piece + assemble span helper for footprint decks."""
     roof = get_primitive("roof_flat")
     assert roof.kind == "roof"
     assert roof.footprint_modules == (1, 1)
-    assert roof.size_cm == roof_flat_span_size_cm(1, 1)
-    assert roof_flat_span_size_cm(4, 3) == (4 * MODULE_CM, 3 * MODULE_CM, FLOOR_T_CM)
+    assert roof.size_cm == (MODULE_CM, MODULE_CM, FLOOR_T_CM)
+    oh = EAVE_OVERHANG_CM
+    assert roof_flat_span_size_cm(4, 3) == (
+        4 * MODULE_CM + 2 * oh,
+        3 * MODULE_CM + 2 * oh,
+        FLOOR_T_CM,
+    )
 
     assembly, _ = _m1_assembly()
     roofs = [p for p in assembly.placements if p.kind == "roof"]
     assert len(roofs) == 1
     assert roofs[0].asset_id == "roof_flat"
     assert roofs[0].size_cm == roof_flat_span_size_cm(4, 3)
+    assert roofs[0].offset_cm[0] == pytest.approx(-oh)
+    assert roofs[0].offset_cm[1] == pytest.approx(-oh)
     assert roofs[0].offset_cm[2] == STOREY_CM
 
 
@@ -301,14 +333,24 @@ def test_pitched_roof_emits_gable_pieces():
     # Gable infill height includes pitch rise (not a flat slab).
     pitch = 0.9
     rise = roof_rise_cm(pitch, 3 * MODULE_CM)
-    assert gables[0].size_cm[2] == pytest.approx(rise + FLOOR_T_CM)
-    assert gables[0].size_cm[0] == MODULE_CM
-    assert gables[0].size_cm[1] == 3 * MODULE_CM
+    span_x = 4 * MODULE_CM
+    span_y = 3 * MODULE_CM
+    oh = EAVE_OVERHANG_CM
+    gable_h = rise + FLOOR_T_CM
+    assert gables[0].size_cm[2] == pytest.approx(gable_h)
+    assert gables[0].size_cm == roof_gable_end_size_cm(
+        ridge_along_x=True,
+        span_x_cm=span_x,
+        span_y_cm=span_y,
+        gable_height=gable_h,
+    )
     # 4×3 footprint: ridge along X → 2 gable end caps (span full Y), 1 A-frame deck.
     assert len(gables) == 2
     assert len(slopes) == 1
-    assert slopes[0].size_cm[0] == 4 * MODULE_CM
-    assert slopes[0].size_cm[1] == 3 * MODULE_CM
+    deck_x, deck_y = roof_pitched_span_size_cm(span_x, span_y)
+    assert slopes[0].size_cm == (deck_x, deck_y, gable_h)
+    assert slopes[0].offset_cm[0] == pytest.approx(-oh)
+    assert slopes[0].offset_cm[1] == pytest.approx(-oh)
     gable_x = {p.cell[0] for p in gables}
     assert gable_x == {0, 3}
 

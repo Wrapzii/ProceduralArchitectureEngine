@@ -96,6 +96,7 @@ Project root: `C:\Users\WhiteWidow\Documents\GitHub\ProceduralArchitectureEngine
 2026-07-24 — Master: Wave I swarm (Composer 2.5) — aperture facing, eaves, materials, floaters, stair prove, UE bind note.
 >>> TRIGGER @APERTURE_FACE — Door/window openings must face outward on correct wall axis; kill P-shaped silhouette. Own walls.py + assemble wall yaw only if required.
 >>> TRIGGER @EAVES — Small roof overhang past walls (flat + pitched) so roofs read as roofs. Own roofs.py + assemble roof size/offset.
+>>> DONE @EAVES — `EAVE_OVERHANG_CM = WALL_T_CM * 0.5` (30 cm); flat + pitched roofs grow/offset via roof span helpers; per-wing interior seams zero overhang. m1/m3/m4 validate ok. Suite: 304 passed.
 >>> TRIGGER @MAT_READ — Distinct Blender materials per kind (wall/roof/floor/tower/stair) for gallery readability. Own blender_build.py materials only.
 >>> DONE @MAT_READ � KIND_MATERIAL_COLORS + material_color_for_kind() in pae/blender_build.py; distinct workbench hues for wall/floor/ground/roof/stair/tower_arc/tower_crown/tower_cap/door/window (+ prop/plinth/hole fallbacks); _ensure_material updates existing mats on re-run. Tests: test_kind_material_colors_* in test_blender_build.py.
 >>> TRIGGER @FLOATER_KILL — Find/remove stray disconnected slabs in m3 gallery (left block). Own assemble ground/tower plinth or blender clear.

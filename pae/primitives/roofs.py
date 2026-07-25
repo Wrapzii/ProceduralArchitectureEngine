@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import List, Optional, Sequence, Tuple
 
-from pae.contract import FLOOR_T_CM, MODULE_CM, STOREY_CM
+from pae.contract import EAVE_OVERHANG_CM, FLOOR_T_CM, MODULE_CM, STOREY_CM
 from pae.primitives.types import PrimitiveDescriptor, SocketDesc, module_tag
 
 # Default pitch rise/run from gothic_academy style (not a grid dimension).
@@ -126,11 +126,96 @@ def roof_pitched_slope(
     )
 
 
-def roof_flat_span_size_cm(modules_x: int, modules_y: int) -> tuple[float, float, float]:
-    """Axis-aligned flat roof slab spanning *modules_x* × *modules_y* bays."""
+def roof_eave_offset_cm(
+    *,
+    overhang_west: float | None = None,
+    overhang_south: float | None = None,
+) -> Tuple[float, float, float]:
+    """Min-corner shift so deck overhangs footprint on exterior sides."""
+    oh = EAVE_OVERHANG_CM
+    ox = -(overhang_west if overhang_west is not None else oh)
+    oy = -(overhang_south if overhang_south is not None else oh)
+    return (ox, oy, 0.0)
+
+
+def roof_eave_overhang_per_side(
+    rx0: int,
+    ry0: int,
+    rx1: int,
+    ry1: int,
+    spans: Sequence[Tuple[int, int, int, int]],
+) -> Tuple[float, float, float, float]:
+    """(west, east, south, north) eave overhang in cm — zero on interior wing seams."""
+    oh = EAVE_OVERHANG_CM
+    west, east, south, north = oh, oh, oh, oh
+    if len(spans) <= 1:
+        return west, east, south, north
+    for ox0, oy0, ox1, oy1 in spans:
+        if (ox0, oy0, ox1, oy1) == (rx0, ry0, rx1, ry1):
+            continue
+        if not (oy1 < ry0 or oy0 > ry1):
+            if ox1 + 1 == rx0:
+                west = 0.0
+            if ox0 == rx1 + 1:
+                east = 0.0
+        if not (ox1 < rx0 or ox0 > rx1):
+            if oy1 + 1 == ry0:
+                south = 0.0
+            if oy0 == ry1 + 1:
+                north = 0.0
+    return west, east, south, north
+
+
+def roof_flat_span_size_cm(
+    modules_x: int,
+    modules_y: int,
+    *,
+    overhang_west: float | None = None,
+    overhang_east: float | None = None,
+    overhang_south: float | None = None,
+    overhang_north: float | None = None,
+) -> tuple[float, float, float]:
+    """Axis-aligned flat roof slab spanning *modules_x* × *modules_y* bays plus eaves."""
     if modules_x < 1 or modules_y < 1:
         raise ValueError(f"roof span must be ≥ 1×1 modules, got {modules_x}×{modules_y}")
-    return (modules_x * MODULE_CM, modules_y * MODULE_CM, FLOOR_T_CM)
+    oh = EAVE_OVERHANG_CM
+    west = overhang_west if overhang_west is not None else oh
+    east = overhang_east if overhang_east is not None else oh
+    south = overhang_south if overhang_south is not None else oh
+    north = overhang_north if overhang_north is not None else oh
+    return (
+        modules_x * MODULE_CM + west + east,
+        modules_y * MODULE_CM + south + north,
+        FLOOR_T_CM,
+    )
+
+
+def roof_pitched_span_size_cm(span_x_cm: float, span_y_cm: float) -> Tuple[float, float]:
+    """Footprint XY for a full-span pitched deck including eave overhang."""
+    oh = EAVE_OVERHANG_CM
+    return span_x_cm + 2.0 * oh, span_y_cm + 2.0 * oh
+
+
+def roof_gable_end_size_cm(
+    *,
+    ridge_along_x: bool,
+    span_x_cm: float,
+    span_y_cm: float,
+    gable_height: float,
+) -> Tuple[float, float, float]:
+    """Gable-end prism sized to match pitched deck eaves on ridge and cross axes."""
+    oh = EAVE_OVERHANG_CM
+    if ridge_along_x:
+        return (MODULE_CM + oh, span_y_cm + 2.0 * oh, gable_height)
+    return (span_x_cm + 2.0 * oh, MODULE_CM + oh, gable_height)
+
+
+def roof_gable_end_offset_cm(*, ridge_along_x: bool, is_low_end: bool) -> Tuple[float, float, float]:
+    """Local offset for a gable cap — extends outward on the ridge axis low/high end only."""
+    oh = EAVE_OVERHANG_CM
+    if ridge_along_x:
+        return (-oh if is_low_end else 0.0, -oh, 0.0)
+    return (-oh, -oh if is_low_end else 0.0, 0.0)
 
 
 def roof_flat() -> PrimitiveDescriptor:
@@ -171,7 +256,7 @@ def roof_flat() -> PrimitiveDescriptor:
         kind="roof",
         footprint_modules=(1, 1),
         height_storeys=0.0,
-        size_cm=roof_flat_span_size_cm(1, 1),
+        size_cm=(MODULE_CM, MODULE_CM, FLOOR_T_CM),
         sockets=sockets,
         tags=frozenset({"roof", "flat", module_tag()}),
         origin="min_corner",

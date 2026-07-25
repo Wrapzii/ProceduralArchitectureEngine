@@ -13,6 +13,8 @@ MODULE_CM = 400.0
 STOREY_CM = 350.0
 WALL_T_CM = 60.0
 FLOOR_T_CM = 30.0
+# Visible eave beyond wall outer face (§6) — fraction of wall thickness, not a bare module.
+EAVE_OVERHANG_CM = WALL_T_CM * 0.5
 
 # Validation / fit tolerances
 TOL_CM = 6.0
