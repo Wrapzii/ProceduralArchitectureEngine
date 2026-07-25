@@ -1002,6 +1002,23 @@ def _stair_run_anchor_and_yaw(
     return (min(ax, bx), ay), 0
 
 
+def _assembly_wide_well_available(fp: FloorPlan) -> bool:
+    """True when massing/footprint can host a 2×2 monumental stair well."""
+    if fp.massing is None:
+        if not fp.storeys:
+            return False
+        grid = fp.storeys[0]
+        w, h = grid.size
+        return w >= 4 and h >= 4
+    bodies = [v for v in fp.massing.volumes if v.role in WING_ROLES]
+    if not bodies:
+        bodies = list(fp.massing.enclosed_volumes())
+    for v in bodies:
+        if (v.x1 - v.x0) >= 3 and (v.y1 - v.y0) >= 3:
+            return True
+    return False
+
+
 def _stair_occupied_cells(fp: FloorPlan) -> Set[Tuple[int, int, int]]:
     """(level, x, y) cells covered by a stair flight — skip floor slabs there."""
     occupied: Set[Tuple[int, int, int]] = set()
@@ -1870,14 +1887,17 @@ def _place_tower_arcs(
         # @VAL_TOWER_DOOR — hall↔drum doorway on attach face (owned module).
         from pae.tower_entry import place_tower_entry_doors
 
+        door_piece = catalog.get(_style_door_asset(style))
+        if "door" not in door_piece.asset_id and "gate" not in door_piece.asset_id:
+            door_piece = catalog.get("wall_door")
         place_tower_entry_doors(
             vol=vol,
             cell=cell,
             drum_xy=drum_xy,
             skip_yaw=skip_yaw,
             body=_tower_attached_body(vol, bodies),
-            door_asset_id=_style_door_asset(style),
-            door_tags=catalog.get(_style_door_asset(style)).tags,
+            door_asset_id=door_piece.asset_id,
+            door_tags=door_piece.tags,
             aperture_world=_aperture_world,
             next_piece_id=_next_piece_id,
             placements=placements,
@@ -2319,6 +2339,17 @@ def assemble(
             }
             for r in floor_plan.rooms
         ],
+        building_class=(
+            str(getattr(floor_plan.massing, "building_class", "generic") or "generic")
+            if floor_plan.massing is not None
+            else "generic"
+        ),
+        stair_kind=(
+            str(getattr(floor_plan.massing, "stair_kind", "straight") or "straight")
+            if floor_plan.massing is not None
+            else "straight"
+        ),
+        wide_stair_well_available=_assembly_wide_well_available(floor_plan),
     )
     if floor_plan.massing is not None and floor_plan.massing.entrances:
         entrances = floor_plan.massing.entrances

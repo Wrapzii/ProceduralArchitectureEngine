@@ -113,6 +113,18 @@ def _door_is_reachable(
 ) -> bool:
     if p.level == 0:
         return True  # the site is outside a ground door
+    from pae.existence import TOWER_ENTRY_TAG
+
+    if TOWER_ENTRY_TAG in p.tags:
+        # Hall↔drum passage: interior hall floor is the designed landing.
+        room = inside.get(p.level, set())
+        deck = walk.get(p.level, set())
+        for c in covered_cells(p):
+            for dx, dy in ((0, 1), (0, -1), (1, 0), (-1, 0)):
+                n = (c[0] + dx, c[1] + dy)
+                if n in room or n in deck:
+                    return True
+        return False
     deck = walk.get(p.level, set())
     room = inside.get(p.level, set())
     landing = balcony.get(p.level, set())
@@ -144,6 +156,29 @@ def _swap(p: SolidPlacement, asset_id: str, note: str) -> SolidPlacement:
         size_cm=desc.size_cm,
         rotates_about_center=desc.rotates_about_center,
         tags=desc.tags | frozenset({"varied", note}),
+    )
+
+
+def _restyle(p: SolidPlacement, asset_id: str, note: str) -> SolidPlacement:
+    """Change only the ASSET a piece wears, keeping its authored geometry.
+
+    ``_swap`` re-derives size/offset from the catalog, which is right for a plain bay
+    wall but destroys a piece whose pose was computed by the assembler — a tower drum
+    window has its thin/long axes baked into ``size_cm`` and sits on the drum rim.
+    Restyling lets those windows join the storey's family (the "dissimilar windows on
+    the same building" defect) without moving a millimetre.
+    """
+    return SolidPlacement(
+        piece_id=p.piece_id,
+        asset_id=asset_id,
+        kind=p.kind,
+        cell=p.cell,
+        level=p.level,
+        yaw=p.yaw,
+        offset_cm=p.offset_cm,
+        size_cm=p.size_cm,
+        rotates_about_center=p.rotates_about_center,
+        tags=p.tags | frozenset({"varied", note}),
     )
 
 
@@ -204,7 +239,12 @@ def vary(
             level, axis, _plane = key
             if level != 0:
                 continue
-            doors = [m for m in members if "door" in m.asset_id or "gate" in m.asset_id]
+            doors = [
+                m
+                for m in members
+                if ("door" in m.asset_id or "gate" in m.asset_id)
+                and "tower_entry" not in m.tags
+            ]
             if not doors:
                 continue
             ordered = sorted(members, key=lambda m: m.cell[axis])
@@ -261,9 +301,21 @@ def vary(
         # Drum / helical tower windows are authored by assemble for Phase 0.6 —
         # blanking or retargeting them floats ends and plugs headroom.
         if "drum_window" in p.tags or p.piece_id.startswith("tower_win_"):
-            out.append(p)
+            # Keep the POSE (blanking or moving one floats a stair end / plugs headroom)
+            # but not the STYLE. The assembler picks the drum window's asset from the
+            # style pack, independently of the family this storey settled on, which put
+            # two window types on one building. Restyle only.
             if is_window:
+                fam = storey_family.get(p.level, pieces_avail[0])
+                out.append(p if p.asset_id == fam else _restyle(p, fam, "drum_normalised"))
                 lights.setdefault(_elevation_key(p), []).append(len(out) - 1)
+            else:
+                out.append(p)
+            continue
+
+        # Hall→drum stairwell doors — authored pose; never demote/move.
+        if "tower_entry" in p.tags or p.piece_id.startswith("tower_entry_"):
+            out.append(p)
             continue
 
         # 1. Legality — an upper door with nothing outside it is not a door.
@@ -420,6 +472,12 @@ def vary(
         apertures=_sync_apertures(assembly.apertures, out),
         storeys=assembly.storeys,
         aperture_policy=assembly.aperture_policy,
+        room_specs=list(assembly.room_specs),
+        building_class=getattr(assembly, "building_class", "generic"),
+        stair_kind=getattr(assembly, "stair_kind", "straight"),
+        wide_stair_well_available=getattr(
+            assembly, "wide_stair_well_available", False
+        ),
     )
     return varied, Report.from_failures([])
 
@@ -528,15 +586,23 @@ def _sync_apertures(old, placements: Sequence[SolidPlacement]):
 
 
 def vary_spec(spec, seed: int):
-    """Seeded jitter of the SPEC itself — pitch and proportion, within legal bounds.
+    """Seeded jitter of the SPEC itself — pitch, proportion, stair typology.
 
     Sizes stay whole bays (a half-bay building is a gap), and pitch stays inside a range
-    that the roof primitives can actually build. Variation that breaks the contract is not
-    variation, it is a defect — see Ledger C-7.
+    that the roof primitives can actually build. Stair kinds are picked only from the
+    continuity-safe set for the building class — never buttresses, never a monumental
+    well on a house, never spiral without a tower. Variation that breaks the contract is
+    not variation, it is a defect — see Ledger C-7 / D-21.
     """
     import copy
 
-    from pae.spec import RoofSpec
+    from pae.spec import (
+        CirculationSpec,
+        RoofSpec,
+        derive_building_class,
+        footprint_allows_wide_stair_well,
+        pick_stair_kind_for_class,
+    )
 
     out = copy.deepcopy(spec)
     r = _rng(seed, f"spec:{spec.name}")
@@ -544,4 +610,20 @@ def vary_spec(spec, seed: int):
     pitch = max(0.8, min(2.1, pitch))
     out.roof = RoofSpec(kind=spec.roof.kind, pitch=round(pitch, 3))
     out.seed = seed
+
+    building_class = derive_building_class(out)
+    out.building_class = building_class
+    if out.storeys > 1:
+        kind = pick_stair_kind_for_class(
+            building_class,
+            seed,
+            has_tower=bool(out.towers),
+            wide_well=footprint_allows_wide_stair_well(out.footprint),
+            storeys=out.storeys,
+            name=out.name,
+        )
+        out.circulation = CirculationSpec(
+            stair_kind=kind,
+            stair_cells=list(out.circulation.stair_cells),
+        )
     return out

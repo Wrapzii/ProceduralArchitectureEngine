@@ -50,6 +50,9 @@ Severity: **S1** shipped and visible · **S2** caught in review/CI · **S3** nea
 | C-5 | S2 | 26-piece tower entirely detached from its building | Solver's local repair nudges overlapping towers toward a wall but never asserts contact; assemble drum offset was `2r` leaving an air gap | **FIXED (M7)** — perimeter attach snap in solver; drum offset `r` so AABB kisses hall. Random freestanding tower arcs cleared. |
 | C-6 | S1 | 8 m hole at each gable | Walls stop at the eaves; nothing generated the gable infill | `roof_gable_infill` |
 | C-7 | S1 | Arcade impossible to tile | 1.76 m pillar in a 4 m module → 2.24 m daylight and two dangling ends | `snap_fit` with a 6 % stretch ceiling; reject otherwise |
+| C-8 | S2 | Collinear façade gap missed when coplanar segments differed by ≤ `TOL_CM` on the plane axis | `collinear_gap` bucketed on `round(plane, 3)` — near-coplanar runs never shared a bucket | **FIXED (@VAL_ENG_CONNECT)** — cluster spans with plane diameter ≤ `TOL_CM`; `end_connectivity` counts structure only (not props) |
+| C-9 | S2 | Detached / air-gapped tower drum could pass if stairs/floors kept the touch graph alive | No validate-time kiss between `tower_arc` and hall walls (solver attach ≠ assembled AABB kiss) | **FIXED (@VAL_ENG_CONNECT)** — critical `tower_hall_kiss`; freestanding poison fails, M3 attach passes |
+| C-10 | S2 | Roof/parapet “supported” by posts/props alone satisfied generic `vertical_support` | Support asked only “is something underneath?”, not “is it a wall head?” | **FIXED** — roofs: `roof_bears_on_wall` (@VAL_ROOF_CONNECT); parapet/battlement: `vertical_support` wall-head bearer audit (@VAL_ENG_CONNECT) |
 
 ## D. Reachability and use
 
@@ -82,6 +85,8 @@ Severity: **S1** shipped and visible · **S2** caught in review/CI · **S3** nea
 | D-18 | S1 | Stairs starting or ending inside a wall (29 across all builds) | `stair_exit_clearance` only checked the void ABOVE a flight; first landing check treated any wall-tagged neighbor as solid | **TRIAGED (@VAL_STAIR)** — false positives: perimeter bays are wall+floor (walkable); spiral AABB span ≠ linear run. `stair_landing_clearance` now flags wall-**without**-floor only; skips `stair_spiral_quarter`. Can-fire uses hand-built solid-wall poison. Still WARNING. |
 | D-19 | S1 | Four spiral stair quarters at yaw 0/90/180/270 share covered_cells | Quarters *are* one Z-stacked helix on the tower anchor; integrity test treated shared cells as competing stairs | **FIXED (@VAL_STAIR)** — `spiral_cooccupancy_allowed` / `is_spiral_quarter_helix_stack` in `pae/stair_occupancy.py`; integrity allows complementary-yaw stack on same `p.cell` |
 | D-20 | S2 | `light_anchor` pieces validated by nothing | Kind added to the catalog with no `measure.py` branch — falls to "unknown kind" | Handbook §3 completeness checklist |
+| D-21 | S1 | Spiral tower helix with no central newel / open drum bay | Assemble emitted quarters only; no existence/containment check for the shell | **FIXED (@VAL_SPIRAL_SHELL)** — `spiral_newel` + `spiral_newel_exists` / `spiral_drum_enclosure` (door-bay exempt hook for @VAL_TOWER_DOOR) |
+| D-22 | S2 | House got monumental `stair_wide`; industrial kept undersized `stair_straight` when a 2×2 well fit; buttress trim confused with stairs | No `building_class` / stair allow-list; variation could pick any `stair_kind` | **FIXED (@VAL_STAIR_TYPOLOGY)** — `STAIR_TYPOLOGY_POLICY` + `derive_building_class`; `vary_spec` picks continuity-safe kinds; `stair_typology_match` (critical house/buttress, warning undersized institutional) |
 
 ## E. Kind registration
 

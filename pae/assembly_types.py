@@ -99,3 +99,9 @@ class Assembly:
     apertures: List[Aperture] = field(default_factory=list)
     storeys: int = 1
     aperture_policy: StyleAperturePolicy = field(default_factory=StyleAperturePolicy)
+    room_specs: List[dict] = field(default_factory=list)
+    #: Typology for ``stair_typology_match`` (house / industrial / academy / …).
+    building_class: str = "generic"
+    stair_kind: str = "straight"
+    #: True when footprint could host a 2×2 monumental well.
+    wide_stair_well_available: bool = False

@@ -502,5 +502,11 @@ def trim(
         apertures=assembly.apertures,
         storeys=assembly.storeys,
         aperture_policy=assembly.aperture_policy,
+        room_specs=list(getattr(assembly, 'room_specs', []) or []),
+        building_class=getattr(assembly, 'building_class', 'generic'),
+        stair_kind=getattr(assembly, 'stair_kind', 'straight'),
+        wide_stair_well_available=getattr(
+            assembly, 'wide_stair_well_available', False
+        ),
     )
     return out, Report.from_failures([])
