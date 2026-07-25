@@ -95,7 +95,12 @@ EntranceRole = str  # grand | main | side | service | postern | gate | balcony |
 
 @dataclass
 class EntranceSpec:
-    """Declarative ground entrance — role drives piece choice; facade/bay place it."""
+    """Declarative ground entrance — role drives piece choice; facade/bay place it.
+
+    Every declared entrance is a *passage breach*: assemble must place a door or
+    gate leaf (never a bare hole). Enforced by ``no_bare_aperture`` (roadmap §1.5).
+    Ensemble expansion (portico / twin stairs) is Phase 1.3 — not yet emitted.
+    """
 
     role: EntranceRole
     facade: Optional[str] = None  # south | north | east | west

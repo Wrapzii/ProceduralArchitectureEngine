@@ -77,4 +77,3 @@ Tolerance: **6.0 cm**. All dimensions from `pae/contract.py`.
 | `light_anchor_pendant` | light_anchor | 1x1 | 8.0x8.0x8.0 | (-4.0,-4.0,-4.0) | min_corner | True | yes |
 
 All pieces within tolerance.
-
