@@ -404,3 +404,5 @@ claimed. Numbers are from a measured pass over all 10 showcase builds + school +
 WAVE agents DONE: @VAL_SUITE_GREEN @VAL_SPIRAL_SHELL @VAL_TOWER_DOOR @VAL_TOWER_RAMPART @VAL_STAIR_TYPOLOGY @VAL_ROOF_CONNECT @VAL_ENG_CONNECT
 TRIAGE DONE: @VAL_TRIAGE_EGRESS @VAL_TRIAGE_ROOF @VAL_TRIAGE_MISC; @VAL_TRIAGE_CROWN in flight (m3 roof vs tower_crenel).
 New critical/warn checks: spiral_newel_exists, spiral_drum_enclosure, tower_entry_door, tower_rampart_ring, tower_top_walkable, stair_typology_match, roof_bears_on_wall, roof_covers_enclosed, roof_valley_join, tower_hall_kiss; handbook §6b variation-vs-continuity.
+
+>>> DONE @VAL_TRIAGE_CROWN ? Raise tower junction/deck/crenels above overlapping hall roof AABB (`_tower_rampart_junction_z_cm`); stretch top `tower_arc` to crown wall-head; canopy envelope accepts tower_arc/crown/cap so raised spires stay attached. No interpenetration demotion. `test_m3_interpenetration_zero` + roof_covers uncovered green.

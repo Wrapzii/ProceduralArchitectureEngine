@@ -18,6 +18,7 @@ from pae.contract import (
     FLOOR_T_CM,
     MODULE_CM,
     STOREY_CM,
+    TOL_CM,
     WALL_T_CM,
     cell_to_world_cm,
     ground_plinth_z_cm,
@@ -1877,6 +1878,68 @@ def _place_tower_windows(
             )
 
 
+def _tower_cell_xy_world(cell: Tuple[int, int]) -> Tuple[float, float, float, float]:
+    """Inclusive world XY bounds of a tower drum cell (min_x, min_y, max_x, max_y)."""
+    wx, wy, _ = cell_to_world_cm(cell[0], cell[1], 0)
+    return (wx, wy, wx + MODULE_CM, wy + MODULE_CM)
+
+
+def _hall_roof_top_over_tower_cm(
+    cell: Tuple[int, int],
+    placements: Sequence[SolidPlacement],
+) -> Optional[float]:
+    """Max world-Z top of hall roof AABBs that overlap the tower drum cell in XY.
+
+    Pitched/hip decks are tall wedge AABBs; eaves overhang and gable ends often
+    bleed into the attach tower cell even when that cell is excluded from the
+    roof footprint. Returns ``None`` when no overlapping roof is present.
+    """
+    tx0, ty0, tx1, ty1 = _tower_cell_xy_world(cell)
+    # Eave/gable overhang may sit just outside the cell — still graze the crown.
+    pad = WALL_T_CM + TOL_CM
+    top: Optional[float] = None
+    for p in placements:
+        if p.kind != "roof":
+            continue
+        mn, mx = placement_world_aabb(
+            p.cell[0],
+            p.cell[1],
+            p.level,
+            p.yaw,
+            p.size_cm,
+            p.offset_cm,
+            rotates_about_center=p.rotates_about_center,
+        )
+        if mx[0] <= tx0 - pad or mn[0] >= tx1 + pad:
+            continue
+        if mx[1] <= ty0 - pad or mn[1] >= ty1 + pad:
+            continue
+        top = mx[2] if top is None else max(top, mx[2])
+    return top
+
+
+def _tower_rampart_junction_z_cm(
+    *,
+    cell: Tuple[int, int],
+    top_level: int,
+    placements: Sequence[SolidPlacement],
+) -> float:
+    """Level-local Z for ``tower_junction`` / rampart deck top.
+
+    Default is one storey above the crown level plate. When an adjacent hall roof
+    prism overlaps the drum in XY, raise the junction so the walkable deck bottom
+    clears that roof AABB (no interpenetration demotion for deck/crenels).
+    """
+    base = STOREY_CM
+    roof_top = _hall_roof_top_over_tower_cm(cell, placements)
+    if roof_top is None:
+        return base
+    level_base = top_level * STOREY_CM
+    # Deck bottom = level_base + junction_z - FLOOR_T; clear roof top by TOL.
+    needed = roof_top - level_base + FLOOR_T_CM + TOL_CM
+    return max(base, needed)
+
+
 def _place_tower_arcs(
     *,
     floor_plan: FloorPlan,
@@ -1939,9 +2002,20 @@ def _place_tower_arcs(
             floor_plan=floor_plan,
         )
         top = vol.storeys - 1
-        junction_z = STOREY_CM
+        # Raise crown/deck/crenels above overlapping hall roof AABB (m3 pitched).
+        junction_z = _tower_rampart_junction_z_cm(
+            cell=cell, top_level=top, placements=placements
+        )
         crown_z = junction_z + junction.size_cm[2] + _TOWER_STACK_GAP_CM
         cap_z = crown_z + crown.size_cm[2] + _TOWER_STACK_GAP_CM
+        # Drum walls must continue through the hall roof to the rampart wall-head
+        # so raised crenels keep vertical_support (not floating battlements).
+        if crown_z > STOREY_CM + TOL_CM:
+            for p in placements:
+                if p.cell == cell and p.level == top and p.kind == "tower_arc":
+                    sx, sy, sz = p.size_cm
+                    if sz + TOL_CM < crown_z:
+                        p.size_cm = (sx, sy, crown_z)
         for piece, kind, z_off in (
             (junction, "tower_crown", junction_z),
             (crown, "tower_crown", crown_z),

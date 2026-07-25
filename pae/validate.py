@@ -1857,7 +1857,7 @@ def _check_canopy_attachment(assembly: Assembly) -> List[Failure]:
     envelope = [
         p
         for p in assembly.placements
-        if p.kind in ("wall", "battlement")
+        if p.kind in ("wall", "battlement", "tower_arc", "tower_crown", "tower_cap")
         or (p.kind == "barrier" and "parapet" in p.tags)
     ]
     if not envelope:

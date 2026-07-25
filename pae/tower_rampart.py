@@ -238,6 +238,10 @@ def place_tower_rampart_crown(
     ``floor_piece`` must expose ``asset_id`` / ``tags`` (catalog resolved piece).
     Crown / junction / cap must already be on ``placements`` — this tags matching
     crown pieces and adds deck + crenels around them.
+
+    ``junction_z`` / ``crown_z`` are level-local offsets from assemble. When a hall
+    roof AABB overlaps the drum, assemble raises them above that roof plate so
+    deck/crenels do not interpenetrate (no validate exemption).
     """
     rampart_tags = frozenset(
         {TOWER_RAMPART_TAG, "battlement", "parapet", TOWER_TOP_TAG}
