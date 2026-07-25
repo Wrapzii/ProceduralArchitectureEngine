@@ -123,3 +123,6 @@ Project root: `C:\Users\WhiteWidow\Documents\GitHub\ProceduralArchitectureEngine
 
 2026-07-24 — Stair exit clearance (fail-closed).
 >>> DONE @STAIR_EXIT — validate stair_exit_clearance: missing floor_hole / solid pad / wall|roof in head clearance = critical. Spanning upper deck mesh punches VOID holes (slab_with_rect_holes). Open-stair tops use floor_hole rim + deck tiles (no solid plug). Proof: Saved/Screenshots/open_stair_roof_hole_proof.png + m2_stair_proof.png. Tests: test_stair_exit_clearance.py; suite stair-related green.
+
+2026-07-24 — Stair styles + school readiness audit.
+>>> DONE @STAIR_STYLES — Kit: stair_half, stair_landing, stair_switchback (2x2 dog-leg), stair_wide (2x2 monumental); helical spiral wedges replace annulus proxy. Showcase A–E + open_stairs_showcase.png. Docs/SCHOOL_READINESS.md honest gap list. Assemble honors stair_kind switchback|wide. Tests: test_stair_styles.py green.

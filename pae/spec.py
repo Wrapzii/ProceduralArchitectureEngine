@@ -53,7 +53,7 @@ class RoofSpec:
 
 @dataclass
 class CirculationSpec:
-    stair_kind: str = "straight"  # straight | spiral
+    stair_kind: str = "straight"  # straight | spiral | switchback | wide
     stair_cells: List[Tuple[int, int]] = field(default_factory=list)
 
 

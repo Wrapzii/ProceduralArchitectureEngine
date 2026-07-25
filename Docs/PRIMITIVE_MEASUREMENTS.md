@@ -27,6 +27,10 @@ Tolerance: **6.0 cm**. All dimensions from `pae/contract.py`.
 | `floor` | floor | 1x1 | 400.0x400.0x30.0 | (0.0,0.0,0.0) | min_corner | False | yes |
 | `floor_hole` | floor | 1x1 | 400.0x400.0x30.0 | (0.0,0.0,0.0) | min_corner | False | yes |
 | `stair_straight` | stair | 2x1 | 800.0x400.0x350.0 | (0.0,0.0,0.0) | min_corner | False | yes |
+| `stair_half` | stair | 1x1 | 400.0x400.0x175.0 | (0.0,0.0,0.0) | min_corner | False | yes |
+| `stair_landing` | stair | 1x1 | 400.0x400.0x45.0 | (0.0,0.0,0.0) | min_corner | False | yes |
+| `stair_switchback` | stair | 2x2 | 800.0x800.0x350.0 | (0.0,0.0,0.0) | min_corner | False | yes |
+| `stair_wide` | stair | 2x2 | 800.0x800.0x350.0 | (0.0,0.0,0.0) | min_corner | False | yes |
 | `stair_spiral_quarter` | stair | 1x1 | 400.0x400.0x87.5 | (0.0,0.0,0.0) | center | True | yes |
 | `tower_arc_quarter` | tower_arc | 1x1 | 400.0x400.0x350.0 | (0.0,0.0,0.0) | center | True | yes |
 | `tower_crown` | tower_crown | 2x2 | 800.0x800.0x70.0 | (-400.0,-400.0,0.0) | center | True | yes |
@@ -53,5 +57,11 @@ Tolerance: **6.0 cm**. All dimensions from `pae/contract.py`.
 | `chimney_stack` | roofline | 1x1 | 104.0x104.0x472.5 | (0.0,0.0,0.0) | min_corner | False | yes |
 | `dormer_gabled` | roofline | 1x1 | 220.0x220.0x252.0 | (0.0,0.0,0.0) | min_corner | False | yes |
 | `gablet` | roofline | 1x1 | 60.0x400.0x192.5 | (0.0,0.0,0.0) | min_corner | False | yes |
+| `paving_flagstone` | surface | 1x1 | 400.0x400.0x16.5 | (0.0,0.0,0.0) | min_corner | False | yes |
+| `paving_cobble` | surface | 1x1 | 400.0x400.0x16.5 | (0.0,0.0,0.0) | min_corner | False | yes |
+| `sidewalk_slab` | surface | 1x1 | 400.0x400.0x13.5 | (0.0,0.0,0.0) | min_corner | False | yes |
+| `kerb_edge` | surface | 1x1 | 40.0x400.0x33.0 | (0.0,0.0,0.0) | min_corner | False | yes |
+| `lawn_patch` | surface | 1x1 | 400.0x400.0x9.0 | (0.0,0.0,0.0) | min_corner | False | yes |
+| `steps_external` | surface | 1x1 | 400.0x400.0x63.0 | (0.0,0.0,0.0) | min_corner | False | yes |
 
 All pieces within tolerance.

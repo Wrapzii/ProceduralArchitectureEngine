@@ -49,7 +49,7 @@ def _shot_path() -> Path:
 
 
 def open_stair_demo_plan() -> List[Dict[str, Any]]:
-    """Pure description of the three demos (no bpy) — for tests / docs."""
+    """Pure description of the stair style demos (no bpy) — for tests / docs."""
     from pae.contract import MODULE_CM, STOREY_CM
 
     flight_run_m = 2.0 * MODULE_CM * CM_TO_M
@@ -76,10 +76,24 @@ def open_stair_demo_plan() -> List[Dict[str, Any]]:
         },
         {
             "id": "spiral_one_storey",
-            "label": "C — spiral one storey",
+            "label": "C — helical spiral one storey",
             "quarters": 4,
             "rise_m": flight_rise_m,
-            "notes": "four spiral quarters stacked, open",
+            "notes": "four helical quarters stacked",
+        },
+        {
+            "id": "switchback",
+            "label": "D — school switchback / dog-leg",
+            "footprint_m": (2.0 * MODULE_CM * CM_TO_M, 2.0 * MODULE_CM * CM_TO_M),
+            "rise_m": flight_rise_m,
+            "notes": "2×2 U stairwell with mid landing",
+        },
+        {
+            "id": "wide_monumental",
+            "label": "E — wide monumental",
+            "footprint_m": (2.0 * MODULE_CM * CM_TO_M, 2.0 * MODULE_CM * CM_TO_M),
+            "rise_m": flight_rise_m,
+            "notes": "double-width grand straight run",
         },
     ]
 
@@ -209,13 +223,82 @@ def _place_straight_stair(
     return _link(obj, coll, mat)
 
 
-def _place_spiral_stack(coll, *, origin_m: Tuple[float, float, float], mat_arc, mat_cap):
-    from pae.contract import MODULE_CM, STOREY_CM
+def _place_kit_stair(
+    coll,
+    *,
+    asset_id: str,
+    name: str,
+    loc_m: Tuple[float, float, float],
+    mat,
+):
     from pae.primitives.catalog import build_mesh
 
-    # Four quarters, same centre, yaw 0/90/180/270, stacked rise via level offset.
-    # Quarters already rise STOREY/4 each in descriptor — stack by Z for clarity.
-    # Actually each quarter is full? Check - spiral is 0.25 storey height.
+    proto = build_mesh(asset_id, name=f"PAE_OpenStair_Proto_{asset_id}_{name}")
+    inst = proto.copy()
+    inst.data = proto.data
+    inst.name = name
+    inst.location = loc_m
+    inst.scale = (CM_TO_M, CM_TO_M, CM_TO_M)
+    return _link(inst, coll, mat)
+
+
+def _build_switchback(coll, origin_m: Tuple[float, float, float], mats: Dict[str, Any]) -> List[Any]:
+    from pae.contract import MODULE_CM, STOREY_CM
+
+    ox, oy, oz = origin_m
+    objs = [
+        _place_kit_stair(
+            coll,
+            asset_id="stair_switchback",
+            name="PAE_OpenStair_D_Switchback",
+            loc_m=(ox, oy, oz),
+            mat=mats["switchback"],
+        )
+    ]
+    hole_loc = (ox + MODULE_CM * CM_TO_M, oy + MODULE_CM * CM_TO_M, oz + STOREY_CM * CM_TO_M)
+    objs.extend(
+        _place_roof_deck_opened_at(
+            coll,
+            name_prefix="PAE_OpenStair_D",
+            hole_loc_m=hole_loc,
+            mats=mats,
+            deck_modules=(3, 3),
+            hole_cell=(1, 1),
+        )
+    )
+    return objs
+
+
+def _build_wide(coll, origin_m: Tuple[float, float, float], mats: Dict[str, Any]) -> List[Any]:
+    from pae.contract import MODULE_CM, STOREY_CM
+
+    ox, oy, oz = origin_m
+    objs = [
+        _place_kit_stair(
+            coll,
+            asset_id="stair_wide",
+            name="PAE_OpenStair_E_Wide",
+            loc_m=(ox, oy, oz),
+            mat=mats["wide"],
+        )
+    ]
+    hole_loc = (ox + 2.0 * MODULE_CM * CM_TO_M, oy, oz + STOREY_CM * CM_TO_M)
+    objs.extend(
+        _place_roof_deck_opened_at(
+            coll,
+            name_prefix="PAE_OpenStair_E",
+            hole_loc_m=hole_loc,
+            mats=mats,
+            deck_modules=(3, 3),
+            hole_cell=(0, 0),
+        )
+    )
+    return objs
+
+
+def _place_spiral_stack(coll, *, origin_m: Tuple[float, float, float], mat_arc, mat_cap):
+    from pae.contract import FLOOR_T_CM, MODULE_CM
+    from pae.primitives.catalog import build_mesh
     from pae.primitives.stairs import stair_spiral_quarter
 
     desc = stair_spiral_quarter()
@@ -227,17 +310,15 @@ def _place_spiral_stack(coll, *, origin_m: Tuple[float, float, float], mat_arc, 
         inst = proto.copy()
         inst.data = proto.data
         inst.name = f"PAE_OpenStair_Spiral_{yaw}"
-        # Centre-authored: place at circle centre
         inst.location = (cx, cy, cz + i * h)
         inst.scale = (CM_TO_M, CM_TO_M, CM_TO_M)
         inst.rotation_euler = (0.0, 0.0, math.radians(float(yaw)))
         _link(inst, coll, mat_arc)
         objs.append(inst)
-    # Simple cap pad on top
     pad = _place_box(
         coll,
         name="PAE_OpenStair_SpiralTop",
-        size_cm=(MODULE_CM * 1.2, MODULE_CM * 1.2, 20.0),
+        size_cm=(MODULE_CM * 1.2, MODULE_CM * 1.2, FLOOR_T_CM),
         loc_m=(cx - 0.6 * MODULE_CM * CM_TO_M, cy - 0.6 * MODULE_CM * CM_TO_M, cz + 4 * h),
         mat=mat_cap,
     )
@@ -553,6 +634,8 @@ def build_open_stair_showcase(*, write_png: bool = True) -> Dict[str, Any]:
         "roof": _mat("PAE_Mat_OpenRoof", (0.55, 0.55, 0.58, 1.0)),
         "spiral": _mat("PAE_Mat_OpenSpiral", (0.85, 0.68, 0.32, 1.0)),
         "spiral_top": _mat("PAE_Mat_OpenSpiralTop", (0.40, 0.58, 0.38, 1.0)),
+        "switchback": _mat("PAE_Mat_OpenSwitchback", (0.75, 0.40, 0.28, 1.0)),
+        "wide": _mat("PAE_Mat_OpenWide", (0.70, 0.38, 0.18, 1.0)),
         "ground": _mat("PAE_Mat_OpenGround", (0.28, 0.32, 0.30, 1.0)),
     }
 
@@ -560,7 +643,14 @@ def build_open_stair_showcase(*, write_png: bool = True) -> Dict[str, Any]:
     # upper decks makes an opened roof hole look solid from above.
     from pae.contract import MODULE_CM
 
-    for i, loc in enumerate(((0.0, 0.0, -0.08), (14.0, 6.0, -0.08), (52.0, 2.0, -0.08))):
+    ground_locs = (
+        (0.0, 0.0, -0.08),
+        (14.0, 6.0, -0.08),
+        (52.0, 2.0, -0.08),
+        (68.0, 0.0, -0.08),
+        (84.0, 6.0, -0.08),
+    )
+    for i, loc in enumerate(ground_locs):
         _place_box(
             coll,
             name=f"PAE_OpenStair_Ground_{i}",
@@ -572,17 +662,14 @@ def build_open_stair_showcase(*, write_png: bool = True) -> Dict[str, Any]:
     cursor_x = 0.0
     built: List[Dict[str, Any]] = []
 
-    # A — upstairs connect (front row)
     a_objs = _build_upstairs_connect(coll, (cursor_x, 0.0, 0.0), mats)
     built.append({"id": "upstairs_connect", "instances": len(a_objs), "origin_m": (cursor_x, 0.0, 0.0)})
     cursor_x += 2.0 * 4.0 + _DEMO_GAP_M
 
-    # B — long stepped 3 storeys (offset in Y so depth reads)
     b_objs = _build_long_stepped(coll, (cursor_x, 6.0, 0.0), mats)
     built.append({"id": "long_stepped", "instances": len(b_objs), "origin_m": (cursor_x, 6.0, 0.0)})
     cursor_x += 3.0 * 8.0 + 4.0 + _DEMO_GAP_M
 
-    # C — spiral
     c_objs = _place_spiral_stack(
         coll,
         origin_m=(cursor_x + 4.0, 2.0, 0.0),
@@ -590,6 +677,14 @@ def build_open_stair_showcase(*, write_png: bool = True) -> Dict[str, Any]:
         mat_cap=mats["spiral_top"],
     )
     built.append({"id": "spiral_one_storey", "instances": len(c_objs), "origin_m": (cursor_x + 4.0, 2.0, 0.0)})
+    cursor_x += 12.0 + _DEMO_GAP_M
+
+    d_objs = _build_switchback(coll, (cursor_x, 0.0, 0.0), mats)
+    built.append({"id": "switchback", "instances": len(d_objs), "origin_m": (cursor_x, 0.0, 0.0)})
+    cursor_x += 12.0 + _DEMO_GAP_M
+
+    e_objs = _build_wide(coll, (cursor_x, 6.0, 0.0), mats)
+    built.append({"id": "wide_monumental", "instances": len(e_objs), "origin_m": (cursor_x, 6.0, 0.0)})
 
     _frame_camera_on_collection(OPEN_STAIR_COLLECTION)
     shot = _write_shot(_shot_path()) if write_png else None

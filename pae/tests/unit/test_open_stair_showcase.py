@@ -7,9 +7,15 @@ from pae.open_stair_showcase import open_stair_demo_plan
 
 def test_open_stair_demo_plan_has_three_demos():
     plan = open_stair_demo_plan()
-    assert len(plan) == 3
+    assert len(plan) == 5
     ids = {d["id"] for d in plan}
-    assert ids == {"upstairs_connect", "long_stepped", "spiral_one_storey"}
+    assert ids == {
+        "upstairs_connect",
+        "long_stepped",
+        "spiral_one_storey",
+        "switchback",
+        "wide_monumental",
+    }
 
 
 def test_open_stair_long_stepped_is_three_flights():

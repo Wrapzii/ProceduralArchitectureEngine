@@ -103,7 +103,11 @@ ASSET_MATERIAL_COLORS: Dict[str, Tuple[float, float, float, float]] = {
     "tower_arc_quarter": (0.82, 0.68, 0.45, 1.0),  # warm sandstone drum
     "tower_crown": (0.52, 0.42, 0.68, 1.0),  # purple-gray battlements
     "tower_cap": (0.45, 0.62, 0.38, 1.0),  # mossy stone cone
-    "stair_straight": (0.72, 0.42, 0.28, 1.0),  # terracotta treads
+    "stair_straight": (0.82, 0.45, 0.22, 1.0),  # terracotta treads
+    "stair_half": (0.78, 0.42, 0.20, 1.0),
+    "stair_landing": (0.62, 0.58, 0.50, 1.0),
+    "stair_switchback": (0.75, 0.40, 0.28, 1.0),
+    "stair_wide": (0.70, 0.38, 0.18, 1.0),
     "stair_spiral_quarter": (0.78, 0.52, 0.18, 1.0),  # copper spiral
     "floor_hole": (0.12, 0.12, 0.18, 1.0),  # void rim
 }

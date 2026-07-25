@@ -767,12 +767,36 @@ def _place_stairs(
     placements: List[SolidPlacement],
     counters: Dict[str, int],
 ) -> None:
-    """Emit one ``stair_straight`` per climbed storey (2 modules, 1 rise)."""
+    """Emit stair pieces per climbed storey (straight / switchback / wide)."""
     run_cells = list(fp.stair_cells)
     if len(run_cells) < 2:
         return
-    anchor, yaw = _stair_run_anchor_and_yaw(run_cells)
-    stair_def = catalog.get("stair_straight")
+    kind = "straight"
+    if fp.massing is not None:
+        kind = str(getattr(fp.massing, "stair_kind", "straight") or "straight")
+
+    asset_id = "stair_straight"
+    if kind == "switchback":
+        asset_id = "stair_switchback"
+    elif kind == "wide":
+        asset_id = "stair_wide"
+    # spiral quarters need same-cell stacking — still kit-only until plan emits them
+
+    # Switchback / wide need a 2×2 stairwell; expand from the run AABB min corner.
+    place_cells = list(run_cells)
+    if asset_id in ("stair_switchback", "stair_wide"):
+        xs = [c[0] for c in run_cells]
+        ys = [c[1] for c in run_cells]
+        x0, y0 = min(xs), min(ys)
+        place_cells = [(x0 + i, y0 + j) for i in range(2) for j in range(2)]
+
+    if asset_id == "stair_straight":
+        anchor, yaw = _stair_run_anchor_and_yaw(run_cells)
+    else:
+        anchor = (min(c[0] for c in place_cells), min(c[1] for c in place_cells))
+        yaw = 0
+
+    stair_def = catalog.get(asset_id)
     sx, sy, _ = stair_def.size_cm
     ox, oy = rotation_offset_cm(
         yaw,
@@ -782,7 +806,10 @@ def _place_stairs(
     )
     for level in range(len(fp.storeys) - 1):
         grid = fp.storeys[level]
-        if not all(grid.get(*c) == CellRole.STAIR for c in run_cells):
+        # Straight: every listed cell must be STAIR. Switchback/wide: require the
+        # original run cells; expanded bays may still be INTERIOR until plan grows.
+        check_cells = run_cells if asset_id == "stair_straight" else run_cells
+        if not all(grid.get(*c) == CellRole.STAIR for c in check_cells):
             continue
         pid = _next_piece_id(counters, "stair", anchor, level)
         placements.append(

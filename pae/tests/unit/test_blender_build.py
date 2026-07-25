@@ -515,6 +515,10 @@ _TINTED_ASSET_IDS = (
     "tower_crown",
     "tower_cap",
     "stair_straight",
+    "stair_half",
+    "stair_landing",
+    "stair_switchback",
+    "stair_wide",
     "stair_spiral_quarter",
     "floor_hole",
 )

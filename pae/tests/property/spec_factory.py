@@ -118,7 +118,7 @@ def random_building_spec(rng: random.Random | None = None) -> BuildingSpec:
         towers=towers,
         roof=RoofSpec(kind=rng.choice(["flat", "pitched"]), pitch=1.0),
         circulation=CirculationSpec(
-            stair_kind=rng.choice(["straight", "spiral"]),
+            stair_kind=rng.choice(["straight", "spiral", "switchback", "wide"]),
             stair_cells=stair_cells,
         ),
         openings=OpeningPolicy(
