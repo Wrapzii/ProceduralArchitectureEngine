@@ -61,6 +61,21 @@ Severity: **S1** shipped and visible · **S2** caught in review/CI · **S3** nea
 | D-4 | S2 | Gallery roof floating a storey above the balustrade | Posts stopped at the deck when `under_roof` was on | Posts continue to the roof |
 | D-5 | — | Stair top plugged / unclear | `stair_exit_clearance` matches holes by `h.cell` — violates Rule 5.1 | **OPEN** — roadmap defect 0.2 |
 
+## D2. Apertures and variation (user-reported from renders)
+
+| ID | Sev | Symptom | Root cause | Fix / rule |
+|---|---|---|---|---|
+| D-6 | S1 | Four-storey tower with three doorways opening into open air | Assembler places a door on the same bay of EVERY storey; nothing asked what was outside | `aperture_reachability` check + `variation.vary()` demotes unreachable upper doors |
+| D-7 | S1 | Every door in the corner of its elevation | Assembler takes the first bay of a run | Seeded mid-elevation placement with a corner margin |
+| D-8 | S1 | Two entrances side by side | Doors repositioned independently, no separation rule | `door_min_separation_bays`, `max_doors_per_elevation` |
+| D-9 | S1 | An arched door beside a square-headed one on one elevation | Door style chosen per door | ONE entrance style per building, seeded |
+| D-10 | S1 | Four window shapes scattered at random on one building | Per-bay random type, plus a 28% "pick anything" escape | One family per storey, decided up front |
+| D-11 | S1 | A second window type appearing despite one-family rule | The *repair* step re-glazed with `window_pieces[0]`, and door demotion used a fixed piece | Both now use the storey's own family — a rule enforced at the choice step must also hold at every repair step |
+| D-12 | S1 | Every window clustered on one corner; whole elevations blind | Variation only substituted bays the assembler had already glazed, and the assembler glazes the first few bays of a run | Glaze the whole elevation with a seeded rhythm |
+| D-13 | S1 | Half of every perimeter had no banding and no windows | `band_faces_of` discarded a wall when the neighbour in its face direction was interior — but north/east walls sit on the boundary cell BEYOND the interior, so they classify as south/west facing | Flip the face instead of discarding; only skip when interior on both sides |
+| D-14 | S1 | Stringcourses ploughing straight through windows | Banding placed without consulting the host wall's aperture | Skip a course whose z-range crosses the opening |
+| D-15 | S1 | Diagonal braces read as a staircase of rectangles | Brace built from stacked axis-aligned boxes | Real rotated parallelogram prism along the diagonal |
+
 ## E. Kind registration
 
 | ID | Sev | Symptom | Root cause | Fix / rule |

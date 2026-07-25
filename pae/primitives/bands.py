@@ -170,18 +170,35 @@ def _jettied_course(size_cm: Tuple[float, float, float]) -> List[BoxPart]:
     return parts
 
 
-def _brace_parts(size_cm: Tuple[float, float, float]) -> List[BoxPart]:
-    """Stepped boxes along the diagonal of the panel."""
+def brace_prism_verts(size_cm: Tuple[float, float, float], width_cm: float):
+    """A genuinely ROTATED timber: a parallelogram prism along the panel diagonal.
+
+    The first version stacked axis-aligned boxes up the diagonal, which reads exactly like
+    what it was — a staircase of rectangles. A real brace is one member cut at an angle, so
+    build it as an extruded parallelogram whose long edges are parallel to the diagonal.
+    """
     sx, sy, sz = size_cm
-    w = MODULE_CM * BRACE_W_FRAC
-    parts: List[BoxPart] = []
-    for i in range(_BRACE_STEPS):
-        t0 = i / _BRACE_STEPS
-        t1 = (i + 1) / _BRACE_STEPS
-        y = sy * t0
-        z = sz * t0
-        parts.append(((0.0, y, z), (sx, max(w, sy * (t1 - t0) + w * 0.5), sz * (t1 - t0))))
-    return parts
+    length = math.hypot(sy, sz)
+    ux, uz = sy / length, sz / length          # unit vector along the brace
+    px, pz = -uz * width_cm * 0.5, ux * width_cm * 0.5   # half-width perpendicular
+
+    # Four corners of the brace face, in the Y/Z plane.
+    face = [
+        (0.0 - px, 0.0 - pz),
+        (0.0 + px, 0.0 + pz),
+        (sy + px, sz + pz),
+        (sy - px, sz - pz),
+    ]
+    verts = [(0.0, y, z) for (y, z) in face] + [(sx, y, z) for (y, z) in face]
+    faces = [
+        [0, 1, 2, 3],
+        [7, 6, 5, 4],
+        [0, 4, 5, 1],
+        [1, 5, 6, 2],
+        [2, 6, 7, 3],
+        [3, 7, 4, 0],
+    ]
+    return verts, faces
 
 
 def _coping_parts(size_cm: Tuple[float, float, float]) -> List[BoxPart]:
@@ -203,7 +220,8 @@ def build_band_mesh(desc: PrimitiveDescriptor, *, name: Optional[str] = None):
     elif desc.id == "band_course_jettied":
         parts = _jettied_course(desc.size_cm)
     elif desc.id == "band_brace":
-        parts = _brace_parts(desc.size_cm)
+        verts, faces = brace_prism_verts(desc.size_cm, MODULE_CM * BRACE_W_FRAC)
+        return bpy_util.mesh_from_verts_faces(obj_name, verts, faces)
     elif desc.id == "coping_cap":
         parts = _coping_parts(desc.size_cm)
     else:  # band_pilaster — a plain strip

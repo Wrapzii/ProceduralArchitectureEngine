@@ -28,6 +28,7 @@ from pae.spec import (
     TowerSpec,
 )
 from pae.trim import TrimOptions, trim
+from pae.variation import VariationSpec, vary
 
 
 @dataclass
@@ -41,6 +42,7 @@ class Build:
     trim: TrimOptions
     banding: Optional[BandingSpec] = None
     site: bool = False
+    variation: Optional[VariationSpec] = None
     notes: str = ""
 
 
@@ -248,6 +250,15 @@ def build_one(b: Build) -> Tuple[Optional[Assembly], Report, Dict[str, int]]:
         return None, report, {}
 
     stats: Dict[str, int] = {"assembled": len(assembly.placements)}
+
+    # Variation runs FIRST: it fixes illegal apertures (upper doors opening onto nothing)
+    # and repositions ground doors off the corner, so trim and banding see the final
+    # openings and can step around them.
+    vspec = b.variation or VariationSpec(seed=b.spec.seed)
+    assembly, vreport = vary(assembly, vspec)
+    if not vreport.ok:
+        return assembly, vreport, stats
+    stats["after_variation"] = len(assembly.placements)
 
     assembly, treport = trim(assembly, b.trim)
     if not treport.ok:

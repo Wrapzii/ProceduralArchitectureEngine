@@ -46,6 +46,7 @@ Face = str
 MIN_CONTACT_FRAC = 0.80
 
 _FACE_NORMAL = {"south": (0, -1), "north": (0, 1), "west": (-1, 0), "east": (1, 0)}
+_OPPOSITE_FACE = {"south": "north", "north": "south", "west": "east", "east": "west"}
 
 
 @dataclass(frozen=True)
@@ -91,6 +92,14 @@ class BandingSpec:
         return not self.faces or face in self.faces
 
 
+def _crosses_opening(opening, z0: float, z1: float) -> bool:
+    """True when a band at z0..z1 would run across a wall's door or window."""
+    if opening is None:
+        return False
+    a0, a1 = opening.min_cm[2], opening.max_cm[2]
+    return z1 > a0 + TOL_CM and z0 < a1 - TOL_CM
+
+
 def _aabb(p: SolidPlacement):
     return placement_world_aabb(
         p.cell[0], p.cell[1], p.level, p.yaw, p.size_cm, p.offset_cm,
@@ -104,17 +113,15 @@ def band_faces_of(assembly: Assembly) -> Dict[str, Face]:
     Not from cell neighbours — that says nothing about where the wall actually sits, and is
     the mistake that braced buttresses against thin air (Ledger A-7).
     """
+    # Interior cells must come from covered_cells, not from rounding an AABB: a spanning
+    # floor slab rounded outward claimed a ring of cells it does not occupy, so half the
+    # perimeter walls were classified as inward-facing and got no banding and no windows.
+    from pae.trim import covered_cells
+
     interior: Set[Cell] = set()
     for p in assembly.placements:
         if p.kind == "floor" and "hole" not in p.asset_id:
-            mn, mx = _aabb(p)
-            x0 = int(round(mn[0] / MODULE_CM))
-            x1 = int(round(mx[0] / MODULE_CM))
-            y0 = int(round(mn[1] / MODULE_CM))
-            y1 = int(round(mx[1] / MODULE_CM))
-            for x in range(x0, max(x1, x0 + 1)):
-                for y in range(y0, max(y1, y0 + 1)):
-                    interior.add((x, y))
+            interior |= covered_cells(p)
 
     faces: Dict[str, Face] = {}
     for p in assembly.placements:
@@ -127,9 +134,17 @@ def band_faces_of(assembly: Assembly) -> Dict[str, Face]:
             face = "west" if (mn[0] - cx0) < near else "east"
         else:
             face = "south" if (mn[1] - cy0) < near else "north"
+        # A north wall is stored on the boundary cell BEYOND the last interior cell, so it
+        # sits at the LOW edge of its own cell and classifies as "south". Its outward
+        # direction is still north. So when the neighbour in the face direction is
+        # interior, flip the face rather than discarding the wall — discarding it left
+        # half of every perimeter with no banding and no windows.
         dx, dy = _FACE_NORMAL[face]
         if (p.cell[0] + dx, p.cell[1] + dy) in interior:
-            continue  # inward-facing; banding belongs on the outside
+            face = _OPPOSITE_FACE[face]
+            dx, dy = _FACE_NORMAL[face]
+            if (p.cell[0] + dx, p.cell[1] + dy) in interior:
+                continue  # interior on both sides — a genuine partition
         faces[p.piece_id] = face
     return faces
 
@@ -220,18 +235,29 @@ def band(
         if opts.levels and host.level not in opts.levels:
             continue
 
+        host_desc = catalog.get(host.asset_id)
+        opening = getattr(host_desc, "aperture", None) if host_desc else None
+
         for course in opts.courses:
+            z = STOREY_CM * course.height_frac
+            band_h = catalog[course.piece].size_cm[2]
+            if _crosses_opening(opening, z, z + band_h):
+                # A stringcourse ploughing straight through a window is the single most
+                # obvious "this was generated" tell. Real masonry steps around openings;
+                # until we can split a course into segments (roadmap), skip this bay.
+                continue
             extra.append(
                 _place_on_face(
                     course.piece, host, face,
-                    z_cm=STOREY_CM * course.height_frac,
+                    z_cm=z,
                     suffix=f"course_{course.name}",
                     extra_tags=frozenset({f"course:{course.name}", "horizontal"}),
                 )
             )
 
         if opts.verticals_every_bays > 0 and i % opts.verticals_every_bays == 0:
-            positions = (0.0,) if opts.corners_only else (0.0, 0.5)
+            # A mid-bay stud would land across an opening; keep to the bay edge there.
+            positions = (0.0,) if (opts.corners_only or opening is not None) else (0.0, 0.5)
             for k, frac in enumerate(positions):
                 extra.append(
                     _place_on_face(
@@ -242,7 +268,9 @@ def band(
                     )
                 )
 
-        if opts.braces:
+        if opts.braces and opening is None:
+            # Braces cross a whole panel diagonally, so they cannot share a bay with an
+            # opening at all.
             extra.append(
                 _place_on_face(
                     opts.brace_piece, host, face,

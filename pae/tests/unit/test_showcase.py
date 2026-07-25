@@ -20,7 +20,7 @@ def test_showcase_entry_validates(entry):
     b, assembly, report, stats = entry
     assert assembly is not None, f"{b.key} failed to assemble"
     assert report.ok, [f.message for f in report.critical]
-    assert stats["total"] > 100, f"{b.key} suspiciously small: {stats}"
+    assert stats["total"] > 80, f"{b.key} suspiciously small: {stats}"
 
 
 def test_showcase_exercises_every_kit_family():

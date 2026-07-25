@@ -28,6 +28,8 @@ fix each time was a check, not a patch.
 | 0.1 | Random-spec towers can be fully detached | `test_random_specs_validate_ok` fails: *freestanding group of 26 pieces — tower_arc_quarter* | Found by the new freestanding check. The solver's local repair nudges overlapping towers to an exterior wall but does not guarantee contact. **Suite is currently red on this — it is a true positive, not a flake.** |
 | 0.2 | Stair-top clearance check is cell-based | `_check_stair_exit_clearance` matches holes by `h.cell` and `placement_footprint_cells(stair)` | Same class as every spanning-slab bug fixed this session: a spanning deck or a hole whose origin cell differs from the stair's slips through. Needs `covered_cells`. |
 | 0.3 | `roof_penetration` check is a warning, not critical | Fires on the school academy; hits not yet triaged | Either the school has legitimate gable/clerestory walls above a roof, or it has real blades sticking out. Must be triaged and then promoted to critical. |
+| 0.5 | `aperture_reachability`, `storey_egress` GROUND/VOLUME are WARNINGS | They are correct and find 25 real doorway-to-nothing defects across the milestone fixtures (M2's first-floor door opens into air) | Promoting now breaks 26 tests in other lanes. Fix the fixtures with `pae.variation`, then promote to critical. **A warning that stays a warning past one milestone is decoration.** |
+| 0.6 | Circular towers have no windows and a poor roof junction | Tower drum is arc quarters with no aperture support; the cap meets the drum without a defined joint | Needs helical window placement following the internal stair — see Phase 4.7 |
 | 0.4 | Gallery roof meets the range roof only along part of its edge | Measured: 7 of 16 gallery roof pieces touch no wall and no range roof | Now coplanar, but the canopy does not run out to its full outer dimension. |
 
 ---
@@ -114,6 +116,13 @@ not a building.
 range. (Tower geometry exists; attachment is the gap — see defect 0.1.)
 **4.4 Moat, bridge, drawbridge.** Needs terrain interaction.
 **4.5 Keep** — a tall multi-storey block with its own internal program.
+**4.7 Habitable towers and spires.** Today a spire is a solid decorative cone and a tower
+drum is blind. Needed: spires large enough to contain rooms and a stair; drum windows placed
+along the internal spiral so they light the stair and read correctly from outside; a walkable
+platform at the top with a **circular** railing following the drum, not a straight run.
+*Verified by:* stair reachability to the top platform; every drum window at a tread height;
+railing continuity around a curve; headroom on the spiral.
+
 **4.6 Baileys** — inner and outer wards, i.e. nested compounds. `site.py` merges buildings;
 it does not yet nest enclosures.
 *Verified by:* wall-walk continuity (you can walk the whole circuit), tower-to-curtain

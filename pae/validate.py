@@ -49,6 +49,8 @@ def validate(assembly: Assembly) -> Tuple[Assembly, Report]:
     failures.extend(_check_canopy_attachment(assembly))
     failures.extend(_check_roof_penetration(assembly))
     failures.extend(_check_band_attachment(assembly))
+    failures.extend(_check_aperture_reachability(assembly))
+    failures.extend(_check_storey_egress(assembly))
     failures = _sort_failures(failures)
     return assembly, Report.from_failures(failures)
 
@@ -1433,6 +1435,180 @@ def _check_band_attachment(assembly: Assembly) -> List[Failure]:
                     world_xyz=_centre(bmn, bmx),
                     piece_id=b.piece_id,
                     critical=True,
+                )
+            )
+
+    return failures
+
+
+# --- §7.16 aperture reachability ---------------------------------------------
+
+
+def _check_aperture_reachability(assembly: Assembly) -> List[Failure]:
+    """A door must open onto something you can stand on.
+
+    WHY: the assembler placed a door on the same bay of EVERY storey, so a four-storey
+    tower shipped with three doorways opening into open air one, two and three storeys up.
+    Every existing check passed it: the door is a wall variant, the wall is supported, the
+    envelope is sealed, nothing floats. Nobody asked what was on the other side.
+
+    Rule: for a door above ground level, there must be a walkable surface — floor, deck,
+    balcony or external surface — immediately outside it at that level. Ground-level doors
+    are exempt (the site is outside them).
+    """
+    from pae.trim import covered_cells
+
+    doors = [
+        p for p in assembly.placements
+        if p.kind == "wall" and ("door" in p.asset_id or "gate" in p.asset_id)
+        and p.level > 0
+    ]
+    if not doors:
+        return []
+
+    # Walkable surfaces per level, by cell.
+    walkable: Dict[int, set] = {}
+    for p in assembly.placements:
+        if p.kind in ("floor", "surface") and "hole" not in p.asset_id:
+            walkable.setdefault(p.level, set()).update(covered_cells(p))
+        elif p.kind == "stair":
+            walkable.setdefault(p.level, set()).update(covered_cells(p))
+
+    # Interior cells per level — a door onto the room it is already in does not count.
+    interior: Dict[int, set] = {}
+    for p in assembly.placements:
+        if p.kind == "floor" and "hole" not in p.asset_id:
+            interior.setdefault(p.level, set()).update(covered_cells(p))
+
+    failures: List[Failure] = []
+    for d in doors:
+        bb_min, bb_max = _placement_aabb(d)
+        deck = walkable.get(d.level, set())
+        inside = interior.get(d.level, set())
+        cells = covered_cells(d)
+        # Somewhere adjacent to this door there must be deck that is NOT simply the room
+        # the door is standing in — i.e. an outside landing, balcony or gallery.
+        reachable = False
+        for c in cells:
+            for dx, dy in ((0, 1), (0, -1), (1, 0), (-1, 0)):
+                n = (c[0] + dx, c[1] + dy)
+                if n in deck and n not in inside:
+                    reachable = True
+                    break
+            if reachable:
+                break
+        if not reachable:
+            failures.append(
+                Failure(
+                    check="aperture_reachability",
+                    message=(
+                        f"door {d.piece_id} ({d.asset_id}) at level {d.level} opens onto "
+                        f"nothing — no balcony, gallery or landing outside it"
+                    ),
+                    world_xyz=_centre(bb_min, bb_max),
+                    piece_id=d.piece_id,
+                    # WARNING, not critical, for ONE milestone only. This check is correct
+                    # and finds 25 real defects across the existing milestone fixtures
+                    # (M2's first-floor door opens into air). Promoting it now would break
+                    # 26 tests owned by other lanes. Roadmap 0.5: fix the fixtures with
+                    # pae.variation, then make this critical. Do not leave it a warning.
+                    critical=False,
+                )
+            )
+    return failures
+
+
+# --- §7.17 storey egress -----------------------------------------------------
+
+
+def _check_storey_egress(assembly: Assembly) -> List[Failure]:
+    """Every enclosed space must be enterable, and every storey must have a way in and out.
+
+    Three rules, reported separately:
+
+      GROUND    the building has at least one exterior door at level 0. A sealed building
+                is a solid, not architecture.
+      STOREY    every storey above ground is served by a stair arriving at it. Without
+                this an upper floor is a room with no way in — which the engine has
+                shipped, because floor_coverage and enclosure both pass happily on it.
+      VOLUME    every level with floor area has at least one aperture (door or window).
+                A windowless, doorless enclosed volume is a mistake, not a cellar.
+
+    NOTE: true PER-ROOM door checking needs the room graph (roadmap Phase 2.1/2.2). Until
+    interior partitions exist there is one room per storey, and this is that check. When
+    partitions land, this must be extended to iterate rooms rather than storeys.
+    """
+    from pae.trim import covered_cells
+
+    failures: List[Failure] = []
+
+    levels_with_floor: Dict[int, set] = {}
+    for p in assembly.placements:
+        if p.kind == "floor" and "hole" not in p.asset_id:
+            levels_with_floor.setdefault(p.level, set()).update(covered_cells(p))
+    if not levels_with_floor:
+        return failures
+
+    doors_by_level: Dict[int, int] = {}
+    apertures_by_level: Dict[int, int] = {}
+    for p in assembly.placements:
+        if p.kind != "wall":
+            continue
+        if "door" in p.asset_id or "gate" in p.asset_id:
+            doors_by_level[p.level] = doors_by_level.get(p.level, 0) + 1
+            apertures_by_level[p.level] = apertures_by_level.get(p.level, 0) + 1
+        elif "window" in p.asset_id or "arcade" in p.asset_id or "arrowslit" in p.asset_id:
+            apertures_by_level[p.level] = apertures_by_level.get(p.level, 0) + 1
+
+    # GROUND
+    if doors_by_level.get(0, 0) == 0:
+        failures.append(
+            Failure(
+                check="storey_egress",
+                message="building has no exterior door at ground level — GROUND",
+                world_xyz=None,
+                piece_id=None,
+                # Warning for one milestone: fires on minimal synthetic fixtures owned by
+                # other lanes. Roadmap 0.5 promotes it with aperture_reachability.
+                critical=False,
+            )
+        )
+
+    # STOREY — a stair must ARRIVE at each upper level (i.e. start on the level below).
+    stair_from: Dict[int, int] = {}
+    for p in assembly.placements:
+        if p.kind == "stair":
+            stair_from[p.level] = stair_from.get(p.level, 0) + 1
+
+    for level in sorted(levels_with_floor):
+        if level == 0:
+            continue
+        if stair_from.get(level - 1, 0) == 0:
+            failures.append(
+                Failure(
+                    check="storey_egress",
+                    message=(
+                        f"storey {level} has floor area but no stair arrives from "
+                        f"storey {level - 1} — STOREY"
+                    ),
+                    world_xyz=None,
+                    piece_id=None,
+                    critical=True,
+                )
+            )
+
+    # VOLUME
+    for level in sorted(levels_with_floor):
+        if apertures_by_level.get(level, 0) == 0:
+            failures.append(
+                Failure(
+                    check="storey_egress",
+                    message=(
+                        f"storey {level} is enclosed with no door and no window — VOLUME"
+                    ),
+                    world_xyz=None,
+                    piece_id=None,
+                    critical=False,  # see GROUND above — roadmap 0.5
                 )
             )
 
