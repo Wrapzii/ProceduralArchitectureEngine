@@ -146,7 +146,8 @@ It is deliberately trivial. The point is to prove the *pipeline*, not the archit
 | Characters stepping up at every threshold | Floor slab top at `+FLOOR_T` instead of placed at `level_z − FLOOR_T` |
 | Arcade impossible to tile | 1.76 m pillar in a 4 m module → 2.24 m daylight, two dangling ends each |
 | Long vertical smears on every wall | Single XY world projection instead of triplanar |
-| Edits appear to do nothing | Blender/UE Python caches modules — `importlib.reload` |
+| Edits appear to do nothing | Blender/UE Python caches modules — drop `sys.modules["pae*"]` / `reload_pae()` |
+| Boolean fails / wrong solver on Blender 5 | Use `FLOAT`/`EXACT`/`MANIFOLD` — never `FAST` (renamed to `FLOAT`) |
 | Editor locked at 20 GB, force-killed twice | Unbounded loop over ~9,000 actors on the UE game thread |
 | Terrain-placed actors buried | Ray-cast landscape collision instead of sampling the heightmap |
 | 16-bit heightmap imported as 8-bit stair-steps | `RTF_RGBA8` ignores `rg_channel`; requires `RTF_RGBA32F` |

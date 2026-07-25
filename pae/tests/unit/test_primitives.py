@@ -15,7 +15,12 @@ from pae.primitives import (
     measurement_table_markdown,
     piece_ids,
 )
-from pae.primitives.bpy_util import HAS_BPY, require_bpy
+from pae.primitives.bpy_util import (
+    BOOLEAN_SOLVERS,
+    HAS_BPY,
+    normalize_boolean_solver,
+    require_bpy,
+)
 from pae.primitives.roofs import DEFAULT_ROOF_PITCH, roof_rise_cm
 
 
@@ -159,3 +164,31 @@ def test_bpy_require_raises_outside_blender():
         pytest.skip("bpy present in this environment")
     with pytest.raises(RuntimeError, match="bpy is not available"):
         require_bpy()
+
+
+def test_boolean_solver_blender5_enums_never_fast():
+    """Blender 5.0 renamed FAST → FLOAT; API must never emit FAST."""
+    assert BOOLEAN_SOLVERS == frozenset({"FLOAT", "EXACT", "MANIFOLD"})
+    assert "FAST" not in BOOLEAN_SOLVERS
+    assert normalize_boolean_solver("EXACT") == "EXACT"
+    assert normalize_boolean_solver("float") == "FLOAT"
+    assert normalize_boolean_solver("MANIFOLD") == "MANIFOLD"
+    assert normalize_boolean_solver("FAST") == "FLOAT"
+    assert normalize_boolean_solver(None) == "EXACT"
+    with pytest.raises(ValueError, match="boolean solver"):
+        normalize_boolean_solver("LEGACY")
+
+
+def test_blender_build_headless_assemble_validate():
+    """``pae.blender_build`` assemble/validate path works without bpy."""
+    from pae.blender_build import build_live
+
+    result = build_live(write_png=False, milestones=("m1",))
+    assert result["ok"] is True
+    assert result["milestones"]
+    assert result["milestones"][0]["label"] == "m1"
+    assert result["milestones"][0]["ok"] is True
+    assert result["milestones"][0]["placements"] > 0
+    if not HAS_BPY:
+        assert result["blender"] is False
+        assert result["screenshot"] is None

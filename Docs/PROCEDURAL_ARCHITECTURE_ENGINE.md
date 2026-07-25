@@ -586,10 +586,13 @@ pae/
 6. **Booleans in Blender:** cut the core mesh *before* joining decorative bands. Cutting a
    joined mesh gives the EXACT solver coplanar faces and silently collapses the result.
    `modifier_apply` also requires the target to be both **active and selected** — otherwise
-   it raises and the piece is never written.
-7. **Blender/UE Python caches modules.** Call `importlib.reload` in any script an agent will
-   re-run, or edits appear to have no effect. *(This cost a full debugging cycle: a rotation
-   fix produced byte-identical output because the old module was still loaded.)*
+   it raises and the piece is never written. **Blender 5.x solver enums are
+   `FLOAT` / `EXACT` / `MANIFOLD`** — never write `FAST` (renamed to `FLOAT` in 5.0). Prefer
+   `scene.collection` when linking objects; guard `select_set` against `None`.
+7. **Blender/UE Python caches modules.** Call `importlib.reload` / drop `sys.modules["pae*"]`
+   in any script an agent will re-run (`pae.blender_build.reload_pae`), or edits appear to
+   have no effect. *(This cost a full debugging cycle: a rotation fix produced byte-identical
+   output because the old module was still loaded.)*
 8. **Never run an unbounded loop on the UE game thread.** Batch heavy work and let the editor
    tick between chunks. Two full editor lockups (20 GB RSS, force-kill) came from iterating
    ~9,000 actors synchronously.
