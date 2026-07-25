@@ -46,6 +46,93 @@ Checks: `schema` = `pae.manifest/1`, required top-level fields, every placement 
 `assets[]`, and `validation.ok` with `critical_count == 0`. Exit code `0` when
 `ok`, else `1`.
 
+### Spawn table (ISM-ready, zero placement math)
+
+For Unreal Editor Python or a one-shot import script, prefer the **spawn table**
+over parsing the full manifest. PAE strips debug fields (`cell`, `level`) and
+emits one flat row per instance:
+
+```bash
+python tools/ue_spawn_table.py --milestone m1
+# → Saved/exports/m1_spawn_table.json
+python tools/ue_spawn_table.py --milestone m1 --csv
+# → Saved/exports/m1_spawn_table.json + m1_spawn_table.csv
+```
+
+Refuses when `validation.ok` is false or the manifest fails dry-run checks.
+Auto-exports the milestone manifest when missing (same as dry-run).
+
+Spawn table schema (`pae.spawn_table/1`):
+
+| Field | Meaning |
+|---|---|
+| `schema` | Always `"pae.spawn_table/1"` |
+| `milestone` | Source milestone label (`m1`, `m3`, …) |
+| `source_manifest` | Relative path to the manifest JSON |
+| `row_count` | Number of `rows[]` |
+| `rows[]` | One ISM instance: `asset_id`, `loc_cm` (3 floats, cm), `yaw` (int), `piece_id` |
+
+CSV columns (optional): `asset_id`, `loc_cm_x`, `loc_cm_y`, `loc_cm_z`, `yaw`, `piece_id`.
+
+#### UE Editor Python (copy-paste)
+
+```python
+# Content/Python/pae_spawn_from_table.py — run in UE with editor open
+import json
+import unreal
+from pathlib import Path
+
+PROJECT_ROOT = Path(unreal.Paths.project_dir())  # or absolute path to PAE checkout
+TABLE_PATH = PROJECT_ROOT / "Saved/exports/m1_spawn_table.json"
+ASSET_MAP = {
+    "wall_plain": "/Game/RE/Architecture/SM_WallPlain.SM_WallPlain",
+    "wall_window": "/Game/RE/Architecture/SM_WallWindow.SM_WallWindow",
+    # … bind every asset_id from manifest assets[] …
+}
+
+def load_spawn_table(path: Path) -> dict:
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if data.get("schema") != "pae.spawn_table/1":
+        raise ValueError(f"unsupported spawn table schema: {data.get('schema')}")
+    return data
+
+def spawn_ism_rows(table: dict, parent_actor: unreal.Actor) -> None:
+    by_asset: dict[str, list[unreal.Transform]] = {}
+    for row in table["rows"]:
+        mesh_path = ASSET_MAP.get(row["asset_id"])
+        if not mesh_path:
+            unreal.log_warning(f"skip unknown asset_id: {row['asset_id']}")
+            continue
+        loc = row["loc_cm"]
+        xform = unreal.Transform(
+            unreal.Vector(loc[0], loc[1], loc[2]),
+            unreal.Rotator(0.0, float(row["yaw"]), 0.0),
+            unreal.Vector(1.0, 1.0, 1.0),
+        )
+        by_asset.setdefault(row["asset_id"], []).append(xform)
+
+    for asset_id, transforms in by_asset.items():
+        mesh = unreal.EditorAssetLibrary.load_asset(ASSET_MAP[asset_id])
+        ism = unreal.EditorLevelLibrary.spawn_actor_from_class(
+            unreal.InstancedStaticMeshComponent,  # use AInstancedStaticMeshActor BP in practice
+            unreal.Vector(0, 0, 0),
+        )
+        # Typical pattern: spawn AInstancedStaticMeshActor, set StaticMesh, AddInstances
+        # piece_id is for debugging — do not use for placement math
+        unreal.log(f"PAE spawn {asset_id}: {len(transforms)} instances")
+
+table = load_spawn_table(TABLE_PATH)
+spawn_ism_rows(table, parent_actor=None)
+unreal.log(f"PAE spawn table done: {table['row_count']} rows from {TABLE_PATH}")
+```
+
+**Rules for UE consumers:**
+
+1. Read `rows[]` only — never recompute from `cell` / `level`.
+2. `loc_cm` is world position in centimetres; `yaw` is degrees about +Z.
+3. Map `asset_id` → static mesh via `assets[]` in the source manifest or a DataTable.
+4. Use `piece_id` for defect reports and selection labels only.
+
 ## Schema (`pae.manifest/1`)
 
 | Field | Meaning |
@@ -129,3 +216,4 @@ Those belong exclusively to PAE Python. UE is a dumb, fast instancing consumer.
 - Export API: `pae/export/manifest.py`
 - M1 export: `tools/export_m1_manifest.py`
 - M6 dry-run: `tools/ue_manifest_dry_run.py`
+- M6 spawn table: `tools/ue_spawn_table.py`
