@@ -735,6 +735,11 @@ def _add_curtain_battlements(
                 if key in seen:
                     continue
                 seen.add(key)
+                range_tags = frozenset(
+                    t
+                    for t in wall.tags
+                    if t in range_names or t.startswith("building:")
+                )
                 extra.append(
                     SolidPlacement(
                         piece_id=f"curtain_battlement_{top_level}_{cx}_{cy}_{face}",
@@ -749,7 +754,8 @@ def _add_curtain_battlements(
                         size_cm=batt_desc.size_cm,
                         rotates_about_center=batt_desc.rotates_about_center,
                         tags=batt_desc.tags
-                        | frozenset({"trim", "curtain", "battlement"}),
+                        | frozenset({"trim", "curtain", "battlement"})
+                        | range_tags,
                     )
                 )
 
