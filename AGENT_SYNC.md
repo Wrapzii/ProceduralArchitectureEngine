@@ -368,3 +368,13 @@ claimed. Numbers are from a measured pass over all 10 showcase builds + school +
     over a street with rooms above, gate ranges, bridges of rooms. Nothing today can express
     a cell that is open at ground level and built above. `wall_gate_arch` and
     `arch_freestanding` exist but nothing places them to span a route.
+
+2026-07-25 — Master: VALIDATION PASSES WAVE (multi-aspect, engineering continuity). User ask: round spires + spiral (newel pillar, outer walls, doors in, windows out, ramparts top); stair typology variation (house=small / industrial=wide) without losing wall/roof continuity; roof variation under connection rules. Suite baseline ~609 pass / 5 fail (castle+fitout).
+>>> TRIGGER @VAL_SUITE_GREEN — Clear castle_curtain + fitout containment fails. Owns those tests + minimal compound/fitout fixes.
+>>> DONE @VAL_SUITE_GREEN - Castle curtain freestanding fixed: _add_curtain_battlements now copies parent wall west_curtain/east_curtain + building:* tags onto battlement placements (was orphaning 16 crenellations in the untagged island bucket). Fitout 3/3 already green on branch. Target tests 5/5 pass. Suite: 425 passed / 177 failed (remaining outside scope).
+>>> TRIGGER @VAL_SPIRAL_SHELL — Spiral tower shell: central newel pillar + continuous outer drum walls; checks for pillar existence + drum enclosure. Owns assemble spiral extras + validate new checks + tests.
+>>> TRIGGER @VAL_TOWER_DOOR — Doorway from hall into spiral tower at ground (and landings). Existence + aperture_reachability must pass. Owns assemble tower door + tests.
+>>> TRIGGER @VAL_TOWER_RAMPART — Tower crown: walkable top + battlement/rampart ring + outward view apertures; railing continuity stub. Owns assemble tower top + validate + tests.
+>>> TRIGGER @VAL_STAIR_TYPOLOGY — Stair kind by building class: house/cottage → compact (stair_straight / half); academy/industrial/castle → wide/switchback/spiral in towers. Spec policy + existence + no buttress-as-stair confusion. Owns spec/variation typology + tests.
+>>> TRIGGER @VAL_ROOF_CONNECT — Roof variation (flat/hip/pitched/steep) with canopy_attachment / end_connectivity / roof_penetration / watertight stub staying fail-closed. Owns roof assemble + connection checks + tests.
+>>> TRIGGER @VAL_ENG_CONNECT — Engineering continuity pass: wall-to-wall runs, wall-to-roof bearing, tower-to-hall kiss. Strengthen or add connection checks; deliberately broken fixtures first.
