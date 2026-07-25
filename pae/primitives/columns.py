@@ -41,6 +41,8 @@ _ARCH_PIER_FRAC = 0.16  # of MODULE, each side of a free-standing arch
 _ARCH_SPRING_FRAC = 0.55  # of STOREY
 _ARCH_BANDS = 12
 _COLUMN_SEGMENTS = 24
+# Spiral tower newel — thicker than a colonnade shaft; greybox cylinder/box.
+_NEWEL_D_FRAC = 0.22  # of MODULE (diameter)
 
 
 def _shaft_sockets(width_cm: float, height_cm: float, piece: str) -> tuple:
@@ -221,6 +223,49 @@ def arch_freestanding() -> PrimitiveDescriptor:
     )
 
 
+def spiral_newel() -> PrimitiveDescriptor:
+    """Central newel pillar for a spiral / helical tower stair (Phase 4.7 shell).
+
+    Greybox cylinder (or box fallback) on the drum axis. Sub-bay footprint so the
+    AABB does not swallow the whole bay; ``rotates_about_center`` keeps it on axis
+    under yaw. Registered as ``kind=column`` for support / island rules.
+    """
+    d = MODULE_CM * _NEWEL_D_FRAC
+    tag = frozenset({module_tag(), "newel", "spiral_shell", "column", "structural"})
+    half = d * 0.5
+    return PrimitiveDescriptor(
+        id="spiral_newel",
+        kind="column",
+        footprint_modules=(1, 1),
+        height_storeys=1.0,
+        size_cm=(d, d, STOREY_CM),
+        sockets=(
+            SocketDesc(
+                name="bottom",
+                pos_cm=(half, half, 0.0),
+                normal=(0.0, 0.0, -1.0),
+                type="column_base",
+                tags=tag,
+            ),
+            SocketDesc(
+                name="top",
+                pos_cm=(half, half, STOREY_CM),
+                normal=(0.0, 0.0, 1.0),
+                type="column_head",
+                tags=tag,
+            ),
+        ),
+        tags=tag,
+        origin="center",
+        rotates_about_center=True,
+        aabb_min_cm=(-half, -half, 0.0),
+        notes=(
+            f"Spiral newel diameter {_NEWEL_D_FRAC:.2f}×MODULE "
+            f"({d:.1f} cm); greybox cylinder on tower axis."
+        ),
+    )
+
+
 def all_columns() -> tuple:
     return (
         pier_square(),
@@ -228,6 +273,7 @@ def all_columns() -> tuple:
         pilaster(),
         buttress(),
         arch_freestanding(),
+        spiral_newel(),
     )
 
 
@@ -319,6 +365,38 @@ def _round_column_mesh(name: str):
     return obj
 
 
+def _spiral_newel_mesh(name: str):
+    """Greybox cylinder on local origin (piece uses ``origin=center``)."""
+    from pae.primitives import bpy_util
+
+    d = MODULE_CM * _NEWEL_D_FRAC
+    r = d * 0.5
+    verts: List[Tuple[float, float, float]] = []
+    faces: List[List[int]] = []
+    start = 0
+    for i in range(_COLUMN_SEGMENTS):
+        a = 2.0 * math.pi * i / _COLUMN_SEGMENTS
+        x, y = r * math.cos(a), r * math.sin(a)
+        verts.append((x, y, 0.0))
+        verts.append((x, y, STOREY_CM))
+    for i in range(_COLUMN_SEGMENTS):
+        a0 = start + 2 * i
+        a1 = start + 2 * ((i + 1) % _COLUMN_SEGMENTS)
+        faces.append([a0, a1, a1 + 1, a0 + 1])
+    cap_lo = len(verts)
+    verts.append((0.0, 0.0, 0.0))
+    cap_hi = len(verts)
+    verts.append((0.0, 0.0, STOREY_CM))
+    for i in range(_COLUMN_SEGMENTS):
+        a0 = start + 2 * i
+        a1 = start + 2 * ((i + 1) % _COLUMN_SEGMENTS)
+        faces.append([cap_lo, a1, a0])
+        faces.append([cap_hi, a0 + 1, a1 + 1])
+    obj = bpy_util.mesh_from_verts_faces(name, verts, faces)
+    bpy_util.smooth_shade_curved_faces(obj)
+    return obj
+
+
 def build_column_mesh(desc: PrimitiveDescriptor, *, name: Optional[str] = None):
     from pae.primitives import bpy_util
 
@@ -327,6 +405,8 @@ def build_column_mesh(desc: PrimitiveDescriptor, *, name: Optional[str] = None):
 
     if desc.id == "column_round":
         return _round_column_mesh(obj_name)
+    if desc.id == "spiral_newel":
+        return _spiral_newel_mesh(obj_name)
     if desc.id == "buttress":
         parts = _buttress_parts()
     elif desc.id == "arch_freestanding":

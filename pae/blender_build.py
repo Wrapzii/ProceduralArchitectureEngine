@@ -89,6 +89,7 @@ KIND_MATERIAL_COLORS: Dict[str, Tuple[float, float, float, float]] = {
     "prop": (0.72, 0.55, 0.38, 1.0),  # decorative accent
     "light_anchor": (0.72, 0.65, 0.28, 1.0),  # warm anchor marker (muted for workbench)
     "plinth": (0.35, 0.34, 0.33, 1.0),  # foundation stone
+    "column": (0.62, 0.58, 0.52, 1.0),  # stone pier / newel
     "hole": (0.20, 0.20, 0.22, 1.0),  # void rim (rare in gallery)
 }
 _DEFAULT_KIND_COLOR: Tuple[float, float, float, float] = (0.75, 0.75, 0.75, 1.0)
@@ -114,6 +115,7 @@ ASSET_MATERIAL_COLORS: Dict[str, Tuple[float, float, float, float]] = {
     "stair_switchback": (0.75, 0.40, 0.28, 1.0),
     "stair_wide": (0.55, 0.22, 0.48, 1.0),  # plum monumental
     "stair_spiral_quarter": (0.78, 0.52, 0.18, 1.0),  # copper spiral
+    "spiral_newel": (0.55, 0.48, 0.40, 1.0),  # stone newel pillar
     "floor_hole": (0.12, 0.12, 0.18, 1.0),  # void rim
 }
 _TINTED_ASSET_PREFIXES = ("roof_", "tower_", "stair_")

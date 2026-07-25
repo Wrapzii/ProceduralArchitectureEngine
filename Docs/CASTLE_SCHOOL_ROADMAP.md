@@ -145,11 +145,13 @@ open.)
 **4.4 Moat, bridge, drawbridge.** Needs terrain interaction.
 **4.5 Keep** — a tall multi-storey block with its own internal program.
 **4.7 Habitable towers and spires.** Drum windows + `tower_junction` ring landed (defect
-0.6 / `test_tower_windows.py`). Still open: spires large enough to contain rooms; windows
-at tread height along the internal spiral; walkable top platform with a **circular** railing
-following the drum, not a straight run.
+0.6 / `test_tower_windows.py`). **Partial (@VAL_SPIRAL_SHELL):** central `spiral_newel`
+pillar + continuous `tower_arc` drum enclosure checks (`spiral_newel_exists`,
+`spiral_drum_enclosure`; door-bay exempt hook for @VAL_TOWER_DOOR). Still open: spires
+large enough to contain rooms; walkable top platform with a **circular** railing
+following the drum (@VAL_TOWER_RAMPART); hall→tower door (@VAL_TOWER_DOOR).
 *Verified by:* stair reachability to the top platform; every drum window at a tread height;
-railing continuity around a curve; headroom on the spiral.
+railing continuity around a curve; headroom on the spiral; newel+drum shell checks.
 
 **4.6 Baileys** — inner and outer wards, i.e. nested compounds. `site.py` merges buildings;
 it does not yet nest enclosures.
