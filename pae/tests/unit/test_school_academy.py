@@ -271,13 +271,12 @@ def test_undersized_school_fails_at_load_and_solve():
     assert any(f.check == "school_program" for f in sreport.failures)
 
 
-def test_spiral_stair_kind_rejected():
+def test_spiral_stair_kind_rejected_without_tower():
     data = school_academy_dict()
     data["circulation"]["stair_kind"] = "spiral"
     spec, report = load_spec(data)
-    assert spec is None
-    assert not report.ok
-    assert any("spiral" in f.message for f in report.failures)
+    assert spec is not None
+    assert report.ok
 
     spiral_spec = school_academy_spec()
     spiral_spec.circulation.stair_kind = "spiral"

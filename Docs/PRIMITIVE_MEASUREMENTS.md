@@ -33,11 +33,15 @@ Tolerance: **6.0 cm**. All dimensions from `pae/contract.py`.
 | `stair_wide` | stair | 2x2 | 800.0x800.0x350.0 | (0.0,0.0,0.0) | min_corner | False | yes |
 | `stair_spiral_quarter` | stair | 1x1 | 400.0x400.0x87.5 | (0.0,0.0,0.0) | center | True | yes |
 | `tower_arc_quarter` | tower_arc | 1x1 | 400.0x400.0x350.0 | (0.0,0.0,0.0) | center | True | yes |
+| `tower_arc_quarter_window` | tower_arc | 1x1 | 400.0x400.0x350.0 | (0.0,0.0,0.0) | center | True | yes |
+| `tower_junction` | tower_crown | 2x2 | 800.0x800.0x21.0 | (-400.0,-400.0,0.0) | center | True | yes |
 | `tower_crown` | tower_crown | 2x2 | 800.0x800.0x70.0 | (-400.0,-400.0,0.0) | center | True | yes |
 | `tower_cap` | tower_cap | 2x2 | 800.0x800.0x297.5 | (-400.0,-400.0,0.0) | center | True | yes |
 | `battlement` | battlement | 1x1 | 60.0x400.0x77.0 | (0.0,0.0,0.0) | min_corner | False | yes |
 | `roof_gable_infill` | roof | 1x1 | 400.0x400.0x240.0 | (0.0,0.0,0.0) | min_corner | False | yes |
 | `roof_pitched_slope` | roof | 1x1 | 400.0x400.0x240.0 | (0.0,0.0,0.0) | min_corner | False | yes |
+| `roof_hip` | roof | 1x1 | 400.0x400.0x240.0 | (0.0,0.0,0.0) | min_corner | False | yes |
+| `roof_valley` | roof | 1x1 | 400.0x400.0x135.0 | (0.0,0.0,0.0) | min_corner | False | yes |
 | `roof_flat` | roof | 1x1 | 400.0x400.0x30.0 | (0.0,0.0,0.0) | min_corner | False | yes |
 | `ground_plinth` | plinth | 1x1 | 400.0x400.0x30.0 | (0.0,0.0,0.0) | min_corner | False | yes |
 | `pier_square` | column | 1x1 | 400.0x400.0x350.0 | (0.0,0.0,0.0) | min_corner | False | yes |
@@ -68,5 +72,9 @@ Tolerance: **6.0 cm**. All dimensions from `pae/contract.py`.
 | `band_pilaster` | band | 1x1 | 15.0x40.0x350.0 | (0.0,0.0,0.0) | min_corner | False | yes |
 | `band_brace` | band | 1x1 | 15.0x400.0x350.0 | (0.0,0.0,0.0) | min_corner | False | yes |
 | `coping_cap` | band | 1x1 | 78.0x400.0x15.8 | (0.0,0.0,0.0) | min_corner | False | yes |
+| `light_anchor_sconce` | light_anchor | 1x1 | 8.0x8.0x8.0 | (-4.0,-4.0,-4.0) | min_corner | True | yes |
+| `light_anchor_chandelier` | light_anchor | 1x1 | 8.0x8.0x8.0 | (-4.0,-4.0,-4.0) | min_corner | True | yes |
+| `light_anchor_pendant` | light_anchor | 1x1 | 8.0x8.0x8.0 | (-4.0,-4.0,-4.0) | min_corner | True | yes |
 
 All pieces within tolerance.
+

@@ -538,7 +538,13 @@ def _window_cells_for_level(fp: FloorPlan, level: int) -> Set[Tuple[int, int]]:
 
 
 def _upper_storey_window_cells(fp: FloorPlan, level: int) -> Set[Tuple[int, int]]:
-    """Mirror plan._place_doors_windows glazing for levels above ground."""
+    """Mirror plan._place_doors_windows glazing for levels above ground.
+
+    Candidates are exterior south-face bays first (same preference as the plan
+    stage). Walking *all* WALL_LINE cells used to pick west-edge cells whose only
+    placed piece was an inner south-facing wall — primary face ``west`` never
+    received a window, so storey_egress VOLUME stayed critical on random specs.
+    """
     from pae.plan import _enclosed_cells_at_level
 
     massing = fp.massing
@@ -549,15 +555,27 @@ def _upper_storey_window_cells(fp: FloorPlan, level: int) -> Set[Tuple[int, int]
         (x, y) for (x, y), role in grid.cells.items() if role == CellRole.WALL_LINE
     )
     south = sorted((x, y) for x, y in wall_cells if (x, y - 1) not in interior)
-    n_win = max(0, massing.openings_windows_per_bay * max(1, len(south)))
-    if n_win == 0 and wall_cells:
+    # Other exterior faces as fallback when the south run is all door bays.
+    exterior = south + sorted(
+        c
+        for c in wall_cells
+        if c not in south
+        and (
+            (c[0] - 1, c[1]) not in interior
+            or (c[0] + 1, c[1]) not in interior
+            or (c[0], c[1] + 1) not in interior
+        )
+    )
+    candidates = exterior if exterior else wall_cells
+    n_win = max(0, massing.openings_windows_per_bay * max(1, len(south) or 1))
+    if n_win == 0 and candidates:
         # Upper storeys need >=1 aperture for storey_egress VOLUME when per_bay is
         # zero or ground glazing was suppressed.
         n_win = 1
     door_bays = set(fp.door_cells)
     out: List[Tuple[int, int]] = []
     placed = 0
-    for cell in wall_cells:
+    for cell in candidates:
         if placed >= n_win:
             break
         if cell in door_bays:

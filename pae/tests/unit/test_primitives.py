@@ -21,7 +21,12 @@ from pae.primitives.bpy_util import (
     normalize_boolean_solver,
     require_bpy,
 )
-from pae.primitives.roofs import DEFAULT_ROOF_PITCH, roof_pitched_height_cm, roof_rise_cm
+from pae.primitives.roofs import (
+    DEFAULT_ROOF_PITCH,
+    roof_hip_height_cm,
+    roof_pitched_height_cm,
+    roof_rise_cm,
+)
 
 
 REQUIRED_IDS = [
@@ -44,6 +49,8 @@ REQUIRED_IDS = [
     "battlement",
     "roof_gable_infill",
     "roof_pitched_slope",
+    "roof_hip",
+    "roof_valley",
     "roof_flat",
     "ground_plinth",
 ]
@@ -141,6 +148,24 @@ def test_roof_pitched_slope_module_footprint():
     assert slope.size_cm == pytest.approx((MODULE_CM, MODULE_CM, height))
     assert slope.footprint_modules == (1, 1)
     assert "slope" in slope.tags
+
+
+def test_roof_hip_module_footprint():
+    hip = get("roof_hip")
+    height = roof_hip_height_cm(DEFAULT_ROOF_PITCH, span_modules_x=1, span_modules_y=1)
+    assert hip.size_cm == pytest.approx((MODULE_CM, MODULE_CM, height))
+    assert hip.footprint_modules == (1, 1)
+    assert "hip" in hip.tags
+
+
+def test_roof_valley_module_footprint():
+    from pae.primitives.roofs import roof_valley_height_cm
+
+    valley = get("roof_valley")
+    height = roof_valley_height_cm(DEFAULT_ROOF_PITCH)
+    assert valley.size_cm == pytest.approx((MODULE_CM, MODULE_CM, height))
+    assert valley.footprint_modules == (1, 1)
+    assert "valley" in valley.tags
 
 
 def test_roof_flat_module_footprint():

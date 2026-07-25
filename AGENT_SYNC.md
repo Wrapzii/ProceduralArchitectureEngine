@@ -187,3 +187,4 @@ Suite at close: 405 passed, 1 failed (@TOWER_ATTACH above). Renders: Saved/Scree
 
 2026-07-25 — @RM_TOWER_WIN
 >>> DONE @RM_TOWER_WIN — Phase 0.6: helical/perimeter tower windows (tower_arc_quarter_window + drum wall overlays; skip attach-face yaw); tower_junction ring under crown/cap. Spiral stairs preserved. Tests: test_tower_windows.py (8) + test_tower_mesh stack. storey_egress VOLUME green; no freestanding islands.
+>>> DONE @RM_ROOF_ADV — S-011 steep pitch (pitched+hip height from spec.pitch >=1.6); S-012 roof_hip four-slope mesh + per-wing place; S-019 roof_valley V-trough stubs on L/U abutments (pitched also per-wing). Handbook section 3: catalog/measure/blender/validate deck+designed-pair/PRIMITIVE_MEASUREMENTS. Open gaps: diagonal valley merge (S-021), ridge/hip as real edge geom (S-020), AABB interpenetration only. test_hip_roof.py 11 passed.

@@ -513,6 +513,8 @@ _TINTED_ASSET_IDS = (
     "roof_flat",
     "roof_gable_infill",
     "roof_pitched_slope",
+    "roof_hip",
+    "roof_valley",
     "tower_arc_quarter",
     "tower_crown",
     "tower_cap",

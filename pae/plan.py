@@ -13,6 +13,7 @@ from typing import Dict, List, Optional, Set, Tuple
 from pae.contract import cell_to_world_cm
 from pae.report import Failure, Report
 from pae.solver import Massing, Volume
+from pae.spec import EntranceSpec
 
 
 class CellRole(Enum):
@@ -25,6 +26,7 @@ class CellRole(Enum):
     COURTYARD = 6  # open to sky, has ground, no roof
     CORRIDOR = 7  # school circulation spine
     CLASSROOM = 8  # programmed room cell (door to corridor)
+    DOUBLE_VOID = 9  # double-height volume — no intermediate floor slab
 
 
 @dataclass
@@ -82,6 +84,7 @@ class FloorPlan:
     entrance_cell: Tuple[int, int]
     door_cells: List[Tuple[int, int]] = field(default_factory=list)
     window_cells: List[Tuple[int, int]] = field(default_factory=list)
+    entrance_by_cell: Dict[Tuple[int, int], str] = field(default_factory=dict)
     stair_cells: List[Tuple[int, int]] = field(default_factory=list)
     ground_slab: bool = True
     name: str = "building"
@@ -96,6 +99,7 @@ class FloorPlan:
     interior_partitions: List[Tuple[int, int, int, str, bool]] = field(
         default_factory=list
     )
+    rooms: List = field(default_factory=list)  # RoomSpec from spec (optional)
 
 
 def _bbox(volumes: List[Volume]) -> Tuple[int, int, int, int]:
@@ -154,31 +158,100 @@ def _regions(
     return region_of
 
 
-def _place_doors_windows(
+def _wall_cells_on_facade(
+    wall_cells: List[Tuple[int, int]],
+    interior: Set[Tuple[int, int]],
+    facade: str,
+) -> List[Tuple[int, int]]:
+    """Sorted wall-line cells on one exterior face."""
+    facade = facade.lower()
+    if facade == "south":
+        out = [(x, y) for x, y in wall_cells if (x, y - 1) not in interior]
+    elif facade == "north":
+        out = [(x, y) for x, y in wall_cells if (x, y + 1) not in interior]
+    elif facade == "west":
+        out = [(x, y) for x, y in wall_cells if (x - 1, y) not in interior]
+    elif facade == "east":
+        out = [(x, y) for x, y in wall_cells if (x + 1, y) not in interior]
+    else:
+        raise ValueError(f"unknown facade {facade!r}")
+    return sorted(out)
+
+
+def _resolve_entrance_bay(
+    cells: List[Tuple[int, int]],
+    *,
+    bay: Optional[int],
+    role: str,
+) -> Optional[Tuple[int, int]]:
+    if not cells:
+        return None
+    if bay is not None:
+        idx = max(0, min(bay, len(cells) - 1))
+        return cells[idx]
+    if role in ("grand", "gate"):
+        return cells[len(cells) // 2]
+    return cells[0]
+
+
+def _place_entrance_doors(
     grid: StoreyGrid,
     interior: Set[Tuple[int, int]],
-    massing: Massing,
-) -> Tuple[List[Tuple[int, int]], List[Tuple[int, int]]]:
-    """Place ground-floor doors/windows on WALL_LINE cells (south face preferred)."""
+    entrances: List[EntranceSpec],
+) -> Tuple[List[Tuple[int, int]], Dict[Tuple[int, int], str]]:
+    """Place ground doors from declarative entrance specs (§1.1–1.2)."""
     doors: List[Tuple[int, int]] = []
-    windows: List[Tuple[int, int]] = []
+    entrance_by_cell: Dict[Tuple[int, int], str] = {}
     wall_cells = [
         (x, y)
         for (x, y), role in grid.cells.items()
         if role == CellRole.WALL_LINE
     ]
-    # Prefer south-face wall cells (no interior neighbour to -Y).
-    south = [
-        (x, y)
-        for x, y in wall_cells
-        if (x, y - 1) not in interior
-    ]
-    south.sort()
-    n_doors = max(0, massing.openings_doors_ground)
-    for i in range(min(n_doors, len(south))):
-        cell = south[i]
+    used: Set[Tuple[int, int]] = set()
+    for spec in entrances:
+        facade = spec.facade or "south"
+        candidates = _wall_cells_on_facade(wall_cells, interior, facade)
+        candidates = [c for c in candidates if c not in used]
+        cell = _resolve_entrance_bay(candidates, bay=spec.bay, role=spec.role)
+        if cell is None:
+            continue
         grid.set(cell[0], cell[1], CellRole.DOOR)
         doors.append(cell)
+        entrance_by_cell[cell] = spec.role
+        used.add(cell)
+    return doors, entrance_by_cell
+
+
+def _place_doors_windows(
+    grid: StoreyGrid,
+    interior: Set[Tuple[int, int]],
+    massing: Massing,
+) -> Tuple[List[Tuple[int, int]], List[Tuple[int, int]], Dict[Tuple[int, int], str]]:
+    """Place ground-floor doors/windows on WALL_LINE cells (south face preferred)."""
+    if massing.entrances:
+        doors, entrance_by_cell = _place_entrance_doors(
+            grid, interior, massing.entrances
+        )
+    else:
+        doors = []
+        entrance_by_cell = {}
+        wall_cells = [
+            (x, y)
+            for (x, y), role in grid.cells.items()
+            if role == CellRole.WALL_LINE
+        ]
+        # Prefer south-face wall cells (no interior neighbour to -Y).
+        south = [
+            (x, y)
+            for x, y in wall_cells
+            if (x, y - 1) not in interior
+        ]
+        south.sort()
+        n_doors = max(0, massing.openings_doors_ground)
+        for i in range(min(n_doors, len(south))):
+            cell = south[i]
+            grid.set(cell[0], cell[1], CellRole.DOOR)
+            doors.append(cell)
 
     remaining_wall = [
         (x, y)
@@ -186,6 +259,14 @@ def _place_doors_windows(
         if role == CellRole.WALL_LINE
     ]
     remaining_wall.sort()
+    south = [
+        (x, y)
+        for x, y in remaining_wall
+        if (x, y - 1) not in interior
+    ]
+    south.sort()
+    n_doors = len(doors)
+    windows: List[Tuple[int, int]] = []
     if massing.openings_skip_ground_windows:
         n_win = 0
     elif massing.openings_windows_ground is not None:
@@ -201,7 +282,7 @@ def _place_doors_windows(
         # — assembly selects window assets on wall runs). Track separately.
         windows.append(cell)
         placed += 1
-    return doors, windows
+    return doors, windows, entrance_by_cell
 
 
 def _face_toward(
@@ -221,6 +302,73 @@ def _face_toward(
 
 
 _CARVE_STOREY_USES = frozenset({"classroom", "classrooms", "dormitory"})
+
+# Room kind → solver volume role(s) for cell assignment (first match wins).
+_KIND_TO_VOLUME_ROLES: Dict[str, Tuple[str, ...]] = {
+    "hall": ("hall", "main"),
+    "classroom": ("classroom_wing",),
+    "chapel": ("admin",),
+    "library": ("admin",),
+    "dormitory": ("classroom_wing",),
+    "kitchen": ("admin",),
+    "store": ("admin",),
+}
+
+_DOUBLE_HEIGHT_SPAN = 2  # storeys of vertical clearance (ground + one open level)
+
+
+def _volume_cells_for_room(massing: Massing, kind: str) -> Set[Tuple[int, int]]:
+    roles = _KIND_TO_VOLUME_ROLES.get(kind)
+    if not roles:
+        return set()
+    for role in roles:
+        cells: Set[Tuple[int, int]] = set()
+        for vol in massing.volumes:
+            if vol.role == role:
+                cells |= vol.cells()
+        if cells:
+            return cells
+    return set()
+
+
+def _apply_double_height_rooms(
+    storeys: List[StoreyGrid],
+    massing: Massing,
+) -> None:
+    """Suppress intermediate floors over double-height room cells (§2.4).
+
+    Perimeter WALL_LINE cells are preserved so walls still enclose the volume.
+    Interior cells on intermediate storeys become DOUBLE_VOID (no floor slab).
+    A one-cell gallery ring along the room perimeter stays walkable so wings
+    can still reach stairs across a double-height hall.
+    """
+    if not massing.rooms or massing.storeys < 2:
+        return
+    for room in massing.rooms:
+        if not room.double_height:
+            continue
+        cells = _volume_cells_for_room(massing, room.kind)
+        if not cells:
+            continue
+        for level in range(1, min(_DOUBLE_HEIGHT_SPAN, massing.storeys)):
+            if level >= len(storeys):
+                break
+            grid = storeys[level]
+            for x, y in cells:
+                role = grid.get(x, y)
+                if role not in (
+                    CellRole.INTERIOR,
+                    CellRole.CORRIDOR,
+                    CellRole.CLASSROOM,
+                ):
+                    continue
+                # Gallery ring: keep perimeter interior cells walkable.
+                if any(
+                    grid.get(x + dx, y + dy) == CellRole.WALL_LINE
+                    for dx, dy in ((-1, 0), (1, 0), (0, -1), (0, 1))
+                ):
+                    continue
+                grid.set(x, y, CellRole.DOUBLE_VOID)
 
 
 def _carve_double_loaded_wings(
@@ -335,7 +483,7 @@ def _filter_stair_void_blocked(
     List[Tuple[int, int, int, str, bool]],
 ]:
     """Drop classroom/corridor/partition entries on cells marked STAIR or VOID."""
-    blocked = frozenset({CellRole.STAIR, CellRole.VOID})
+    blocked = frozenset({CellRole.STAIR, CellRole.VOID, CellRole.DOUBLE_VOID})
 
     def is_blocked(level: int, x: int, y: int) -> bool:
         if level < 0 or level >= len(storeys):
@@ -373,10 +521,12 @@ def _apply_stairs(
         return failures
 
     # Straight run: first cell is bottom; occupies listed cells on each climbed level.
+    # Spiral: single tower/interior cell — may be DOOR or WALL_LINE, not INTERIOR.
+    is_spiral = (massing.stair_kind or "").lower() == "spiral"
     for level in range(massing.storeys - 1):
         interior = interior_by_level.get(level, set())
         for sx, sy in stair_cells:
-            if (sx, sy) not in interior:
+            if not is_spiral and (sx, sy) not in interior:
                 failures.append(
                     Failure(
                         check="stair_in_interior",
@@ -412,7 +562,7 @@ def _build_circulation(
         voidish = {
             c
             for c, role in storeys[level].cells.items()
-            if role in (CellRole.VOID,)
+            if role in (CellRole.VOID, CellRole.DOUBLE_VOID)
         }
         # Stairs are walkable landings for region membership at their level.
         rmap = _regions(interior, voidish)
@@ -538,14 +688,17 @@ def plan(massing: Massing) -> Tuple[Optional[FloorPlan], Report]:
 
     door_cells: List[Tuple[int, int]] = []
     window_cells: List[Tuple[int, int]] = []
+    entrance_by_cell: Dict[Tuple[int, int], str] = {}
     if storeys:
-        door_cells, window_cells = _place_doors_windows(
+        door_cells, window_cells, entrance_by_cell = _place_doors_windows(
             storeys[0], interior_by_level[0], massing
         )
 
     classroom_cells, corridor_cells, interior_partitions = _carve_double_loaded_wings(
         storeys, massing
     )
+
+    _apply_double_height_rooms(storeys, massing)
 
     failures.extend(_apply_stairs(storeys, massing, interior_by_level))
 
@@ -595,6 +748,7 @@ def plan(massing: Massing) -> Tuple[Optional[FloorPlan], Report]:
         entrance_cell=entrance,
         door_cells=door_cells,
         window_cells=window_cells,
+        entrance_by_cell=entrance_by_cell,
         stair_cells=list(massing.stair_cells),
         ground_slab=massing.ground_slab,
         name=massing.name,
@@ -606,5 +760,6 @@ def plan(massing: Massing) -> Tuple[Optional[FloorPlan], Report]:
         classroom_cells=classroom_cells,
         corridor_cells=corridor_cells,
         interior_partitions=interior_partitions,
+        rooms=list(massing.rooms),
     )
     return fp, Report.from_failures([])

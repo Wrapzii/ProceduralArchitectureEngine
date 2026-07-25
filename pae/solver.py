@@ -11,7 +11,14 @@ from typing import Dict, List, Optional, Set, Tuple
 
 from pae.contract import cell_to_world_cm
 from pae.report import Failure, Report
-from pae.spec import BuildingSpec, FootprintSpec, TowerSpec, SUPPORTED_STAIR_KINDS
+from pae.spec import (
+    BuildingSpec,
+    EntranceSpec,
+    FootprintSpec,
+    RoomSpec,
+    TowerSpec,
+    SUPPORTED_STAIR_KINDS,
+)
 
 
 # Enclosed building bodies (not courtyard). Includes school program roles.
@@ -96,6 +103,8 @@ class Massing:
     roof_kind: str = "flat"
     roof_pitch: float = 1.0
     storey_use: List[str] = field(default_factory=list)
+    rooms: List[RoomSpec] = field(default_factory=list)
+    entrances: List[EntranceSpec] = field(default_factory=list)
 
     def volume_by_id(self, vid: str) -> Optional[Volume]:
         for v in self.volumes:
@@ -652,12 +661,34 @@ def _default_stair_cell(volumes: List[Volume]) -> Optional[Tuple[int, int]]:
     return (sx, sy)
 
 
+def _default_spiral_stair_cell(volumes: List[Volume]) -> Optional[Tuple[int, int]]:
+    """Single interior cell for a freestanding spiral (no tower)."""
+    m = _primary_body(volumes)
+    if m is None:
+        return None
+    return (m.x0 + (m.x1 - m.x0) // 2, m.y0 + (m.y1 - m.y0) // 2)
+
+
+def _tower_stair_cell(volumes: List[Volume]) -> Optional[Tuple[int, int]]:
+    """First tower footprint cell — preferred anchor for spiral stairs."""
+    for v in volumes:
+        if v.role == "tower":
+            return (v.x0, v.y0)
+    return None
+
+
 def _default_stair_cells(
     volumes: List[Volume],
     stair_kind: str,
 ) -> List[Tuple[int, int]]:
-    """Auto stair footprint: 2×1 straight or 2×2 switchback/wide."""
+    """Auto stair footprint: 2×1 straight, 2×2 switchback/wide, 1×1 spiral."""
     kind = (stair_kind or "straight").lower()
+    if kind == "spiral":
+        tower_cell = _tower_stair_cell(volumes)
+        if tower_cell is not None:
+            return [tower_cell]
+        auto = _default_spiral_stair_cell(volumes)
+        return [auto] if auto is not None else []
     m = _primary_body(volumes)
     if m is None:
         return []
@@ -722,7 +753,19 @@ def solve(spec: BuildingSpec) -> Tuple[Optional[Massing], Report]:
             )
 
     stair_kind = (spec.circulation.stair_kind or "straight").lower()
-    if spec.storeys > 1 and stair_kind not in SUPPORTED_STAIR_KINDS:
+    has_tower = any(v.role == "tower" for v in volumes)
+    if spec.storeys > 1 and stair_kind == "spiral" and not has_tower:
+        failures.append(
+            Failure(
+                check="stair_kind",
+                message=(
+                    "spiral stair_kind requires a tower volume "
+                    "(single-cell tower well)"
+                ),
+                world_xyz=cell_to_world_cm(0, 0, 1),
+            )
+        )
+    elif spec.storeys > 1 and stair_kind not in SUPPORTED_STAIR_KINDS:
         supported = ", ".join(sorted(SUPPORTED_STAIR_KINDS))
         failures.append(
             Failure(
@@ -774,5 +817,7 @@ def solve(spec: BuildingSpec) -> Tuple[Optional[Massing], Report]:
         roof_kind=spec.roof.kind,
         roof_pitch=spec.roof.pitch,
         storey_use=list(spec.storey_use),
+        entrances=list(spec.entrances),
+        rooms=list(spec.rooms),
     )
     return massing, Report.from_failures([])

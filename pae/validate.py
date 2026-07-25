@@ -7,7 +7,7 @@ Export must refuse to run when critical defects exist.
 from __future__ import annotations
 
 import math
-from typing import Dict, Iterable, List, Tuple
+from typing import Dict, Iterable, List, Set, Tuple
 
 from pae.assembly_types import (
     Assembly,
@@ -30,6 +30,9 @@ from pae.contract import (
 from pae.plan import CellRole
 from pae.report import Failure, Report
 
+# S-130 / roadmap 2.1 m standing clearance above walkable surfaces (not CHEST_HEIGHT_CM).
+HEADROOM_CLEARANCE_CM = 210.0
+
 
 def validate(assembly: Assembly) -> Tuple[Assembly, Report]:
     """Validate an assembly. Returns (assembly, report)."""
@@ -40,17 +43,22 @@ def validate(assembly: Assembly) -> Tuple[Assembly, Report]:
     failures.extend(_check_interpenetration(assembly))
     failures.extend(_check_enclosure(assembly))
     failures.extend(_check_floor_coverage(assembly))
+    failures.extend(_check_double_height_no_floor(assembly))
+    failures.extend(_check_room_specs(assembly))
     failures.extend(_check_stair_reachability(assembly))
     failures.extend(_check_stair_exit_clearance(assembly))
     failures.extend(_check_classroom_corridor_connectivity(assembly))
     failures.extend(_check_run_fit(assembly))
     failures.extend(_check_aperture_sanity(assembly))
+    failures.extend(_check_no_bare_aperture_holes(assembly))
     failures.extend(_check_structural_islands(assembly))
     failures.extend(_check_canopy_attachment(assembly))
     failures.extend(_check_roof_penetration(assembly))
     failures.extend(_check_band_attachment(assembly))
     failures.extend(_check_aperture_reachability(assembly))
     failures.extend(_check_storey_egress(assembly))
+    failures.extend(_check_headroom(assembly))
+    failures.extend(_check_watertight_envelope(assembly))
     failures = _sort_failures(failures)
     return assembly, Report.from_failures(failures)
 
@@ -71,6 +79,7 @@ def _sort_failures(failures: List[Failure]) -> List[Failure]:
 
 
 def _placement_aabb(p: SolidPlacement) -> Tuple[Tuple[float, float, float], Tuple[float, float, float]]:
+    # Rule 5.1: ``p.cell`` is the placement anchor for world transforms — intentional here.
     return placement_world_aabb(
         p.cell[0],
         p.cell[1],
@@ -368,7 +377,13 @@ def _gaps_along_run(run: WallRun, pieces: Dict[str, SolidPlacement]) -> List[Fai
 _TOWER_SOLID_KINDS = frozenset({"tower_arc", "tower_crown", "tower_cap"})
 # Roof decks that tuck over perimeter walls at the eave (§6 / assemble).
 _ROOF_DECK_ASSET_IDS = frozenset(
-    {"roof_flat", "roof_pitched_slope", "roof_gable_infill"}
+    {
+        "roof_flat",
+        "roof_pitched_slope",
+        "roof_gable_infill",
+        "roof_hip",
+        "roof_valley",
+    }
 )
 
 
@@ -520,6 +535,17 @@ def _designed_roof_gable_slope_pair(a: SolidPlacement, b: SolidPlacement) -> boo
     return a.kind == "roof" and b.kind == "roof" and a.level == b.level
 
 
+def _designed_roof_valley_pair(a: SolidPlacement, b: SolidPlacement) -> bool:
+    """Valley stub overlaps abutting hip/slope decks on the wing seam (S-019)."""
+    ids = {a.asset_id, b.asset_id}
+    if "roof_valley" not in ids:
+        return False
+    partners = ids - {"roof_valley"}
+    if not partners.issubset({"roof_hip", "roof_pitched_slope", "roof_gable_infill"}):
+        return False
+    return a.kind == "roof" and b.kind == "roof" and a.level == b.level
+
+
 def _interpenetration_pair_allowed(
     a: SolidPlacement,
     b: SolidPlacement,
@@ -546,6 +572,8 @@ def _interpenetration_pair_allowed(
     if _designed_stair_opening_pair(a, b):
         return True
     if _designed_roof_gable_slope_pair(a, b):
+        return True
+    if _designed_roof_valley_pair(a, b):
         return True
     return False
 
@@ -689,7 +717,7 @@ def _flood_interior_leaks(
         ):
             leaks.append(((cx, cy), cell_world(cx, cy)))
             continue
-        if role in (CellRole.COURTYARD, CellRole.VOID):
+        if role in (CellRole.COURTYARD, CellRole.VOID, CellRole.DOUBLE_VOID):
             continue
         for n in neighbours(cx, cy):
             if n not in visited:
@@ -778,6 +806,140 @@ def _check_floor_coverage(assembly: Assembly) -> List[Failure]:
     return failures
 
 
+def _cell_has_solid_floor(
+    assembly: Assembly,
+    level: int,
+    cx: int,
+    cy: int,
+    floor_z: float,
+) -> bool:
+    """True when a solid (non-hole) floor pad plugs *cell* — Rule 5.1 via ``covered_cells``."""
+    from pae.trim import covered_cells
+
+    cell = (cx, cy)
+    if any(
+        p.asset_id == "floor_hole" and p.level == level and cell in covered_cells(p)
+        for p in assembly.placements
+    ):
+        return False
+    for p in assembly.placements:
+        if p.kind != "floor" or p.level != level or p.asset_id == "floor_hole":
+            continue
+        if cell not in covered_cells(p):
+            continue
+        if _is_spanning_floor(p):
+            continue
+        return True
+    return False
+
+
+def _check_double_height_no_floor(assembly: Assembly) -> List[Failure]:
+    """Double-height volumes must not carry a solid floor on intermediate storeys."""
+    failures: List[Failure] = []
+    hole_cells_by_level: Dict[int, set[Tuple[int, int]]] = {}
+    for p in assembly.placements:
+        if p.asset_id == "floor_hole" and p.kind == "floor":
+            hole_cells_by_level.setdefault(p.level, set()).add(p.cell)
+
+    for level, layer in sorted(assembly.floor_plan.items()):
+        if level == 0:
+            continue
+        floor_z = level * STOREY_CM
+        holes = hole_cells_by_level.get(level, set())
+        ox, oy = layer.origin_cell
+        for ly in range(layer.height):
+            for lx in range(layer.width):
+                if layer.cells[ly][lx] != CellRole.DOUBLE_VOID:
+                    continue
+                cx, cy = ox + lx, oy + ly
+                if (cx, cy) in holes:
+                    continue
+                if _cell_has_solid_floor(assembly, level, cx, cy, floor_z):
+                    failures.append(
+                        Failure(
+                            check="double_height_no_floor",
+                            message=(
+                                f"solid floor under DOUBLE_VOID cell ({cx}, {cy}) "
+                                f"level {level}"
+                            ),
+                            world_xyz=(
+                                cx * MODULE_CM + MODULE_CM * 0.5,
+                                cy * MODULE_CM + MODULE_CM * 0.5,
+                                floor_z,
+                            ),
+                            critical=True,
+                        )
+                    )
+    return failures
+
+
+def _check_room_specs(assembly: Assembly) -> List[Failure]:
+    """Optional program checks when room_specs were declared on the spec."""
+    failures: List[Failure] = []
+    if not assembly.room_specs:
+        return failures
+
+    classroom_cells = 0
+    hall_cells = 0
+    for level, layer in sorted(assembly.floor_plan.items()):
+        ox, oy = layer.origin_cell
+        for ly in range(layer.height):
+            for lx in range(layer.width):
+                role = layer.cells[ly][lx]
+                if role == CellRole.CLASSROOM:
+                    classroom_cells += 1
+                elif role == CellRole.INTERIOR and level == 0:
+                    cx, cy = ox + lx, oy + ly
+                    hall_cells += 1
+
+    for room in assembly.room_specs:
+        kind = str(room.get("kind", "")).lower()
+        name = str(room.get("name", kind))
+        if kind == "classroom":
+            min_bays = room.get("area_bays")
+            if min_bays is not None and classroom_cells < int(min_bays):
+                failures.append(
+                    Failure(
+                        check="room_spec",
+                        message=(
+                            f"room {name!r} expects >= {min_bays} classroom cells, "
+                            f"got {classroom_cells}"
+                        ),
+                        world_xyz=None,
+                        critical=False,
+                    )
+                )
+        elif kind == "hall" and hall_cells == 0:
+            failures.append(
+                Failure(
+                    check="room_spec",
+                    message=f"declared hall room {name!r} but plan has no hall interior",
+                    world_xyz=None,
+                    critical=False,
+                )
+            )
+        if room.get("double_height"):
+            has_void = any(
+                layer.cells[ly][lx] == CellRole.DOUBLE_VOID
+                for layer in assembly.floor_plan.values()
+                for ly in range(layer.height)
+                for lx in range(layer.width)
+            )
+            if not has_void:
+                failures.append(
+                    Failure(
+                        check="room_spec",
+                        message=(
+                            f"room {name!r} is double_height but plan has no "
+                            "DOUBLE_VOID cells"
+                        ),
+                        world_xyz=None,
+                        critical=True,
+                    )
+                )
+    return failures
+
+
 # --- §7.7 stair reachability -------------------------------------------------
 
 
@@ -853,6 +1015,8 @@ def _check_classroom_corridor_connectivity(assembly: Assembly) -> List[Failure]:
 
     Buildings without classrooms skip this check. Critical when classrooms exist.
     """
+    from pae.trim import covered_cells
+
     failures: List[Failure] = []
     door_faces: set[Tuple[int, int, int, str]] = set()
     for p in assembly.placements:
@@ -861,7 +1025,9 @@ def _check_classroom_corridor_connectivity(assembly: Assembly) -> List[Failure]:
         face = _partition_face_from_tags(p.tags)
         if face is None:
             continue
-        door_faces.add((p.level, p.cell[0], p.cell[1], face))
+        # Rule 5.1: partition doors may span bays — register every covered cell.
+        for c in covered_cells(p):
+            door_faces.add((p.level, c[0], c[1], face))
 
     for level, layer in sorted(assembly.floor_plan.items()):
         ox, oy = layer.origin_cell
@@ -938,7 +1104,11 @@ def _check_classroom_corridor_connectivity(assembly: Assembly) -> List[Failure]:
 
 
 def placement_footprint_cells(p: SolidPlacement) -> List[Tuple[int, int]]:
-    """Module cells covered by a placement's XY footprint (anchor = min corner)."""
+    """Module cells covered by a placement's XY footprint (anchor = min corner).
+
+    Legacy anchor+extent heuristic for stair tests. Spatial queries in validators must
+    use ``pae.trim.covered_cells`` (Rule 5.1) — yawed / spanning pieces differ here.
+    """
     sx, sy = float(p.size_cm[0]), float(p.size_cm[1])
     yaw = int(p.yaw) % 360
     if yaw in (90, 270):
@@ -1024,7 +1194,9 @@ def _solid_blocks_headroom(
     """True when a wall/roof/solid floor meaningfully fills the exit head box."""
     if solid.asset_id == "floor_hole":
         return False
-    if solid.kind not in ("wall", "roof", "floor", "prop"):
+    if solid.kind == "prop":
+        return False
+    if solid.kind not in ("wall", "roof", "floor"):
         return False
     # Spanning floors are opened at holes by mesh contract; AABB still covers
     # the bay — do not treat them as blockers when holes exist (checked separately).
@@ -1176,11 +1348,16 @@ def _check_structural_islands(assembly: Assembly) -> List[Failure]:
     boxes = [_placement_aabb(p) for p in pieces]
     n = len(pieces)
 
-    # Bucket by cell neighbourhood so this stays near-linear instead of O(n^2) on a site
-    # with thousands of placements.
+    from pae.trim import covered_cells
+
+    # Bucket by covered cells so spanning roofs/decks join the touch graph (Rule 5.1).
     buckets: Dict[Tuple[int, int], List[int]] = {}
+    piece_cells: List[Set[Tuple[int, int]]] = []
     for i, p in enumerate(pieces):
-        buckets.setdefault(p.cell, []).append(i)
+        cells = covered_cells(p)
+        piece_cells.append(cells)
+        for c in cells:
+            buckets.setdefault(c, []).append(i)
 
     parent = list(range(n))
 
@@ -1196,14 +1373,14 @@ def _check_structural_islands(assembly: Assembly) -> List[Failure]:
             parent[rb] = ra
 
     for i, p in enumerate(pieces):
-        cx, cy = p.cell
-        for dx in (-1, 0, 1):
-            for dy in (-1, 0, 1):
-                for j in buckets.get((cx + dx, cy + dy), ()):
-                    if j <= i:
-                        continue
-                    if aabb_intersects(boxes[i][0], boxes[i][1], boxes[j][0], boxes[j][1]):
-                        union(i, j)
+        for cx, cy in piece_cells[i]:
+            for dx in (-1, 0, 1):
+                for dy in (-1, 0, 1):
+                    for j in buckets.get((cx + dx, cy + dy), ()):
+                        if j <= i:
+                            continue
+                        if aabb_intersects(boxes[i][0], boxes[i][1], boxes[j][0], boxes[j][1]):
+                            union(i, j)
 
     groups: Dict[int, List[int]] = {}
     for i in range(n):
@@ -1540,15 +1717,20 @@ def _check_aperture_reachability(assembly: Assembly) -> List[Failure]:
         p for p in assembly.placements
         if p.kind == "wall" and ("door" in p.asset_id or "gate" in p.asset_id)
         and p.level > 0
+        and "partition" not in set(p.tags)
     ]
     if not doors:
         return []
 
     # Walkable surfaces per level, by cell.
     walkable: Dict[int, set] = {}
+    balcony_deck: Dict[int, set] = {}
     for p in assembly.placements:
         if p.kind in ("floor", "surface") and "hole" not in p.asset_id:
-            walkable.setdefault(p.level, set()).update(covered_cells(p))
+            cells = covered_cells(p)
+            walkable.setdefault(p.level, set()).update(cells)
+            if p.kind == "floor" and "balcony" in p.tags:
+                balcony_deck.setdefault(p.level, set()).update(cells)
         elif p.kind == "stair":
             walkable.setdefault(p.level, set()).update(covered_cells(p))
 
@@ -1566,11 +1748,14 @@ def _check_aperture_reachability(assembly: Assembly) -> List[Failure]:
         cells = covered_cells(d)
         # Somewhere adjacent to this door there must be deck that is NOT simply the room
         # the door is standing in — i.e. an outside landing, balcony or gallery.
+        landing = balcony_deck.get(d.level, set())
         reachable = False
         for c in cells:
             for dx, dy in ((0, 1), (0, -1), (1, 0), (-1, 0)):
                 n = (c[0] + dx, c[1] + dy)
-                if n in deck and n not in inside:
+                # Gallery deck cells share a grid bay with interior floor at the
+                # wall line — still count as an outside landing when tagged balcony.
+                if n in deck and (n not in inside or n in landing):
                     reachable = True
                     break
             if reachable:
@@ -1585,12 +1770,7 @@ def _check_aperture_reachability(assembly: Assembly) -> List[Failure]:
                     ),
                     world_xyz=_centre(bb_min, bb_max),
                     piece_id=d.piece_id,
-                    # WARNING, not critical, for ONE milestone only. This check is correct
-                    # and finds 25 real defects across the existing milestone fixtures
-                    # (M2's first-floor door opens into air). Promoting it now would break
-                    # 26 tests owned by other lanes. Roadmap 0.5: fix the fixtures with
-                    # pae.variation, then make this critical. Do not leave it a warning.
-                    critical=False,
+                    critical=True,
                 )
             )
     return failures
@@ -1646,9 +1826,7 @@ def _check_storey_egress(assembly: Assembly) -> List[Failure]:
                 message="building has no exterior door at ground level — GROUND",
                 world_xyz=None,
                 piece_id=None,
-                # Warning for one milestone: fires on minimal synthetic fixtures owned by
-                # other lanes. Roadmap 0.5 promotes it with aperture_reachability.
-                critical=False,
+                critical=True,
             )
         )
 
@@ -1686,11 +1864,167 @@ def _check_storey_egress(assembly: Assembly) -> List[Failure]:
                     ),
                     world_xyz=None,
                     piece_id=None,
-                    critical=False,  # see GROUND above — roadmap 0.5
+                    critical=True,
                 )
             )
 
     return failures
+
+
+# --- §7.18 headroom (S-130) --------------------------------------------------
+
+
+def _is_walkable_surface(p: SolidPlacement) -> bool:
+    """Indoor walk surfaces only — not site ground/surface tiles under the building."""
+    if p.kind == "stair":
+        return True
+    if p.kind == "floor" and "hole" not in p.asset_id:
+        return True
+    return False
+
+
+def _walk_surface_z_at_cell(p: SolidPlacement, cell: Tuple[int, int]) -> float | None:
+    """Approximate tread / deck top (world Z) for a walkable piece in *cell*."""
+    from pae.trim import covered_cells
+
+    smin, smax = _placement_aabb(p)
+    wx0, wy0 = cell[0] * MODULE_CM, cell[1] * MODULE_CM
+    wx1, wy1 = wx0 + MODULE_CM, wy0 + MODULE_CM
+    ox = min(smax[0], wx1) - max(smin[0], wx0)
+    oy = min(smax[1], wy1) - max(smin[1], wy0)
+    if ox <= TOL_CM or oy <= TOL_CM:
+        return None
+    if p.kind == "stair":
+        axis = 1 if p.yaw in (0, 180) else 0
+        ordered = sorted(covered_cells(p), key=lambda c: c[axis])
+        if len(ordered) <= 1:
+            return smax[2]
+        try:
+            idx = ordered.index(cell)
+        except ValueError:
+            return None
+        frac = idx / (len(ordered) - 1)
+        return smin[2] + frac * (smax[2] - smin[2])
+    return smax[2]
+
+
+def _head_probe_boxes_for_walkable(
+    p: SolidPlacement,
+) -> List[Tuple[Tuple[float, float, float], Tuple[float, float, float]]]:
+    """Character-pass probes above each walkable bay (reuses stair exit head pattern)."""
+    from pae.trim import covered_cells
+
+    half = 40.0
+    boxes: List[Tuple[Tuple[float, float, float], Tuple[float, float, float]]] = []
+    for cell in covered_cells(p):
+        z0 = _walk_surface_z_at_cell(p, cell)
+        if z0 is None:
+            continue
+        cx = cell[0] * MODULE_CM + MODULE_CM * 0.5
+        cy = cell[1] * MODULE_CM + MODULE_CM * 0.5
+        z1 = z0 + HEADROOM_CLEARANCE_CM
+        boxes.append(
+            (
+                (cx - half, cy - half, z0),
+                (cx + half, cy + half, z1),
+            )
+        )
+    return boxes
+
+
+def _check_headroom(assembly: Assembly) -> List[Failure]:
+    """Walkable floors and stairs need standing clearance without solid plugs above.
+
+    Reuses ``_solid_blocks_headroom`` from stair exit clearance (S-130 / roadmap 2.1 m).
+    """
+    failures: List[Failure] = []
+    walkables = [p for p in assembly.placements if _is_walkable_surface(p)]
+    if not walkables:
+        return failures
+
+    for walk in walkables:
+        for head_min, head_max in _head_probe_boxes_for_walkable(walk):
+            for other in assembly.placements:
+                if other.piece_id == walk.piece_id:
+                    continue
+                if other.asset_id == "floor_hole":
+                    continue
+                if not _solid_blocks_headroom(other, head_min, head_max):
+                    continue
+                failures.append(
+                    Failure(
+                        check="headroom",
+                        message=(
+                            f"walkable {walk.piece_id} ({walk.asset_id}) blocked by "
+                            f"{other.kind} {other.piece_id} ({other.asset_id}) — "
+                            f"less than {HEADROOM_CLEARANCE_CM:.0f} cm clearance"
+                        ),
+                        world_xyz=(
+                            0.5 * (head_min[0] + head_max[0]),
+                            0.5 * (head_min[1] + head_max[1]),
+                            0.5 * (head_min[2] + head_max[2]),
+                        ),
+                        piece_id=other.piece_id,
+                        critical=True,
+                    )
+                )
+    return failures
+
+
+# --- §7.19 watertight envelope stub (S-021) ----------------------------------
+
+
+def _check_watertight_envelope(assembly: Assembly) -> List[Failure]:
+    """Warning stub: top-storey interior floor cells should have roof ``covered_cells``."""
+    from pae.trim import covered_cells
+
+    floor_by_level: Dict[int, Set[Tuple[int, int]]] = {}
+    for p in assembly.placements:
+        if p.kind == "floor" and "hole" not in p.asset_id:
+            floor_by_level.setdefault(p.level, set()).update(covered_cells(p))
+    if not floor_by_level:
+        return []
+
+    interior_cells: Set[Tuple[int, int]] = set()
+    for layer in assembly.floor_plan.values():
+        ox, oy = layer.origin_cell
+        for ly in range(layer.height):
+            for lx in range(layer.width):
+                role = layer.cells[ly][lx]
+                if role in (
+                    CellRole.INTERIOR,
+                    CellRole.CLASSROOM,
+                    CellRole.CORRIDOR,
+                ):
+                    interior_cells.add((ox + lx, oy + ly))
+
+    roof_cells: Set[Tuple[int, int]] = set()
+    for p in assembly.placements:
+        if p.kind == "roof":
+            roof_cells |= covered_cells(p)
+
+    top_level = max(floor_by_level)
+    uncovered = (floor_by_level[top_level] & interior_cells) - roof_cells
+    if not uncovered:
+        return []
+
+    sample = next(iter(uncovered))
+    return [
+        Failure(
+            check="watertight_envelope",
+            message=(
+                f"storey {top_level} has {len(uncovered)} floor cell(s) without roof "
+                f"coverage (e.g. {sample})"
+            ),
+            world_xyz=(
+                sample[0] * MODULE_CM + MODULE_CM * 0.5,
+                sample[1] * MODULE_CM + MODULE_CM * 0.5,
+                float(top_level * STOREY_CM),
+            ),
+            piece_id=None,
+            critical=False,
+        )
+    ]
 
 
 def _check_run_fit(assembly: Assembly) -> List[Failure]:
@@ -1724,6 +2058,17 @@ def _check_run_fit(assembly: Assembly) -> List[Failure]:
 
 
 # --- §7.9 aperture sanity ----------------------------------------------------
+
+
+def _check_no_bare_aperture_holes(assembly: Assembly) -> List[Failure]:
+    """Roadmap §1.5 — passage openings must carry a door/gate leaf (extends aperture family).
+
+    Appended separately so ``_check_aperture_sanity`` / ``_check_aperture_reachability``
+    bodies stay owned by their lanes; this only adds the bare-hole leaf rule.
+    """
+    from pae.existence import check_no_bare_aperture_holes
+
+    return check_no_bare_aperture_holes(assembly)
 
 
 def _check_aperture_sanity(assembly: Assembly) -> List[Failure]:
@@ -1841,4 +2186,11 @@ def _check_door_walkable(
     return failures
 
 
-__all__ = ["validate"]
+__all__ = [
+    "validate",
+    "HEADROOM_CLEARANCE_CM",
+    "placement_footprint_cells",
+    "_check_stair_exit_clearance",
+    "_check_headroom",
+    "_check_no_bare_aperture_holes",
+]

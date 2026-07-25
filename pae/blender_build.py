@@ -87,6 +87,7 @@ KIND_MATERIAL_COLORS: Dict[str, Tuple[float, float, float, float]] = {
     "door": (0.58, 0.36, 0.24, 1.0),  # dark wood (wall tint)
     "window": (0.58, 0.72, 0.82, 1.0),  # pale glazing (wall tint)
     "prop": (0.72, 0.55, 0.38, 1.0),  # decorative accent
+    "light_anchor": (0.72, 0.65, 0.28, 1.0),  # warm anchor marker (muted for workbench)
     "plinth": (0.35, 0.34, 0.33, 1.0),  # foundation stone
     "hole": (0.20, 0.20, 0.22, 1.0),  # void rim (rare in gallery)
 }
@@ -102,6 +103,8 @@ ASSET_MATERIAL_COLORS: Dict[str, Tuple[float, float, float, float]] = {
     "roof_flat": (0.22, 0.35, 0.62, 1.0),  # deep slate deck
     "roof_gable_infill": (0.28, 0.55, 0.42, 1.0),  # green gable triangle
     "roof_pitched_slope": (0.62, 0.28, 0.22, 1.0),  # red clay tile
+    "roof_hip": (0.48, 0.38, 0.62, 1.0),  # slate-blue hip
+    "roof_valley": (0.58, 0.32, 0.48, 1.0),  # plum valley trough
     "tower_arc_quarter": (0.82, 0.68, 0.45, 1.0),  # warm sandstone drum
     "tower_crown": (0.52, 0.42, 0.68, 1.0),  # purple-gray battlements
     "tower_cap": (0.45, 0.62, 0.38, 1.0),  # mossy stone cone
