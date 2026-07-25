@@ -420,10 +420,11 @@ def m1_box_house_dict(*, seed: int = 1) -> dict:
 
 
 def m3_keep_tower_spec(*, seed: int = 3) -> BuildingSpec:
-    """Factory for Milestone 3 — keep with pitched roof + corner round tower.
+    """Factory for Milestone 3 — keep with pitched roof + wall-attached round tower.
 
-    Does not alter M1/M2 factories. Tower cell sits on the SW corner outside
-    the rect footprint so arcs share one cell (§2.2 centred exception).
+    Does not alter M1/M2 factories. Tower sits on the west wall (edge abut, not
+    diagonal corner) so plan circulation stays 4-connected; arcs still share one
+    cell (§2.2 centred exception).
     """
     return BuildingSpec(
         name="m3_keep_tower",
@@ -431,7 +432,7 @@ def m3_keep_tower_spec(*, seed: int = 3) -> BuildingSpec:
         footprint=FootprintSpec(kind="rect", bays_x=4, bays_y=4),
         storeys=2,
         storey_use=["hall", "hall"],
-        towers=[TowerSpec(cell=(-1, -1), storeys=3, attached_to="corner")],
+        towers=[TowerSpec(cell=(-1, 0), storeys=3, attached_to="wall")],
         roof=RoofSpec(kind="pitched", pitch=0.9),
         circulation=CirculationSpec(stair_kind="straight", stair_cells=[]),
         openings=OpeningPolicy(

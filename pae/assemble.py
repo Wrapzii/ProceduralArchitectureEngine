@@ -511,41 +511,61 @@ def _place_pitched_roof(
     *,
     grid: StoreyGrid,
     level: int,
+    x0: int,
+    y0: int,
+    x1: int,
+    y1: int,
     catalog: _PieceCatalog,
     tower_cells: Set[Tuple[int, int]],
     placements: List[SolidPlacement],
     counters: Dict[str, int],
 ) -> None:
-    """Tile ``roof_pitched_gable`` over the top storey (gable infill in-piece).
+    """Place ``roof_pitched_gable`` over the top storey (gable infill in-piece).
 
     Prior failure: walls stopped at the eaves and nothing filled the gable
     triangle → 8 m holes. The pitched kit piece includes solid gable faces.
+
+    Spans the enclosed footprint (same pattern as flat roof) so the deck rests
+    on the wall ring for §7.2 vertical support. Tower cells are excluded from
+    the span when they sit outside the main bbox min/max — tower uses its own
+    crown/cap instead.
     """
+    del grid  # footprint bbox is authoritative for the deck span
     roof_piece = catalog.get("roof_pitched_gable")
     roof_z = STOREY_CM
-    for (cx, cy), role in grid.cells.items():
-        if role == CellRole.EXTERIOR or role == CellRole.COURTYARD:
-            continue
-        if (cx, cy) in tower_cells:
-            continue
-        # Floors / wall-line / door / stair / void — cover the enclosed plan.
-        if role not in _ENCLOSED_ROLES:
-            continue
-        pid = _next_piece_id(counters, "roof_pitched", (cx, cy), level)
-        placements.append(
-            SolidPlacement(
-                piece_id=pid,
-                asset_id=roof_piece.asset_id,
-                kind="roof",
-                cell=(cx, cy),
-                level=level,
-                yaw=0,
-                offset_cm=(0.0, 0.0, roof_z),
-                size_cm=roof_piece.size_cm,
-                rotates_about_center=roof_piece.rotates_about_center,
-                tags=roof_piece.tags,
-            )
+    # Shrink bbox away from tower-only cells when tower expands the ring.
+    cells = [
+        (x, y)
+        for x in range(x0, x1 + 1)
+        for y in range(y0, y1 + 1)
+        if (x, y) not in tower_cells
+    ]
+    if not cells:
+        return
+    rx0 = min(c[0] for c in cells)
+    ry0 = min(c[1] for c in cells)
+    rx1 = max(c[0] for c in cells)
+    ry1 = max(c[1] for c in cells)
+    modules_x = rx1 - rx0 + 1
+    modules_y = ry1 - ry0 + 1
+    span_x = modules_x * MODULE_CM
+    span_y = modules_y * MODULE_CM
+    _, _, hz = roof_piece.size_cm
+    pid = _next_piece_id(counters, "roof_pitched", (rx0, ry0), level)
+    placements.append(
+        SolidPlacement(
+            piece_id=pid,
+            asset_id=roof_piece.asset_id,
+            kind="roof",
+            cell=(rx0, ry0),
+            level=level,
+            yaw=0,
+            offset_cm=(0.0, 0.0, roof_z),
+            size_cm=(span_x, span_y, hz),
+            rotates_about_center=roof_piece.rotates_about_center,
+            tags=roof_piece.tags,
         )
+    )
 
 
 def _place_tower_arcs(
@@ -757,6 +777,10 @@ def assemble(
                 _place_pitched_roof(
                     grid=grid,
                     level=level,
+                    x0=x0,
+                    y0=y0,
+                    x1=x1,
+                    y1=y1,
                     catalog=catalog,
                     tower_cells=_tower_cells(floor_plan),
                     placements=placements,

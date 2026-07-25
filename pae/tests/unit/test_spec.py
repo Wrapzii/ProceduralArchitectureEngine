@@ -8,6 +8,8 @@ from pae.spec import (
     load_style,
     m1_box_house_dict,
     m1_box_house_spec,
+    m3_keep_tower_dict,
+    m3_keep_tower_spec,
 )
 
 
@@ -74,6 +76,26 @@ def test_m1_box_house_factory():
     assert spec.footprint.kind == "rect"
     assert spec.roof.kind == "flat"
     assert spec.storeys == 1
+    assert spec.towers == []
+
+
+def test_m3_keep_tower_factory_does_not_break_m1():
+    """M3 factory is additive — M1 remains flat/no-tower."""
+    m1 = m1_box_house_spec()
+    m3 = m3_keep_tower_spec()
+    assert m1.roof.kind == "flat"
+    assert m1.towers == []
+    assert m3.name == "m3_keep_tower"
+    assert m3.style == "keep"
+    assert m3.roof.kind == "pitched"
+    assert len(m3.towers) == 1
+    assert m3.towers[0].attached_to == "wall"
+    data = m3_keep_tower_dict()
+    loaded, report = load_spec(data)
+    assert report.ok is True
+    assert loaded is not None
+    assert loaded.roof.kind == "pitched"
+    assert len(loaded.towers) == 1
 
 
 def test_style_townhouse_loads():

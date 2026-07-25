@@ -191,9 +191,10 @@ def test_pitched_roof_emits_gable_pieces():
     assert all(p.asset_id == "roof_pitched_gable" for p in roofs)
     assert all("gable" in p.tags for p in roofs)
     assert all(p.asset_id != "roof_flat" for p in roofs)
-    # One bay per enclosed footprint cell (4×3).
-    assert len(roofs) == 12
-
+    # Spanning deck includes gable height (not a flat slab).
+    assert roofs[0].size_cm[2] > FLOOR_T_CM
+    assert roofs[0].size_cm[0] == 4 * MODULE_CM
+    assert roofs[0].size_cm[1] == 3 * MODULE_CM
 
 def test_tower_arc_quarters_same_cell_no_scatter():
     """M3 — 4× tower_arc_quarter share one cell; rotates_about_center; XY offset 0.
