@@ -96,7 +96,9 @@ _DEFAULT_KIND_COLOR: Tuple[float, float, float, float] = (0.75, 0.75, 0.75, 1.0)
 # Higher contrast than kind defaults so gallery/workbench reads openings and variants.
 ASSET_MATERIAL_COLORS: Dict[str, Tuple[float, float, float, float]] = {
     "wall_door": (0.55, 0.28, 0.12, 1.0),  # dark oak door
+    "wall_door_gothic": (0.42, 0.18, 0.10, 1.0),  # darker gothic door
     "wall_window": (0.35, 0.65, 0.92, 1.0),  # bright sky glazing
+    "wall_window_lancet": (0.25, 0.55, 0.88, 1.0),  # gothic lancet
     "roof_flat": (0.22, 0.35, 0.62, 1.0),  # deep slate deck
     "roof_gable_infill": (0.28, 0.55, 0.42, 1.0),  # green gable triangle
     "roof_pitched_slope": (0.62, 0.28, 0.22, 1.0),  # red clay tile
@@ -104,10 +106,10 @@ ASSET_MATERIAL_COLORS: Dict[str, Tuple[float, float, float, float]] = {
     "tower_crown": (0.52, 0.42, 0.68, 1.0),  # purple-gray battlements
     "tower_cap": (0.45, 0.62, 0.38, 1.0),  # mossy stone cone
     "stair_straight": (0.82, 0.45, 0.22, 1.0),  # terracotta treads
-    "stair_half": (0.78, 0.42, 0.20, 1.0),
+    "stair_half": (0.42, 0.58, 0.72, 1.0),  # cool stone half-flight
     "stair_landing": (0.62, 0.58, 0.50, 1.0),
     "stair_switchback": (0.75, 0.40, 0.28, 1.0),
-    "stair_wide": (0.70, 0.38, 0.18, 1.0),
+    "stair_wide": (0.55, 0.22, 0.48, 1.0),  # plum monumental
     "stair_spiral_quarter": (0.78, 0.52, 0.18, 1.0),  # copper spiral
     "floor_hole": (0.12, 0.12, 0.18, 1.0),  # void rim
 }
@@ -642,7 +644,7 @@ def mesh_world_bounds_m(objects: Sequence[Any]) -> Tuple[Tuple[float, float, flo
 
 
 def _gallery_factories() -> List[Tuple[str, str, Any]]:
-    """Return ``(label, collection_name, factory)`` for the M1–M4 gallery row."""
+    """Return ``(label, collection_name, factory)`` for the M1–M4 + school gallery."""
     from pae import spec as spec_mod
 
     entries: List[Tuple[str, str, str]] = [
@@ -652,6 +654,7 @@ def _gallery_factories() -> List[Tuple[str, str, Any]]:
         ("m4_l", "PAE_M4_L", "m4_l_plan_spec"),
         ("m4_u", "PAE_M4_U", "m4_u_plan_spec"),
         ("m4_c", "PAE_M4_C", "m4_courtyard_spec"),
+        ("school", "PAE_School", "school_academy_spec"),
     ]
     factories: List[Tuple[str, str, Any]] = []
     for label, coll_name, attr in entries:
@@ -687,19 +690,50 @@ def _spec_factories() -> List[Tuple[str, Any]]:
 
 
 def assemble_and_validate(label: str, factory) -> Tuple[Any, Any]:
-    """spec → assemble → validate. Raises if validation fails critically."""
-    from pae.pipeline import run_through_assemble
+    """spec → assemble → validate. Raises if validation fails critically.
+
+    School milestone also runs the trim pass after a green validate.
+    """
+    from pae.pipeline import run_through_assemble, run_through_validate_trim
     from pae.validate import validate
 
     spec = factory()
-    _massing, _plan, assembly, stage_report = run_through_assemble(spec)
+    if label == "school":
+        _massing, _plan, assembly, stage_report = run_through_validate_trim(spec)
+    else:
+        _massing, _plan, assembly, stage_report = run_through_assemble(spec)
+        if assembly is not None and assembly.placements:
+            assembly, stage_report = validate(assembly)
     if assembly is None or not assembly.placements:
         raise RuntimeError(f"{label}: assemble produced no placements ({stage_report})")
-    assembly, report = validate(assembly)
-    if not report.ok:
-        crit = "; ".join(f.message for f in report.critical[:5])
-        raise RuntimeError(f"{label}: validate failed — {crit or report}")
-    return assembly, report
+    if not stage_report.ok:
+        crit = "; ".join(f.message for f in stage_report.critical[:5])
+        raise RuntimeError(f"{label}: validate failed — {crit or stage_report}")
+    return assembly, stage_report
+
+
+def build_school_showcase(*, write_png: bool = True) -> Dict[str, Any]:
+    """Build the school academy into ``PAE_School`` and write ``school_*.png``."""
+    result = build_gallery(milestones=("school",), write_png=write_png)
+    # Alias canonical proof path expected by SCHOOL_READINESS / Wave 5.
+    per = result.get("per_milestone_screenshots") or {}
+    school_shot = per.get("school")
+    if school_shot and write_png:
+        try:
+            import shutil
+
+            dest = _repo_root() / "Saved" / "Screenshots" / "school_academy.png"
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            src = Path(school_shot)
+            if src.is_file():
+                shutil.copy2(src, dest)
+                result["school_screenshot"] = str(dest)
+        except OSError:
+            result["school_screenshot"] = school_shot
+    else:
+        result["school_screenshot"] = school_shot
+    result["mode"] = "school"
+    return result
 
 
 def _ensure_collection(name: str, *, parent=None):

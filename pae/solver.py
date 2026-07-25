@@ -14,6 +14,16 @@ from pae.report import Failure, Report
 from pae.spec import BuildingSpec, FootprintSpec, TowerSpec
 
 
+# Enclosed building bodies (not courtyard). Includes school program roles.
+BODY_ROLES = frozenset(
+    {"main", "wing", "hall", "admin", "classroom_wing", "chapel", "tower"}
+)
+# Ranges that get per-wing roofs / ground spans (not towers).
+WING_ROLES = frozenset(
+    {"main", "wing", "hall", "admin", "classroom_wing", "chapel"}
+)
+
+
 @dataclass
 class Volume:
     """Axis-aligned rectangular volume in cell coordinates (inclusive)."""
@@ -24,7 +34,7 @@ class Volume:
     x1: int
     y1: int
     storeys: int
-    role: str = "main"  # main | wing | tower | courtyard
+    role: str = "main"  # main | wing | hall | admin | classroom_wing | tower | courtyard
     entrance: bool = False
 
     def cells(self) -> Set[Tuple[int, int]]:
@@ -95,6 +105,9 @@ class Massing:
 
     def enclosed_volumes(self) -> List[Volume]:
         return [v for v in self.volumes if v.role != "courtyard"]
+
+    def wing_volumes(self) -> List[Volume]:
+        return [v for v in self.volumes if v.role in WING_ROLES]
 
 
 def _rect_volume(
@@ -175,6 +188,9 @@ def _place_footprint(fp: FootprintSpec, storeys: int) -> List[Volume]:
             )
         return vols
 
+    if fp.kind == "school":
+        return _place_school_academy(fp, storeys)
+
     if fp.kind == "courtyard" or fp.courtyard:
         # Ring of enclosed ranges; courtyard volume is outside the envelope by role.
         depth = max(1, min(fp.wing_depth, min(fp.bays_x, fp.bays_y) // 2 or 1))
@@ -234,6 +250,73 @@ def _place_footprint(fp: FootprintSpec, storeys: int) -> List[Volume]:
     return vols
 
 
+def _place_school_academy(fp: FootprintSpec, storeys: int) -> List[Volume]:
+    """Named school volumes: hall + classroom wings + admin + courtyard.
+
+    Uses a courtyard ring like ``kind=courtyard`` but assigns program roles so
+    plan/assemble can carve double-loaded classrooms and style the facade.
+    Wing depth must be ≥4 so a center corridor has classroom cells beside it.
+    """
+    depth = max(4, min(fp.wing_depth if fp.wing_depth else 5, min(fp.bays_x, fp.bays_y) // 2 or 4))
+    vols: List[Volume] = []
+    # South hall (entrance)
+    vols.append(
+        _rect_volume("hall", 0, 0, fp.bays_x, depth, storeys, "hall", True)
+    )
+    # North admin / chapel range
+    vols.append(
+        _rect_volume(
+            "admin",
+            0,
+            fp.bays_y - depth,
+            fp.bays_x,
+            depth,
+            storeys,
+            "admin",
+        )
+    )
+    mid_h = fp.bays_y - 2 * depth
+    if mid_h > 0:
+        vols.append(
+            _rect_volume(
+                "classroom_w",
+                0,
+                depth,
+                depth,
+                mid_h,
+                storeys,
+                "classroom_wing",
+            )
+        )
+        vols.append(
+            _rect_volume(
+                "classroom_e",
+                fp.bays_x - depth,
+                depth,
+                depth,
+                mid_h,
+                storeys,
+                "classroom_wing",
+            )
+        )
+    cx0, cy0 = depth, depth
+    cx1, cy1 = fp.bays_x - depth - 1, fp.bays_y - depth - 1
+    if cx1 >= cx0 and cy1 >= cy0:
+        vols.append(
+            Volume(
+                id="courtyard",
+                x0=cx0,
+                y0=cy0,
+                x1=cx1,
+                y1=cy1,
+                storeys=storeys,
+                role="courtyard",
+                entrance=False,
+            )
+        )
+    return vols
+
+
 def _tower_volume(spec: TowerSpec, index: int, building_storeys: int) -> Volume:
     # Towers occupy a 1×1 cell footprint by default.
     storeys = max(spec.storeys, building_storeys)
@@ -270,7 +353,7 @@ def _volumes_overlap_failures(volumes: List[Volume]) -> List[Failure]:
 
 def _tower_attach_failures(volumes: List[Volume]) -> List[Failure]:
     failures: List[Failure] = []
-    mains = [v for v in volumes if v.role in ("main", "wing")]
+    mains = [v for v in volumes if v.role in WING_ROLES]
     for t in volumes:
         if t.role != "tower":
             continue
@@ -477,20 +560,62 @@ def _local_repair_towers(volumes: List[Volume]) -> List[Volume]:
     return repaired
 
 
+def _primary_body(volumes: List[Volume]) -> Optional[Volume]:
+    """Prefer hall/main for stairs and entrance-adjacent circulation."""
+    for role in ("hall", "main", "classroom_wing", "wing", "admin"):
+        for v in volumes:
+            if v.role == role:
+                return v
+    enclosed = [v for v in volumes if v.role != "courtyard"]
+    return enclosed[0] if enclosed else None
+
+
 def _default_stair_cell(volumes: List[Volume]) -> Optional[Tuple[int, int]]:
-    """Pick an interior cell near the south edge of the main volume for a straight stair."""
-    mains = [v for v in volumes if v.role == "main"]
-    if not mains:
+    """Pick an interior cell near the south edge of the primary body for a straight stair."""
+    m = _primary_body(volumes)
+    if m is None:
         return None
-    m = mains[0]
     # Need 2 modules span in +Y for a straight run (§5.3).
     if (m.y1 - m.y0) < 1 or (m.x1 - m.x0) < 0:
         return None
     sx = m.x0 + (m.x1 - m.x0) // 2
-    sy = m.y0  # south edge interior
+    sy = m.y0 + 1  # one bay in from south exterior wall when depth allows
+    if sy + 1 > m.y1:
+        sy = m.y0
     if sy + 1 > m.y1:
         return None
     return (sx, sy)
+
+
+def _default_stair_cells(
+    volumes: List[Volume],
+    stair_kind: str,
+) -> List[Tuple[int, int]]:
+    """Auto stair footprint: 2×1 straight or 2×2 switchback/wide."""
+    kind = (stair_kind or "straight").lower()
+    m = _primary_body(volumes)
+    if m is None:
+        return []
+    if kind in ("switchback", "wide"):
+        # 2×2 stairwell inset from the SW corner of the primary body.
+        if (m.x1 - m.x0) < 2 or (m.y1 - m.y0) < 2:
+            return []
+        x0 = m.x0 + 1
+        y0 = m.y0 + 1
+        if x0 + 1 > m.x1:
+            x0 = m.x0
+        if y0 + 1 > m.y1:
+            y0 = m.y0
+        return [
+            (x0, y0),
+            (x0 + 1, y0),
+            (x0, y0 + 1),
+            (x0 + 1, y0 + 1),
+        ]
+    auto = _default_stair_cell(volumes)
+    if auto is None:
+        return []
+    return [auto, (auto[0], auto[1] + 1)]
 
 
 def solve(spec: BuildingSpec) -> Tuple[Optional[Massing], Report]:
@@ -516,10 +641,7 @@ def solve(spec: BuildingSpec) -> Tuple[Optional[Massing], Report]:
 
     stair_cells = list(spec.circulation.stair_cells)
     if spec.storeys > 1 and not stair_cells:
-        auto = _default_stair_cell(volumes)
-        if auto is not None:
-            # Straight run occupies two cells along +Y.
-            stair_cells = [auto, (auto[0], auto[1] + 1)]
+        stair_cells = _default_stair_cells(volumes, spec.circulation.stair_kind)
 
     failures: List[Failure] = []
     failures.extend(_volumes_overlap_failures(volumes))

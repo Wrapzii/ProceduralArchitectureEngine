@@ -42,6 +42,7 @@ def validate(assembly: Assembly) -> Tuple[Assembly, Report]:
     failures.extend(_check_floor_coverage(assembly))
     failures.extend(_check_stair_reachability(assembly))
     failures.extend(_check_stair_exit_clearance(assembly))
+    failures.extend(_check_classroom_corridor_connectivity(assembly))
     failures.extend(_check_run_fit(assembly))
     failures.extend(_check_aperture_sanity(assembly))
     failures = _sort_failures(failures)
@@ -670,7 +671,10 @@ def _flood_interior_leaks(
             continue
         if (cx, cy) in blocked:
             continue
-        if role == CellRole.INTERIOR:
+        if role == CellRole.INTERIOR or role in (
+            CellRole.CORRIDOR,
+            CellRole.CLASSROOM,
+        ):
             leaks.append(((cx, cy), cell_world(cx, cy)))
             continue
         if role in (CellRole.COURTYARD, CellRole.VOID):
@@ -723,7 +727,11 @@ def _check_floor_coverage(assembly: Assembly) -> List[Failure]:
         for ly in range(layer.height):
             for lx in range(layer.width):
                 role = layer.cells[ly][lx]
-                if role != CellRole.INTERIOR:
+                if role not in (
+                    CellRole.INTERIOR,
+                    CellRole.CORRIDOR,
+                    CellRole.CLASSROOM,
+                ):
                     continue
                 cx, cy = ox + lx, oy + ly
                 cell_min = (cx * MODULE_CM, cy * MODULE_CM, floor_z - FLOOR_T_CM - TOL_CM)
@@ -790,6 +798,73 @@ def _check_stair_reachability(assembly: Assembly) -> List[Failure]:
                     critical=True,
                 )
             )
+    return failures
+
+
+# --- school classroom ↔ corridor ---------------------------------------------
+
+
+def _check_classroom_corridor_connectivity(assembly: Assembly) -> List[Failure]:
+    """Every CLASSROOM cell must reach a CORRIDOR via an interior door partition.
+
+    Buildings without classrooms skip this check. Critical when classrooms exist.
+    """
+    failures: List[Failure] = []
+    door_cells: set = set()
+    for p in assembly.placements:
+        tags = set(getattr(p, "tags", ()) or ())
+        if "partition" not in tags:
+            continue
+        if "door" not in str(p.asset_id):
+            continue
+        door_cells.add((p.level, p.cell[0], p.cell[1]))
+
+    for level, layer in sorted(assembly.floor_plan.items()):
+        ox, oy = layer.origin_cell
+        classrooms: List[Tuple[int, int]] = []
+        corridors: set = set()
+        for ly in range(layer.height):
+            for lx in range(layer.width):
+                role = layer.cells[ly][lx]
+                cx, cy = ox + lx, oy + ly
+                if role == CellRole.CLASSROOM:
+                    classrooms.append((cx, cy))
+                elif role == CellRole.CORRIDOR:
+                    corridors.add((cx, cy))
+        if not classrooms:
+            continue
+        if not corridors:
+            failures.append(
+                Failure(
+                    check="classroom_corridor",
+                    message=f"storey {level} has classrooms but no corridor cells",
+                    world_xyz=(0.0, 0.0, float(level * STOREY_CM)),
+                    critical=True,
+                )
+            )
+            continue
+        for cx, cy in classrooms:
+            touches = any(
+                (cx + dx, cy + dy) in corridors
+                for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1))
+            )
+            has_door = (level, cx, cy) in door_cells
+            if not (touches and has_door):
+                failures.append(
+                    Failure(
+                        check="classroom_corridor",
+                        message=(
+                            f"classroom cell ({cx}, {cy}) level {level} "
+                            "has no door to a corridor"
+                        ),
+                        world_xyz=(
+                            cx * MODULE_CM + MODULE_CM * 0.5,
+                            cy * MODULE_CM + MODULE_CM * 0.5,
+                            float(level * STOREY_CM),
+                        ),
+                        critical=True,
+                    )
+                )
     return failures
 
 
@@ -1092,7 +1167,13 @@ def _check_door_walkable(
 
     def interior_walkable(cell: Tuple[int, int]) -> bool:
         role = layer.role_at(cell[0], cell[1])
-        return role in (CellRole.INTERIOR, CellRole.STAIR, CellRole.DOOR)
+        return role in (
+            CellRole.INTERIOR,
+            CellRole.STAIR,
+            CellRole.DOOR,
+            CellRole.CORRIDOR,
+            CellRole.CLASSROOM,
+        )
 
     def exterior_walkable(cell: Tuple[int, int]) -> bool:
         role = layer.role_at(cell[0], cell[1])

@@ -34,7 +34,11 @@ def _interior_cells(layers: dict[int, FloorPlanLayer]) -> List[Tuple[int, Tuple[
         for ly in range(layer.height):
             for lx in range(layer.width):
                 role = layer.cells[ly][lx]
-                if role == CellRole.INTERIOR:
+                if role in (
+                    CellRole.INTERIOR,
+                    CellRole.CORRIDOR,
+                    CellRole.CLASSROOM,
+                ):
                     cells.append((level, (ox + lx, oy + ly)))
     return cells
 

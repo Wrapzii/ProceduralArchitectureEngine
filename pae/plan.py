@@ -23,6 +23,8 @@ class CellRole(Enum):
     STAIR = 4
     VOID = 5  # stairwell / light well — no floor
     COURTYARD = 6  # open to sky, has ground, no roof
+    CORRIDOR = 7  # school circulation spine
+    CLASSROOM = 8  # programmed room cell (door to corridor)
 
 
 @dataclass
@@ -88,6 +90,12 @@ class FloorPlan:
     roof_kind: str = "flat"
     roof_pitch: float = 1.0
     massing: Optional[Massing] = None
+    classroom_cells: List[Tuple[int, int]] = field(default_factory=list)
+    corridor_cells: List[Tuple[int, int]] = field(default_factory=list)
+    # (cell_x, cell_y, level, face toward corridor, is_door)
+    interior_partitions: List[Tuple[int, int, int, str, bool]] = field(
+        default_factory=list
+    )
 
 
 def _bbox(volumes: List[Volume]) -> Tuple[int, int, int, int]:
@@ -194,6 +202,123 @@ def _place_doors_windows(
         windows.append(cell)
         placed += 1
     return doors, windows
+
+
+def _face_toward(
+    from_cell: Tuple[int, int], to_cell: Tuple[int, int]
+) -> Optional[str]:
+    fx, fy = from_cell
+    tx, ty = to_cell
+    if tx == fx + 1 and ty == fy:
+        return "east"
+    if tx == fx - 1 and ty == fy:
+        return "west"
+    if ty == fy + 1 and tx == fx:
+        return "north"
+    if ty == fy - 1 and tx == fx:
+        return "south"
+    return None
+
+
+def _carve_double_loaded_wings(
+    storeys: List[StoreyGrid],
+    massing: Massing,
+) -> Tuple[
+    List[Tuple[int, int]],
+    List[Tuple[int, int]],
+    List[Tuple[int, int, int, str, bool]],
+]:
+    """Mark CORRIDOR / CLASSROOM in classroom wings; record interior door partitions.
+
+    Double-loaded hall: centerline corridor through each ``classroom_wing`` volume,
+    remaining INTERIOR cells become CLASSROOM. Every classroom-corridor adjacency
+    gets a partition; alternating adjacencies are doors.
+    """
+    classroom_cells: List[Tuple[int, int]] = []
+    corridor_cells: List[Tuple[int, int]] = []
+    partitions: List[Tuple[int, int, int, str, bool]] = []
+    wings = [v for v in massing.volumes if v.role == "classroom_wing"]
+    if not wings:
+        return classroom_cells, corridor_cells, partitions
+
+    classroom_seen: Set[Tuple[int, int]] = set()
+    corridor_seen: Set[Tuple[int, int]] = set()
+
+    for level, grid in enumerate(storeys):
+        use = (
+            massing.storey_use[level]
+            if level < len(massing.storey_use)
+            else "hall"
+        )
+        # Bias: carve whenever storey is classroom-oriented, or always for school wings.
+        if use not in ("classroom", "classrooms", "dormitory", "hall"):
+            # Still carve school wings — storey_use may say hall on ground.
+            pass
+        for vol in wings:
+            cells = [
+                (x, y)
+                for (x, y) in vol.cells()
+                if grid.get(x, y) == CellRole.INTERIOR
+            ]
+            if len(cells) < 3:
+                continue
+            if (vol.x1 - vol.x0) >= (vol.y1 - vol.y0):
+                cy = (vol.y0 + vol.y1) // 2
+                corridor = {(x, y) for (x, y) in cells if y == cy}
+                if len(corridor) < 2:
+                    for dy in (1, -1, 2, -2):
+                        corridor = {(x, y) for (x, y) in cells if y == cy + dy}
+                        if len(corridor) >= 2:
+                            break
+            else:
+                cx = (vol.x0 + vol.x1) // 2
+                corridor = {(x, y) for (x, y) in cells if x == cx}
+                if len(corridor) < 2:
+                    for dx in (1, -1, 2, -2):
+                        corridor = {(x, y) for (x, y) in cells if x == cx + dx}
+                        if len(corridor) >= 2:
+                            break
+            if len(corridor) < 2:
+                continue
+            for c in sorted(corridor):
+                grid.set(c[0], c[1], CellRole.CORRIDOR)
+                if c not in corridor_seen:
+                    corridor_seen.add(c)
+                    corridor_cells.append(c)
+            rooms = [c for c in cells if c not in corridor]
+            for c in sorted(rooms):
+                touches_corridor = any(
+                    n in corridor
+                    for n in (
+                        (c[0] + 1, c[1]),
+                        (c[0] - 1, c[1]),
+                        (c[0], c[1] + 1),
+                        (c[0], c[1] - 1),
+                    )
+                )
+                if not touches_corridor:
+                    # Keep as INTERIOR (open hall bay) — not a room without a door.
+                    continue
+                grid.set(c[0], c[1], CellRole.CLASSROOM)
+                if c not in classroom_seen:
+                    classroom_seen.add(c)
+                    classroom_cells.append(c)
+                door_placed = False
+                for nx, ny in (
+                    (c[0] + 1, c[1]),
+                    (c[0] - 1, c[1]),
+                    (c[0], c[1] + 1),
+                    (c[0], c[1] - 1),
+                ):
+                    if (nx, ny) not in corridor:
+                        continue
+                    face = _face_toward(c, (nx, ny))
+                    if face is None:
+                        continue
+                    is_door = not door_placed
+                    door_placed = True
+                    partitions.append((c[0], c[1], level, face, is_door))
+    return classroom_cells, corridor_cells, partitions
 
 
 def _apply_stairs(
@@ -387,6 +512,10 @@ def plan(massing: Massing) -> Tuple[Optional[FloorPlan], Report]:
             storeys[0], interior_by_level[0], massing
         )
 
+    classroom_cells, corridor_cells, interior_partitions = _carve_double_loaded_wings(
+        storeys, massing
+    )
+
     failures.extend(_apply_stairs(storeys, massing, interior_by_level))
 
     graph, circ_failures = _build_circulation(massing, interior_by_level, storeys)
@@ -427,5 +556,8 @@ def plan(massing: Massing) -> Tuple[Optional[FloorPlan], Report]:
         roof_kind=massing.roof_kind,
         roof_pitch=massing.roof_pitch,
         massing=massing,
+        classroom_cells=classroom_cells,
+        corridor_cells=corridor_cells,
+        interior_partitions=interior_partitions,
     )
     return fp, Report.from_failures([])

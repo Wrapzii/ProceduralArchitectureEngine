@@ -1,8 +1,12 @@
-"""Thin end-to-end pipeline helpers (M1 / M5 gates)."""
+"""Thin end-to-end pipeline helpers (M1 / M5 / school gates).
+
+Default structural path: solve → plan → assemble.
+School / campus path: assemble → validate → trim → decorate.
+"""
 
 from __future__ import annotations
 
-from typing import Tuple
+from typing import Optional, Tuple
 
 from pae.assembly_types import Assembly
 from pae.plan import FloorPlan
@@ -14,8 +18,14 @@ def run_through_assemble(
     spec,
     *,
     asset_db=None,
+    apply_trim: bool = False,
 ) -> Tuple[Massing, FloorPlan, Assembly, Report]:
-    """spec → solve → plan → assemble with a single validation-ready assembly."""
+    """spec → solve → plan → assemble (+ optional trim).
+
+    Trim is off by default so M1–M4 unit tests assert bare assembler output.
+    Pass ``apply_trim=True`` or use ``run_through_validate_trim`` for the
+    school / campus default.
+    """
     from pae.assemble import assemble
     from pae.plan import plan
     from pae.solver import solve
@@ -34,7 +44,42 @@ def run_through_assemble(
     if not areport.ok:
         return massing, floor_plan, assembly, areport
 
+    if apply_trim:
+        from pae.trim import trim
+
+        assembly, treport = trim(assembly)
+        if not treport.ok:
+            return massing, floor_plan, assembly, treport
+
     return massing, floor_plan, assembly, Report.from_failures([])
+
+
+def run_through_validate_trim(
+    spec,
+    *,
+    asset_db=None,
+) -> Tuple[Massing, FloorPlan, Assembly, Report]:
+    """spec → assemble → validate (fail-closed) → trim.
+
+    Wave 5 school default: never trim a shell that fails validation.
+    """
+    from pae.trim import trim
+    from pae.validate import validate
+
+    massing, floor_plan, assembly, report = run_through_assemble(
+        spec, asset_db=asset_db, apply_trim=False
+    )
+    if not report.ok:
+        return massing, floor_plan, assembly, report
+
+    assembly, vreport = validate(assembly)
+    if not vreport.ok:
+        return massing, floor_plan, assembly, vreport
+
+    trimmed, treport = trim(assembly)
+    if not treport.ok:
+        return massing, floor_plan, trimmed, treport
+    return massing, floor_plan, trimmed, Report.from_failures([])
 
 
 def run_through_decorate(
@@ -43,13 +88,23 @@ def run_through_decorate(
     asset_db=None,
     seed: int | None = None,
     tags=None,
+    apply_trim: bool = True,
 ) -> Tuple[Massing, FloorPlan, Assembly, Report]:
-    """spec → assemble → decorate (M5 dynamic props from AssetDB tags)."""
+    """spec → assemble → validate → trim → decorate (M5 + school campus path)."""
     from pae.decorate import decorate
 
-    massing, floor_plan, assembly, report = run_through_assemble(
-        spec, asset_db=asset_db
-    )
+    if apply_trim:
+        massing, floor_plan, assembly, report = run_through_validate_trim(
+            spec, asset_db=asset_db
+        )
+    else:
+        massing, floor_plan, assembly, report = run_through_assemble(
+            spec, asset_db=asset_db, apply_trim=False
+        )
+        if report.ok:
+            from pae.validate import validate
+
+            assembly, report = validate(assembly)
     if not report.ok:
         return massing, floor_plan, assembly, report
 

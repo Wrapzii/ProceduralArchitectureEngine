@@ -29,7 +29,7 @@ _STYLES_DIR = Path(__file__).resolve().parent / "styles"
 
 @dataclass
 class FootprintSpec:
-    kind: str  # rect | L | U | courtyard | compound
+    kind: str  # rect | L | U | courtyard | compound | school
     bays_x: int
     bays_y: int
     wing_depth: int = 2
@@ -104,7 +104,7 @@ def _as_int_pair(value: Any, label: str) -> Tuple[int, int]:
 
 def _parse_footprint(raw: dict) -> FootprintSpec:
     kind = str(raw.get("kind", "rect"))
-    if kind not in ("rect", "L", "U", "courtyard", "compound"):
+    if kind not in ("rect", "L", "U", "courtyard", "compound", "school"):
         raise ValueError(f"unknown footprint kind: {kind}")
     bays_x = int(raw["bays_x"])
     bays_y = int(raw["bays_y"])
@@ -629,6 +629,70 @@ def m4_u_plan_dict(*, seed: int = 5) -> dict:
 def m4_courtyard_dict(*, seed: int = 6) -> dict:
     """JSON-serialisable form of the M4 courtyard factory."""
     spec = m4_courtyard_spec(seed=seed)
+    return {
+        "name": spec.name,
+        "style": spec.style,
+        "footprint": {
+            "kind": spec.footprint.kind,
+            "bays_x": spec.footprint.bays_x,
+            "bays_y": spec.footprint.bays_y,
+            "wing_depth": spec.footprint.wing_depth,
+            "courtyard": spec.footprint.courtyard,
+        },
+        "storeys": spec.storeys,
+        "storey_use": list(spec.storey_use),
+        "towers": [],
+        "roof": {"kind": spec.roof.kind, "pitch": spec.roof.pitch},
+        "circulation": {
+            "stair_kind": spec.circulation.stair_kind,
+            "stair_cells": [],
+        },
+        "openings": {
+            "windows_per_bay": spec.openings.windows_per_bay,
+            "doors_ground": spec.openings.doors_ground,
+            "windows_ground": spec.openings.windows_ground,
+            "skip_ground_windows": spec.openings.skip_ground_windows,
+        },
+        "seed": spec.seed,
+        "ground_slab": spec.ground_slab,
+    }
+
+
+def school_academy_spec(*, seed: int = 70) -> BuildingSpec:
+    """Giant academy massing — named hall / classroom wings / admin + courtyard.
+
+    Uses footprint kind ``school`` (solver emits program roles). Default circulation
+    is a switchback stairwell (2×2). Storey use biases classroom partitioning.
+    """
+    return BuildingSpec(
+        name="school_academy",
+        style="gothic_academy",
+        footprint=FootprintSpec(
+            kind="school",
+            bays_x=16,
+            bays_y=14,
+            wing_depth=5,
+            courtyard=True,
+        ),
+        storeys=3,
+        storey_use=["classroom", "classroom", "classroom"],
+        towers=[],
+        roof=RoofSpec(kind="flat", pitch=1.05),
+        circulation=CirculationSpec(stair_kind="switchback", stair_cells=[]),
+        openings=OpeningPolicy(
+            windows_per_bay=1,
+            doors_ground=2,
+            windows_ground=None,
+            skip_ground_windows=False,
+        ),
+        seed=seed,
+        ground_slab=True,
+    )
+
+
+def school_academy_dict(*, seed: int = 70) -> dict:
+    """JSON-serialisable form of the school academy factory."""
+    spec = school_academy_spec(seed=seed)
     return {
         "name": spec.name,
         "style": spec.style,

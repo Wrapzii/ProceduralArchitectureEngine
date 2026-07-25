@@ -557,6 +557,11 @@ code change.
 
 **M6 — Unreal round trip.** Manifest → instanced actors → terrain-bound → walkable in PIE.
 
+**M7 — School / academy.** Programmed massing (`school_academy_spec`), 2×2 switchback
+stairwells with fail-closed exit clearance, double-loaded corridor classrooms, style-driven
+facade walls, trim in the validate→trim pipeline, gallery `PAE_School` + school manifest
+dry-run. UE PIE remains a follow-on to M6.
+
 ---
 
 ## 12. Repository layout

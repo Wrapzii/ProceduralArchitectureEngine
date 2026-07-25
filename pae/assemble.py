@@ -27,6 +27,7 @@ from pae.solver import Volume
 # Soft separation so crown/cap do not z-fight the drum parapet (visual only).
 _TOWER_STACK_GAP_CM = 0.5
 from pae.plan import CellRole, FloorPlan, StoreyGrid
+from pae.solver import WING_ROLES
 from pae.primitives.catalog import catalog_by_id, get as get_primitive
 from pae.primitives.plinth import ground_plinth_span_size_cm
 from pae.primitives.roofs import (
@@ -115,10 +116,48 @@ class _PieceCatalog:
         style: StyleLike,
     ) -> _ResolvedPiece:
         if is_door:
-            return self.get("wall_door")
+            return self.get(_style_door_asset(style))
         if is_window:
-            return self.get("wall_window")
+            return self.get(_style_window_asset(style))
         return self.get("wall_plain")
+
+
+def _style_window_tag(style: StyleLike) -> str:
+    if style is None:
+        return "window_plain"
+    if isinstance(style, dict):
+        win = style.get("window") or {}
+        if isinstance(win, dict):
+            return str(win.get("tag") or "window_plain")
+    return "window_plain"
+
+
+def _style_window_asset(style: StyleLike) -> str:
+    """Map style window tags onto existing aperture wall piece ids."""
+    tag = _style_window_tag(style).lower()
+    mapping = {
+        "window_plain": "wall_window",
+        "window_gothic": "wall_window_lancet",
+        "window_lancet": "wall_window_lancet",
+        "window_gothic_traceried": "wall_window_gothic_traceried",
+        "window_mullioned": "wall_window_mullioned",
+        "window_round": "wall_window_round",
+        "window_oculus": "wall_window_oculus",
+        "window_clerestory": "wall_window_clerestory",
+        "window_bay_wide": "wall_window_bay_wide",
+        "arrowslit": "wall_arrowslit",
+    }
+    return mapping.get(tag, "wall_window")
+
+
+def _style_door_asset(style: StyleLike) -> str:
+    if style is None:
+        return "wall_door"
+    tag = _style_window_tag(style).lower()
+    # Gothic window styles get matching arched doors.
+    if "gothic" in tag or "lancet" in tag:
+        return "wall_door_gothic"
+    return "wall_door"
 
 
 def _layer_from_grid(grid: StoreyGrid) -> FloorPlanLayer:
@@ -146,6 +185,8 @@ _ENCLOSED_ROLES = frozenset(
         CellRole.DOOR,
         CellRole.STAIR,
         CellRole.VOID,
+        CellRole.CORRIDOR,
+        CellRole.CLASSROOM,
     }
 )
 
@@ -155,6 +196,8 @@ _FLOOR_ROLES = frozenset(
         CellRole.WALL_LINE,
         CellRole.DOOR,
         CellRole.STAIR,
+        CellRole.CORRIDOR,
+        CellRole.CLASSROOM,
     }
 )
 
@@ -181,7 +224,13 @@ _OUTWARD_DELTA: Dict[str, Tuple[int, int]] = {
 _PERIMETER_WALL_FACES = frozenset({"west", "east", "south", "north"})
 
 _WALKABLE_INTERIOR_ROLES = frozenset(
-    {CellRole.INTERIOR, CellRole.STAIR, CellRole.DOOR}
+    {
+        CellRole.INTERIOR,
+        CellRole.STAIR,
+        CellRole.DOOR,
+        CellRole.CORRIDOR,
+        CellRole.CLASSROOM,
+    }
 )
 
 _YAW_FOR_VOID_FACE: Dict[str, int] = {
@@ -241,7 +290,7 @@ def _massing_wing_roof_spans(
     wings = [
         v
         for v in floor_plan.massing.enclosed_volumes()
-        if v.role in ("main", "wing")
+        if v.role in WING_ROLES
     ]
     if has_courtyard:
         return [(v.x0, v.y0, v.x1, v.y1) for v in wings]
@@ -267,7 +316,7 @@ def _ground_spans(
         wings = [
             v
             for v in floor_plan.massing.enclosed_volumes()
-            if v.role in ("main", "wing")
+            if v.role in WING_ROLES
         ]
         if wings:
             return [(v.x0, v.y0, v.x1, v.y1) for v in wings]
@@ -656,7 +705,8 @@ def _place_wall_run(
         placements.append(sp)
         piece_ids.append(pid)
 
-        if piece_def.asset_id == "wall_door":
+        aid = piece_def.asset_id
+        if "door" in aid:
             layer = _layer_from_grid(next(g for g in fp.storeys if g.level == level))
             interior, exterior = _resolved_aperture_cells(face, cell, layer)
             floor_z = level * STOREY_CM
@@ -674,7 +724,7 @@ def _place_wall_run(
                     world_xyz=_aperture_world(sp, "door"),
                 )
             )
-        elif piece_def.asset_id == "wall_window":
+        elif "window" in aid or aid == "wall_arrowslit":
             layer = _layer_from_grid(next(g for g in fp.storeys if g.level == level))
             interior, exterior = _resolved_aperture_cells(face, cell, layer)
             floor_z = level * STOREY_CM
@@ -692,6 +742,46 @@ def _place_wall_run(
                     world_xyz=_aperture_world(sp, "window"),
                 )
             )
+
+
+def _place_interior_partitions(
+    *,
+    fp: FloorPlan,
+    catalog: _PieceCatalog,
+    placements: List[SolidPlacement],
+    counters: Dict[str, int],
+) -> None:
+    """Place classroom↔corridor partition walls / doors from the plan carve."""
+    for cx, cy, level, face, is_door in fp.interior_partitions:
+        yaw = _YAW_FOR_VOID_FACE[face]
+        piece_def = catalog.get("wall_door" if is_door else "wall_plain")
+        sx, sy, _ = piece_def.size_cm
+        offset = rotation_offset_cm(
+            yaw,
+            sx,
+            sy,
+            rotates_about_center=piece_def.rotates_about_center,
+        )
+        pid = _next_piece_id(
+            counters,
+            f"wall_partition_{face}",
+            (cx, cy),
+            level,
+        )
+        placements.append(
+            SolidPlacement(
+                piece_id=pid,
+                asset_id=piece_def.asset_id,
+                kind="wall",
+                cell=(cx, cy),
+                level=level,
+                yaw=yaw,
+                offset_cm=(offset[0], offset[1], 0.0),
+                size_cm=piece_def.size_cm,
+                rotates_about_center=piece_def.rotates_about_center,
+                tags=piece_def.tags | frozenset({"interior", "partition"}),
+            )
+        )
 
 
 def _build_wall_runs(
@@ -807,8 +897,8 @@ def _place_stairs(
     for level in range(len(fp.storeys) - 1):
         grid = fp.storeys[level]
         # Straight: every listed cell must be STAIR. Switchback/wide: require the
-        # original run cells; expanded bays may still be INTERIOR until plan grows.
-        check_cells = run_cells if asset_id == "stair_straight" else run_cells
+        # full 2×2 stairwell as STAIR before placing the kit mesh.
+        check_cells = place_cells
         if not all(grid.get(*c) == CellRole.STAIR for c in check_cells):
             continue
         pid = _next_piece_id(counters, "stair", anchor, level)
@@ -864,7 +954,7 @@ def _tower_abuts_body(tower: Volume, body: Volume) -> bool:
 
 
 def _tower_attached_body(tower: Volume, bodies: List[Volume]) -> Optional[Volume]:
-    mains = [v for v in bodies if v.role in ("main", "wing")]
+    mains = [v for v in bodies if v.role in WING_ROLES]
     for body in mains:
         if _tower_abuts_body(tower, body):
             return body
@@ -1107,7 +1197,7 @@ def _place_tower_arcs(
     arc = catalog.get("tower_arc_quarter")
     crown = catalog.get("tower_crown")
     cap = catalog.get("tower_cap")
-    bodies = [v for v in floor_plan.massing.volumes if v.role in ("main", "wing")]
+    bodies = [v for v in floor_plan.massing.volumes if v.role in WING_ROLES]
     for vol in floor_plan.massing.volumes:
         if vol.role != "tower":
             continue
@@ -1283,7 +1373,12 @@ def assemble(
                 )
             )
             for (cx, cy), role in grid.cells.items():
-                if role != CellRole.VOID:
+                # Punch stairwell openings: plan VOIDs, and any stair-run cell on
+                # upper decks (multi-storey wells keep STAIR on intermediate floors).
+                needs_hole = role == CellRole.VOID or (
+                    level > 0 and (cx, cy) in floor_plan.stair_cells
+                )
+                if not needs_hole:
                     continue
                 hole = catalog.get("floor_hole")
                 pid = _next_piece_id(counters, "floor_hole", (cx, cy), level)
@@ -1351,6 +1446,13 @@ def assemble(
                     placements=placements,
                     counters=counters,
                 )
+
+    _place_interior_partitions(
+        fp=floor_plan,
+        catalog=catalog,
+        placements=placements,
+        counters=counters,
+    )
 
     _place_stairs(
         fp=floor_plan,

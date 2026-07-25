@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Export validated PAE manifests to Saved/exports/{milestone}_manifest.json.
 
-Supports milestones m1, m2, m3, m4_l, m4_u, m4_c. No Blender or Unreal Editor
-required. Fails closed when validation has critical defects.
+Supports milestones m1, m2, m3, m4_l, m4_u, m4_c, school. No Blender or Unreal
+Editor required. Fails closed when validation has critical defects.
 """
 
 from __future__ import annotations
@@ -32,6 +32,7 @@ MILESTONE_SPECS: Dict[str, str] = {
     "m4_l": "m4_l_plan_spec",
     "m4_u": "m4_u_plan_spec",
     "m4_c": "m4_courtyard_spec",
+    "school": "school_academy_spec",
 }
 
 VALID_MILESTONES = frozenset(MILESTONE_SPECS)

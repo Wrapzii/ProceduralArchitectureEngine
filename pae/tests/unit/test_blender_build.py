@@ -27,9 +27,10 @@ def test_gallery_factories_include_m1_through_m4_c():
 
     factories = _gallery_factories()
     labels = [lbl for lbl, _coll, _fn in factories]
-    assert labels == ["m1", "m2", "m3", "m4_l", "m4_u", "m4_c"]
+    assert labels[:6] == ["m1", "m2", "m3", "m4_l", "m4_u", "m4_c"]
+    assert "school" in labels
     coll_names = [coll for _lbl, coll, _fn in factories]
-    assert coll_names == [
+    assert coll_names[:6] == [
         "PAE_M1",
         "PAE_M2",
         "PAE_M3",
@@ -37,6 +38,7 @@ def test_gallery_factories_include_m1_through_m4_c():
         "PAE_M4_U",
         "PAE_M4_C",
     ]
+    assert "PAE_School" in coll_names
 
 
 def test_assembly_bounds_cm_positive_extent():
@@ -80,7 +82,7 @@ def test_build_gallery_headless_all_milestones():
     result = build_gallery(write_png=False)
     assert result["ok"] is True
     assert result["mode"] == "gallery"
-    assert len(result["milestones"]) == 6
+    assert len(result["milestones"]) == 7
     for entry in result["milestones"]:
         assert entry["ok"] is True
         assert entry["placements"] > 0
@@ -215,10 +217,10 @@ def test_gallery_headless_offsets_are_monotonic_along_x():
     from pae.blender_build import build_gallery
 
     result = build_gallery(write_png=False)
-    assert len(result["milestones"]) == 6
+    assert len(result["milestones"]) == 7
     # Headless path records extent; blender path records offset_m — check labels order.
     labels = [m["label"] for m in result["milestones"]]
-    assert labels == ["m1", "m2", "m3", "m4_l", "m4_u", "m4_c"]
+    assert labels == ["m1", "m2", "m3", "m4_l", "m4_u", "m4_c", "school"]
 
 
 def test_stair_proof_visibility_allowlist():
