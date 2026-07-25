@@ -130,8 +130,82 @@ unreal.log(f"PAE spawn table done: {table['row_count']} rows from {TABLE_PATH}")
 
 1. Read `rows[]` only — never recompute from `cell` / `level`.
 2. `loc_cm` is world position in centimetres; `yaw` is degrees about +Z.
-3. Map `asset_id` → static mesh via `assets[]` in the source manifest or a DataTable.
+3. Map `asset_id` → static mesh via the **asset bind table** (below) or a DataTable.
 4. Use `piece_id` for defect reports and selection labels only.
+
+### Asset bind table (`asset_id` → Content path)
+
+The spawn table carries `asset_id` only — no Unreal soft paths. Generate a bind
+stub from the milestone manifest (and optional spawn table for row coverage):
+
+```bash
+python tools/ue_asset_bind_table.py --milestone m1
+# → Saved/exports/m1_asset_bind.json
+```
+
+Refuses when `validation.ok` is false or the manifest fails dry-run checks.
+When `Saved/exports/{milestone}_spawn_table.json` exists, asset ids are taken
+from spawn-table rows (collision presets still come from the manifest).
+
+Bind table schema (`pae.asset_bind/1`):
+
+| Field | Meaning |
+|---|---|
+| `schema` | Always `"pae.asset_bind/1"` |
+| `milestone` | Source milestone label (`m1`, `m3`, …) |
+| `source_manifest` | Relative path to the manifest JSON |
+| `source_spawn_table` | Optional — present when spawn table was used for id list |
+| `bind_count` | Number of `bindings[]` |
+| `bindings[]` | One row per unique `asset_id` |
+
+Each `bindings[]` row:
+
+| Field | Meaning |
+|---|---|
+| `asset_id` | PAE mesh id (matches manifest `assets[].id` and spawn `rows[].asset_id`) |
+| `suggested_content_path` | Stub UE soft path under `/Game/RE/PAE/{MILESTONE}/SM_{asset_id}` |
+| `lod0` | LOD0 soft path — initially same stub as `suggested_content_path` |
+| `collision_profile` | From manifest `collision[].ue_collision_preset` when present, else `BlockAll` |
+
+#### Filling real paths in UE
+
+1. **Import FBX** from PAE export (or Blender add-on) into
+   `/Game/RE/PAE/{MILESTONE}/` — one `UStaticMesh` per `asset_id`.
+2. **Rename or retarget** so the asset name matches the bind stub
+   (`SM_wall_plain`, `SM_floor`, …) or edit `m1_asset_bind.json` to point at your
+   actual mesh paths.
+3. **Wire a DataTable or Python map** in RE:
+
+```python
+# Content/Python/pae_load_asset_bind.py — run once after import
+import json
+from pathlib import Path
+import unreal
+
+BIND_PATH = Path(unreal.Paths.project_dir()) / "Saved/exports/m1_asset_bind.json"
+
+def load_asset_bind(path: Path) -> dict[str, str]:
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if data.get("schema") != "pae.asset_bind/1":
+        raise ValueError(f"unsupported bind schema: {data.get('schema')}")
+    return {
+        row["asset_id"]: row["lod0"]
+        for row in data["bindings"]
+        if row.get("lod0")
+    }
+
+ASSET_MAP = load_asset_bind(BIND_PATH)
+mesh = unreal.EditorAssetLibrary.load_asset(ASSET_MAP["wall_plain"])
+```
+
+4. **Collision** — update each static mesh's collision (complex-as-simple or
+   custom) to match `collision_profile` (`BlockAll`, `OverlapAll`, …). PAE does
+   not export physics meshes; the manifest `collision[]` block is advisory only.
+5. **LOD1/LOD2** — add optional keys in a forked bind file or DataTable when
+   Nanite/LOD chains exist; `lod0` is the only required slot for M6 handoff.
+
+Pair with the spawn table: load `ASSET_MAP` from the bind file, then iterate
+`rows[]` from `m1_spawn_table.json` as in the spawn-table example above.
 
 ## Schema (`pae.manifest/1`)
 
@@ -217,3 +291,4 @@ Those belong exclusively to PAE Python. UE is a dumb, fast instancing consumer.
 - M1 export: `tools/export_m1_manifest.py`
 - M6 dry-run: `tools/ue_manifest_dry_run.py`
 - M6 spawn table: `tools/ue_spawn_table.py`
+- M6 asset bind: `tools/ue_asset_bind_table.py`

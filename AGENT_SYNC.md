@@ -92,3 +92,13 @@ Project root: `C:\Users\WhiteWidow\Documents\GitHub\ProceduralArchitectureEngine
 
 2026-07-24 � Master: Wave H VISUAL/PRODUCT swarm dispatched (DOOR_BOOL, TOWER_LOOK, M2_STAIR_VIS, M4_GALLERY, M5_DEMO, M6_HANDOFF).
 
+
+2026-07-24 — Master: Wave I swarm (Composer 2.5) — aperture facing, eaves, materials, floaters, stair prove, UE bind note.
+>>> TRIGGER @APERTURE_FACE — Door/window openings must face outward on correct wall axis; kill P-shaped silhouette. Own walls.py + assemble wall yaw only if required.
+>>> TRIGGER @EAVES — Small roof overhang past walls (flat + pitched) so roofs read as roofs. Own roofs.py + assemble roof size/offset.
+>>> TRIGGER @MAT_READ — Distinct Blender materials per kind (wall/roof/floor/tower/stair) for gallery readability. Own blender_build.py materials only.
+>>> DONE @MAT_READ � KIND_MATERIAL_COLORS + material_color_for_kind() in pae/blender_build.py; distinct workbench hues for wall/floor/ground/roof/stair/tower_arc/tower_crown/tower_cap/door/window (+ prop/plinth/hole fallbacks); _ensure_material updates existing mats on re-run. Tests: 	est_kind_material_colors_* in 	est_blender_build.py.
+>>> TRIGGER @FLOATER_KILL — Find/remove stray disconnected slabs in m3 gallery (left block). Own assemble ground/tower plinth or blender clear.
+>>> TRIGGER @STAIR_PROVE — Gallery/live shot proves stepped stair + hole visible (dedicated Cam or forced m2 interior frame). Own blender_build.py screenshot helpers.
+>>> TRIGGER @UE_BIND — Doc + tool mapping spawn_table asset_id to Content path stub for RE. Own Docs + tools only.
+>>> DONE @UE_BIND � `tools/ue_asset_bind_table.py` (`--milestone` ? `Saved/exports/{milestone}_asset_bind.json`; `pae.asset_bind/1`: asset_id/suggested_content_path/lod0/collision_profile stubs under `/Game/RE/PAE/...`; optional spawn-table id source); `pae/tests/unit/test_ue_asset_bind_table.py`; `Docs/UE_MANIFEST_CONSUMER.md` bind + UE fill section.
