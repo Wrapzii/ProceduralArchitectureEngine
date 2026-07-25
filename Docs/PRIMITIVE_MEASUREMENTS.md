@@ -63,5 +63,10 @@ Tolerance: **6.0 cm**. All dimensions from `pae/contract.py`.
 | `kerb_edge` | surface | 1x1 | 40.0x400.0x33.0 | (0.0,0.0,0.0) | min_corner | False | yes |
 | `lawn_patch` | surface | 1x1 | 400.0x400.0x9.0 | (0.0,0.0,0.0) | min_corner | False | yes |
 | `steps_external` | surface | 1x1 | 400.0x400.0x63.0 | (0.0,0.0,0.0) | min_corner | False | yes |
+| `band_course` | band | 1x1 | 15.0x400.0x24.5 | (0.0,0.0,0.0) | min_corner | False | yes |
+| `band_course_jettied` | band | 1x1 | 30.0x400.0x39.2 | (0.0,0.0,0.0) | min_corner | False | yes |
+| `band_pilaster` | band | 1x1 | 15.0x40.0x350.0 | (0.0,0.0,0.0) | min_corner | False | yes |
+| `band_brace` | band | 1x1 | 15.0x400.0x350.0 | (0.0,0.0,0.0) | min_corner | False | yes |
+| `coping_cap` | band | 1x1 | 78.0x400.0x15.8 | (0.0,0.0,0.0) | min_corner | False | yes |
 
 All pieces within tolerance.

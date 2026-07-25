@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Dict, List, Optional
 
+from pae.primitives.bands import all_bands
 from pae.primitives.battlements import all_battlements
 from pae.primitives.columns import all_columns
 from pae.primitives.floors import all_floors
@@ -31,6 +32,7 @@ def all_descriptors() -> List[PrimitiveDescriptor]:
     pieces.extend(all_railings())
     pieces.extend(all_spires())
     pieces.extend(all_surfaces())
+    pieces.extend(all_bands())
     return pieces
 
 
@@ -53,6 +55,7 @@ def piece_ids() -> List[str]:
 def build_mesh(piece_id: str, *, name: Optional[str] = None):
     """Dispatch optional bpy builder by piece id."""
     from pae.primitives import (
+        bands,
         battlements,
         columns,
         floors,
@@ -81,6 +84,7 @@ def build_mesh(piece_id: str, *, name: Optional[str] = None):
         "barrier": railings.build_railing_mesh,
         "roofline": spires.build_spire_mesh,
         "surface": surfaces.build_surface_mesh,
+        "band": bands.build_band_mesh,
     }
     builder = builders.get(desc.kind)
     if builder is None:

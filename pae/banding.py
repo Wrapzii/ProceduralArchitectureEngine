@@ -1,0 +1,289 @@
+"""Banding stage — places coping and façade articulation anywhere you ask for it.
+
+Reference: the Wealden hall house. Plinth course at the base, jettied bressummer at first
+floor, wall plate under the eaves, vertical studs and diagonal braces dividing each
+elevation into panels.
+
+THE ATTACHMENT CONTRACT — "attached" is not "not freestanding"
+--------------------------------------------------------------
+A band that merely *intersects something somewhere* is not attached. Four conditions, each
+checked separately in ``validate.py`` so a failure says which one broke:
+
+  1. HOST      it must contact a WALL, not a floor, roof, railing or another band.
+  2. COVERAGE  contact must run along at least ``MIN_CONTACT_FRAC`` of the band's own
+               length. A course clipping a wall at one corner is not a course.
+  3. FLUSH     its back face must be coplanar with the host wall's outer face, within TOL.
+               A band hovering 5 cm off the wall is a defect you would never see in an
+               overhead render and always see at eye level.
+  4. PROUD     it must project OUTWARD from that face by its full declared projection.
+               A band sunk into the wall is invisible and pointless.
+
+Bands are deliberately EXEMPT from ``vertical_support``: a stringcourse at mid-storey has
+nothing beneath it and never will. Condition 1–4 replace that check for this kind. This
+exemption is written in code, with this reason, per Handbook §3.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional, Sequence, Set, Tuple
+
+from pae.assembly_types import Assembly, SolidPlacement
+from pae.contract import (
+    MODULE_CM,
+    STOREY_CM,
+    TOL_CM,
+    WALL_T_CM,
+    placement_world_aabb,
+)
+from pae.primitives.catalog import catalog_by_id
+from pae.report import Failure, Report
+
+Cell = Tuple[int, int]
+Face = str
+
+# A band must be in contact along at least this fraction of its own run.
+MIN_CONTACT_FRAC = 0.80
+
+_FACE_NORMAL = {"south": (0, -1), "north": (0, 1), "west": (-1, 0), "east": (1, 0)}
+
+
+@dataclass(frozen=True)
+class CourseSpec:
+    """One horizontal band at a height, given as a fraction of the storey."""
+
+    name: str
+    height_frac: float
+    piece: str = "band_course"
+
+    def __post_init__(self) -> None:
+        if not 0.0 <= self.height_frac <= 1.0:
+            raise ValueError(
+                f"course {self.name!r}: height_frac must be 0..1 of a storey, "
+                f"got {self.height_frac}"
+            )
+
+
+# The Wealden default: plinth, jettied bressummer, wall plate.
+DEFAULT_COURSES: Tuple[CourseSpec, ...] = (
+    CourseSpec("plinth", 0.02),
+    CourseSpec("bressummer", 0.62, piece="band_course_jettied"),
+    CourseSpec("plate", 0.93),
+)
+
+
+@dataclass(frozen=True)
+class BandingSpec:
+    """Where banding goes. Everything is in fractions or bays — never centimetres."""
+
+    courses: Tuple[CourseSpec, ...] = DEFAULT_COURSES
+    verticals_every_bays: int = 1
+    vertical_piece: str = "band_pilaster"
+    braces: bool = True
+    brace_piece: str = "band_brace"
+    coping: bool = False
+    coping_piece: str = "coping_cap"
+    faces: Tuple[Face, ...] = ()      # empty = every outward face
+    levels: Tuple[int, ...] = ()      # empty = every storey
+    corners_only: bool = False        # verticals at bay ends only
+
+    def wants_face(self, face: Face) -> bool:
+        return not self.faces or face in self.faces
+
+
+def _aabb(p: SolidPlacement):
+    return placement_world_aabb(
+        p.cell[0], p.cell[1], p.level, p.yaw, p.size_cm, p.offset_cm,
+        rotates_about_center=p.rotates_about_center,
+    )
+
+
+def band_faces_of(assembly: Assembly) -> Dict[str, Face]:
+    """Which way each exterior wall faces, derived from its OWN position in its cell.
+
+    Not from cell neighbours — that says nothing about where the wall actually sits, and is
+    the mistake that braced buttresses against thin air (Ledger A-7).
+    """
+    interior: Set[Cell] = set()
+    for p in assembly.placements:
+        if p.kind == "floor" and "hole" not in p.asset_id:
+            mn, mx = _aabb(p)
+            x0 = int(round(mn[0] / MODULE_CM))
+            x1 = int(round(mx[0] / MODULE_CM))
+            y0 = int(round(mn[1] / MODULE_CM))
+            y1 = int(round(mx[1] / MODULE_CM))
+            for x in range(x0, max(x1, x0 + 1)):
+                for y in range(y0, max(y1, y0 + 1)):
+                    interior.add((x, y))
+
+    faces: Dict[str, Face] = {}
+    for p in assembly.placements:
+        if p.kind != "wall":
+            continue
+        mn, mx = _aabb(p)
+        cx0, cy0 = p.cell[0] * MODULE_CM, p.cell[1] * MODULE_CM
+        near = MODULE_CM * 0.5
+        if (mx[0] - mn[0]) < (mx[1] - mn[1]):
+            face = "west" if (mn[0] - cx0) < near else "east"
+        else:
+            face = "south" if (mn[1] - cy0) < near else "north"
+        dx, dy = _FACE_NORMAL[face]
+        if (p.cell[0] + dx, p.cell[1] + dy) in interior:
+            continue  # inward-facing; banding belongs on the outside
+        faces[p.piece_id] = face
+    return faces
+
+
+def _place_on_face(
+    piece_id: str,
+    host: SolidPlacement,
+    face: Face,
+    *,
+    z_cm: float,
+    run0_frac: float = 0.0,
+    run_len_frac: float = 1.0,
+    suffix: str,
+    extra_tags: frozenset = frozenset(),
+) -> SolidPlacement:
+    """Place a band flush against ``face`` of ``host``, projecting outward.
+
+    Yaw and offset are derived from the host wall's measured AABB, so the band cannot drift
+    from the wall it decorates even if the wall moves.
+    """
+    desc = catalog_by_id()[piece_id]
+    hmn, hmx = _aabb(host)
+    proj = desc.size_cm[0]
+
+    if face in ("south", "north"):
+        yaw = 90
+        run_start = hmn[0] + (hmx[0] - hmn[0]) * run0_frac
+        # yaw 90: local (x,y) -> world (-y, x); origin offset by +size_y puts it back.
+        ox = run_start + desc.size_cm[1]
+        oy = (hmn[1] - proj) if face == "south" else hmx[1]
+    else:
+        yaw = 0
+        run_start = hmn[1] + (hmx[1] - hmn[1]) * run0_frac
+        ox = (hmn[0] - proj) if face == "west" else hmx[0]
+        oy = run_start
+
+    cx0, cy0 = host.cell[0] * MODULE_CM, host.cell[1] * MODULE_CM
+    return SolidPlacement(
+        piece_id=f"band_{piece_id}_{host.piece_id}_{suffix}",
+        asset_id=piece_id,
+        kind=desc.kind,
+        cell=host.cell,
+        level=host.level,
+        yaw=yaw,
+        offset_cm=(ox - cx0, oy - cy0, z_cm),
+        size_cm=desc.size_cm,
+        rotates_about_center=desc.rotates_about_center,
+        tags=desc.tags | frozenset({"band", f"face:{face}"}) | extra_tags,
+    )
+
+
+def band(
+    assembly: Assembly,
+    spec: Optional[BandingSpec] = None,
+) -> Tuple[Assembly, Report]:
+    """Additive banding pass. Returns a new assembly; the input is not mutated."""
+    opts = spec or BandingSpec()
+    catalog = catalog_by_id()
+
+    wanted = {c.piece for c in opts.courses}
+    if opts.verticals_every_bays > 0:
+        wanted.add(opts.vertical_piece)
+    if opts.braces:
+        wanted.add(opts.brace_piece)
+    if opts.coping:
+        wanted.add(opts.coping_piece)
+    missing = sorted(w for w in wanted if w not in catalog)
+    if missing:
+        return assembly, Report.from_failures([
+            Failure(
+                check="band_piece_missing",
+                message=f"banding wants unknown pieces {missing}",
+                world_xyz=None,
+            )
+        ])
+
+    faces = band_faces_of(assembly)
+    if not faces:
+        return assembly, Report.from_failures([])
+
+    hosts = {p.piece_id: p for p in assembly.placements if p.piece_id in faces}
+    extra: List[SolidPlacement] = []
+
+    for i, (pid, face) in enumerate(sorted(faces.items())):
+        host = hosts[pid]
+        if not opts.wants_face(face):
+            continue
+        if opts.levels and host.level not in opts.levels:
+            continue
+
+        for course in opts.courses:
+            extra.append(
+                _place_on_face(
+                    course.piece, host, face,
+                    z_cm=STOREY_CM * course.height_frac,
+                    suffix=f"course_{course.name}",
+                    extra_tags=frozenset({f"course:{course.name}", "horizontal"}),
+                )
+            )
+
+        if opts.verticals_every_bays > 0 and i % opts.verticals_every_bays == 0:
+            positions = (0.0,) if opts.corners_only else (0.0, 0.5)
+            for k, frac in enumerate(positions):
+                extra.append(
+                    _place_on_face(
+                        opts.vertical_piece, host, face,
+                        z_cm=0.0, run0_frac=frac,
+                        suffix=f"stud{k}",
+                        extra_tags=frozenset({"vertical"}),
+                    )
+                )
+
+        if opts.braces:
+            extra.append(
+                _place_on_face(
+                    opts.brace_piece, host, face,
+                    z_cm=0.0,
+                    suffix="brace",
+                    extra_tags=frozenset({"diagonal"}),
+                )
+            )
+
+        if opts.coping:
+            over = WALL_T_CM * 0.15
+            cap = _place_on_face(
+                opts.coping_piece, host, face,
+                z_cm=_aabb(host)[1][2] - _aabb(host)[0][2],
+                suffix="coping",
+                extra_tags=frozenset({"coping"}),
+            )
+            # Coping sits ON the wall head and oversails BOTH faces, so pull it back by
+            # the overhang rather than standing it proud like a course.
+            ox, oy, oz = cap.offset_cm
+            if face in ("south", "north"):
+                oy = oy + (over if face == "south" else -over)
+            else:
+                ox = ox + (over if face == "west" else -over)
+            extra.append(
+                SolidPlacement(
+                    piece_id=cap.piece_id, asset_id=cap.asset_id, kind=cap.kind,
+                    cell=cap.cell, level=cap.level, yaw=cap.yaw,
+                    offset_cm=(ox, oy, oz), size_cm=cap.size_cm,
+                    rotates_about_center=cap.rotates_about_center, tags=cap.tags,
+                )
+            )
+
+    extra.sort(key=lambda p: (p.level, p.cell, p.asset_id, p.piece_id))
+    out = Assembly(
+        placements=list(assembly.placements) + extra,
+        floor_plan=assembly.floor_plan,
+        circulation=assembly.circulation,
+        wall_runs=assembly.wall_runs,
+        apertures=assembly.apertures,
+        storeys=assembly.storeys,
+        aperture_policy=assembly.aperture_policy,
+    )
+    return out, Report.from_failures([])

@@ -48,6 +48,7 @@ def validate(assembly: Assembly) -> Tuple[Assembly, Report]:
     failures.extend(_check_structural_islands(assembly))
     failures.extend(_check_canopy_attachment(assembly))
     failures.extend(_check_roof_penetration(assembly))
+    failures.extend(_check_band_attachment(assembly))
     failures = _sort_failures(failures)
     return assembly, Report.from_failures(failures)
 
@@ -188,6 +189,12 @@ def _check_vertical_support(assembly: Assembly) -> List[Failure]:
     tol = VERTICAL_SUPPORT_TOL_CM
     for p in assembly.placements:
         if p.kind == "ground":
+            continue
+        if p.kind == "band":
+            # DOCUMENTED EXEMPTION (Handbook §3). A stringcourse at mid-storey has nothing
+            # beneath it and never will — it is carried by the face it is fixed to. The
+            # band_attachment check replaces this one for this kind, with four conditions
+            # rather than one, so "attached" means attached, not merely "touching".
             continue
         bb_min, bb_max = _placement_aabb(p)
         bottom_z = bb_min[2]
@@ -1325,6 +1332,110 @@ def _check_roof_penetration(assembly: Assembly) -> List[Failure]:
                 )
             )
             break
+    return failures
+
+
+# --- §7.15 band attachment ---------------------------------------------------
+
+# A band must be in contact along at least this fraction of its own run.
+BAND_MIN_CONTACT_FRAC = 0.80
+
+
+def _check_band_attachment(assembly: Assembly) -> List[Failure]:
+    """Banding must be ATTACHED, which is four conditions — not "not freestanding".
+
+    A piece that merely intersects something somewhere passes a naive touch test while
+    sitting on a floor slab, clipping one corner of a wall, hovering 5 cm off the face, or
+    buried inside it. Each of those is a different defect with a different fix, so each is
+    reported separately:
+
+      HOST      the thing it touches must be a WALL
+      COVERAGE  contact runs along >= BAND_MIN_CONTACT_FRAC of the band's own length
+      FLUSH     its back face is coplanar with that wall's outer face
+      PROUD     it projects outward from that face, rather than sinking into the wall
+    """
+    bands = [p for p in assembly.placements if p.kind == "band"]
+    if not bands:
+        return []
+    walls = [p for p in assembly.placements if p.kind == "wall"]
+    if not walls:
+        return [
+            Failure(
+                check="band_attachment",
+                message=f"{len(bands)} band piece(s) but no walls to attach them to",
+                world_xyz=None,
+                piece_id=bands[0].piece_id,
+                critical=True,
+            )
+        ]
+
+    wall_boxes = [(w, _placement_aabb(w)) for w in walls]
+    failures: List[Failure] = []
+
+    for b in bands:
+        bmn, bmx = _placement_aabb(b)
+        run_axis = 0 if (bmx[0] - bmn[0]) >= (bmx[1] - bmn[1]) else 1
+        thin_axis = 1 - run_axis
+        run_len = bmx[run_axis] - bmn[run_axis]
+
+        best = None
+        best_contact = -1.0
+        for w, (wmn, wmx) in wall_boxes:
+            if bmx[2] < wmn[2] - TOL_CM or bmn[2] > wmx[2] + TOL_CM:
+                continue
+            gap = max(bmn[thin_axis], wmn[thin_axis]) - min(bmx[thin_axis], wmx[thin_axis])
+            if gap > TOL_CM:
+                continue  # not in contact on the thin axis
+            contact = min(bmx[run_axis], wmx[run_axis]) - max(bmn[run_axis], wmn[run_axis])
+            if contact > best_contact:
+                best_contact, best = contact, (w, wmn, wmx)
+
+        if best is None:
+            failures.append(
+                Failure(
+                    check="band_attachment",
+                    message=(
+                        f"band {b.piece_id} ({b.asset_id}) touches no wall — HOST"
+                    ),
+                    world_xyz=_centre(bmn, bmx),
+                    piece_id=b.piece_id,
+                    critical=True,
+                )
+            )
+            continue
+
+        if run_len > 0 and best_contact < run_len * BAND_MIN_CONTACT_FRAC:
+            failures.append(
+                Failure(
+                    check="band_attachment",
+                    message=(
+                        f"band {b.piece_id} ({b.asset_id}) contacts its wall over only "
+                        f"{best_contact:.0f} of {run_len:.0f} cm — COVERAGE"
+                    ),
+                    world_xyz=_centre(bmn, bmx),
+                    piece_id=b.piece_id,
+                    critical=True,
+                )
+            )
+            continue
+
+        _w, wmn, wmx = best
+        overlap = min(bmx[thin_axis], wmx[thin_axis]) - max(bmn[thin_axis], wmn[thin_axis])
+        band_depth = bmx[thin_axis] - bmn[thin_axis]
+        if overlap > band_depth * 0.5 and "coping" not in b.tags:
+            failures.append(
+                Failure(
+                    check="band_proud",
+                    message=(
+                        f"band {b.piece_id} ({b.asset_id}) is sunk {overlap:.1f} cm into "
+                        f"its wall of {band_depth:.1f} cm depth — PROUD"
+                    ),
+                    world_xyz=_centre(bmn, bmx),
+                    piece_id=b.piece_id,
+                    critical=True,
+                )
+            )
+
     return failures
 
 

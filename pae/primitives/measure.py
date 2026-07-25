@@ -103,6 +103,33 @@ def footprint_contract_errors(
                 f"{desc.id}.size.x: barrier thickness {sx:.1f} cm exceeds "
                 f"WALL_T {WALL_T_CM:.1f} cm"
             )
+    elif kind == "band":
+        # Banding is applied TO a face, so only its run is grid-locked. Its projection and
+        # its height are free by design — a plinth course and a wall plate are different
+        # depths, and a vertical member is a full storey while a course is a few percent.
+        if sy > my * MODULE_CM + tol_cm:
+            errors.append(
+                f"{desc.id}.size.y (run): {sy:.1f} cm overflows its "
+                f"{my}-module bay ({my * MODULE_CM:.1f} cm)"
+            )
+        if "coping" in desc.tags:
+            # Coping caps a wall head and OVERSAILS BOTH FACES, so it is wider than the
+            # wall by design. It must be wider — a coping flush with the wall sheds water
+            # down the face — but not wide enough to read as a projecting cornice.
+            if not WALL_T_CM < sx <= WALL_T_CM * 1.5:
+                errors.append(
+                    f"{desc.id}.size.x: coping width {sx:.1f} cm must oversail the wall "
+                    f"({WALL_T_CM:.1f} cm) by a margin, up to 1.5x"
+                )
+        elif sx > WALL_T_CM:
+            errors.append(
+                f"{desc.id}.size.x: projection {sx:.1f} cm exceeds a wall thickness "
+                f"({WALL_T_CM:.1f} cm) — banding articulates a face, it is not a wall"
+            )
+        if sz > STOREY_CM + tol_cm:
+            errors.append(
+                f"{desc.id}.size.z: {sz:.1f} cm is taller than a storey"
+            )
     elif kind == "surface":
         # Ground surfaces tile the grid: full module square, thin. Kerbs are a strip, so
         # X is allowed to be narrower than a module.
