@@ -55,15 +55,19 @@ opening, flanking columns or pilasters, a porch or portico, steps up from the wa
 described and it needs to be a single declarative unit that expands into ~30 pieces.
 *Verified by:* the ensemble's stairs are reachable from the entrance cell; both flights
 land on the same upper deck; railings guard both.
-**DONE stub (RM_M9_ENSEMBLE):** `EntranceSpec.ensemble` + `pae/entrance_ensemble.py`
-expands grand entrances to greybox arch + `steps_external` + flanking `pilaster` (and
-twin `stair_half` when storeys≥2); `entrance_ensemble_existence` check. Full ~30-piece
-portico/railings remain future work. Does not weaken 1.5 `no_bare_aperture`.
+**DONE greybox (a4acc24 / RM_M9_ENSEMBLE):** `EntranceSpec.ensemble` +
+`pae/entrance_ensemble.py` expands grand entrances to greybox arch + `steps_external` +
+flanking `pilaster` (and twin `stair_half` when storeys≥2); `entrance_ensemble_existence`
+check. Tests: `test_entrance_ensemble.py`. Gaps: full ~30-piece portico/railings, stair
+reachability to upper deck. Does not weaken 1.5 `no_bare_aperture`.
 
 **1.4 Vertical stacking of openings.** A doorway onto a first-floor balcony directly above
 the ground entrance. Openings need to know about each other vertically so they align.
 *Verified by:* a new `aperture_alignment` check — stacked openings share a centre line
 within tolerance.
+**DONE (eabf1f8 / RM_ALIGN_1_4):** `validate._check_aperture_alignment` (warning);
+`APERTURE_ALIGNMENT_TOL_CM = TOL_CM`. Tests: `test_aperture_alignment.py`. Gaps:
+generators do not yet deliberately stack openings — check catches misalignment only.
 
 **1.5 No opening without a door.** Already enforced for balconies. Must become general:
 any breach in the envelope carries a door or gate piece, never a bare hole.
@@ -90,6 +94,10 @@ openings between them. Partitions are thinner than exterior walls and carry no r
 **2.3 Corridors and circulation spine.** Rooms hang off a corridor; the corridor reaches
 every stair. Without this a range is one huge undivided hall.
 *Verified by:* graph reachability — every room to every stair to the exterior.
+**DONE (1aafb21 / RM_ROOMS_CORRIDOR):** `plan._extend_corridor_spine_to_stairs` grows
+CORRIDOR through INTERIOR to STAIR/VOID wells; `corridor_stair_connectivity` (critical).
+Tests: `test_corridor_spine.py`. Gaps: room→exterior egress graph still via existing
+`storey_egress` (not per-room exterior path).
 
 **2.4 Double-height volumes.** A great hall or chapel that omits the intermediate floor.
 Requires the floor stage to accept per-cell suppression and the walls to run two storeys.
@@ -178,7 +186,7 @@ Still needed:
 | **Egress** | Every room within N metres of an exit; a building with one door |
 | **Watertight envelope** | Holes in the roof plane over enclosed space |
 | ~~**Aperture reachability**~~ | ~~A door opening onto a 4 m drop~~ — **DONE (0.5):** check is **critical**; milestone fixtures + variation/generators green (`test_aperture_reachability_critical.py`) |
-| **Stacked-opening alignment** | Windows that wander bay to bay between storeys |
+| ~~**Stacked-opening alignment**~~ | ~~Windows that wander bay to bay between storeys~~ — **DONE (1.4 / eabf1f8):** `aperture_alignment` check (`test_aperture_alignment.py`) |
 | **Proportion sanity** | Roof pitch, window-to-wall ratio, storey height vs span — the *aesthetic* faults the structural checks cannot see |
 | **Terrain conformance** | Buildings buried in or floating over the landscape |
 | **Instance budget** | A site that will not stream in UE |

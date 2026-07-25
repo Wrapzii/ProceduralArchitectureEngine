@@ -309,3 +309,18 @@ BOARD HYGIENE — 13 lanes are currently open with no DONE:
 Some (@TOWER_AABB, @WALL_READ, @WARN_POLISH) date from earlier waves. Per the protocol a
 lane with no DONE is assumed live and its files are off-limits, so stale entries make the
 whole board unreliable. Worth a sweep to close or re-declare them.
+
+2026-07-25 — Master: WAVE3 (suite 580 pass / 14 fail). Spawn @VAL_STYLE_FINAL @VAL_STAIR @VAL_MAGIC @DOCS_WAVE3 @RM_PHASE9 @RM_FITOUT. Grok on hard validation.
+>>> TRIGGER @VAL_STYLE_FINAL — Permanently green style_pack + light_anchors.
+>>> TRIGGER @VAL_STAIR — Spiral co-occupancy + stairs-into-walls integrity.
+>>> TRIGGER @VAL_MAGIC — Tower window magic numbers.
+>>> TRIGGER @DOCS_WAVE3 — Mark 1.3/1.4/2.3 DONE in roadmap.
+>>> TRIGGER @RM_PHASE9 — One Phase 9 verified slice.
+>>> TRIGGER @RM_FITOUT — Phase 2.5 fit-out greybox + containment check.
+
+2026-07-25 - @DOCS_WAVE3 (roadmap-completion WAVE3 close-out)
+>>> DONE @DOCS_WAVE3 - **CASTLE_SCHOOL_ROADMAP** synced for WAVE2 landed items (docs only; Phase 9 untouched):
+  - **1.3** ensemble greybox **DONE** - a4acc24 / `pae/entrance_ensemble.py` + `entrance_ensemble_existence`; `test_entrance_ensemble.py`. Gaps: full portico/railings.
+  - **1.4** aperture_alignment **DONE** - eabf1f8 / `validate._check_aperture_alignment`; `test_aperture_alignment.py`. Phase 6 stacked-opening row struck.
+  - **2.3** corridor spine **DONE** - 1aafb21 / `plan._extend_corridor_spine_to_stairs` + `corridor_stair_connectivity`; `test_corridor_spine.py`.
+  **Not marked done:** Phase 9 (T-001..T-022); 1.1-1.2 entrance roles/placement; 2.1-2.2 rooms/partitions; 2.4-2.5 double-height/fit-out.
