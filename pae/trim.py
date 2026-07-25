@@ -150,17 +150,31 @@ def _levels(assembly: Assembly) -> List[int]:
 
 
 def _wall_cells_by_level(assembly: Assembly) -> Dict[int, Set[Cell]]:
+    """Cells blocked for open-edge railings: façade walls and tower drum arcs.
+
+    ``tower_arc`` must count — otherwise a rampart ``tower_deck`` whose
+    ``covered_cells`` spill into peripheral bays looks like an open terrace and
+    grows floating balustrades mid-drum.
+    """
     out: Dict[int, Set[Cell]] = {}
-    for p in _by_kind(assembly, "wall"):
+    for p in _by_kind(assembly, "wall", "tower_arc"):
         out.setdefault(p.level, set()).update(covered_cells(p))
     return out
 
 
 def _deck_cells_by_level(assembly: Assembly) -> Dict[int, Set[Cell]]:
-    """Floor cells per level, excluding holes (you do not railing over a hole's slab)."""
+    """Floor cells per level, excluding holes (you do not railing over a hole's slab).
+
+    Tower rampart decks (``tower_deck`` / ``tower_top``) are excluded: they sit above
+    the storey datum (junction plate) and are already guarded by battlements/crenels.
+    Treating them as ordinary decks plants ``balustrade_stone`` at level*STOREY with
+    nothing underneath — the floating-balustrade defect on gatehouse/chapel/library.
+    """
     out: Dict[int, Set[Cell]] = {}
     for p in _by_kind(assembly, "floor"):
         if "hole" in p.asset_id:
+            continue
+        if "tower_deck" in p.tags or "tower_top" in p.tags:
             continue
         out.setdefault(p.level, set()).update(covered_cells(p))
     return out

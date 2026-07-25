@@ -1916,6 +1916,11 @@ def _check_roof_bears_on_wall(assembly: Assembly) -> List[Failure]:
     support tolerance, with XY footprint overlap. Valley stubs (``roof_valley``)
     are exempt — they sit in the wing trough and are carried by abutting decks
     (S-019); ``canopy_attachment`` still requires they join the roof graph.
+
+    Gallery canopies (``gallery_roof``) are intentionally post-supported on the
+    court edge, but they are NOT exempt here: compound places a ``WALL_T_CM``
+    bearing overhang onto the court-facing wall head so the eave still bears.
+    Posts alone must keep failing (see ``test_engineering_continuity``).
     """
     tol = VERTICAL_SUPPORT_TOL_CM
     roofs = [

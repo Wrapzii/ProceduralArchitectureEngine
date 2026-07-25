@@ -28,7 +28,7 @@ from typing import Dict, List, Optional, Sequence, Set, Tuple
 
 from pae.assembly_types import Assembly, SolidPlacement
 from pae.boundary import FACE_YAW, boundary_offset_cm
-from pae.contract import EAVE_OVERHANG_CM, FLOOR_T_CM, MODULE_CM, STOREY_CM
+from pae.contract import EAVE_OVERHANG_CM, FLOOR_T_CM, MODULE_CM, STOREY_CM, WALL_T_CM
 from pae.primitives.catalog import catalog_by_id
 from pae.primitives.roofs import roof_eave_offset_cm, roof_flat_span_size_cm
 from pae.report import Failure, Report
@@ -270,6 +270,7 @@ def _gallery_roof_overhangs(
     mine: Set[Cell],
     *,
     balcony_cells: Set[Cell],
+    building_cells: Set[Cell],
 ) -> Tuple[float, float, float, float]:
     """Eave overhang (west, east, south, north) for one range's gallery roof span.
 
@@ -278,6 +279,12 @@ def _gallery_roof_overhangs(
     the same or it meets the range roof only along part of its edge and stops short of the
     balustrade on the open court side.  Interior seams where two gallery runs meet get zero
     overhang so the slabs butt cleanly.
+
+    Building-facing sides use ``WALL_T_CM`` (not mere eave): ``roof_bears_on_wall`` needs
+    >35 cm XY overlap with the wall-head strip.  ``EAVE_OVERHANG_CM`` is only half a wall
+    (30 cm), so a canopy that stops at the eave line fails bearing while still touching the
+    wall face sideways (``canopy_attachment``).  Posts carry the free edge; the wall head
+    still has to carry the eaves — do not exempt ``gallery_roof`` from that check.
     """
     min_x = min(c[0] for c in mine)
     max_x = max(c[0] for c in mine)
@@ -298,6 +305,8 @@ def _gallery_roof_overhangs(
         outside = {(cx + dx, cy + dy) for cx, cy in edge}
         if outside & balcony_cells:
             return 0.0
+        if outside & building_cells:
+            return WALL_T_CM
         return oh
 
     return (
@@ -314,6 +323,7 @@ def _place_gallery_roof(
     level: int,
     *,
     balcony_cells: Set[Cell],
+    building_cells: Set[Cell],
     tag: str,
 ) -> SolidPlacement:
     """One spanning flat roof covering every gallery cell claimed by ``tag``."""
@@ -325,7 +335,7 @@ def _place_gallery_roof(
     modules_x = max_x - min_x + 1
     modules_y = max_y - min_y + 1
     west, east, south, north = _gallery_roof_overhangs(
-        mine, balcony_cells=balcony_cells,
+        mine, balcony_cells=balcony_cells, building_cells=building_cells,
     )
     eave_ox, eave_oy, _ = roof_eave_offset_cm(overhang_west=west, overhang_south=south)
     return SolidPlacement(
@@ -494,6 +504,7 @@ def add_balconies(
                 set(mine),
                 top,
                 balcony_cells=balcony_cells,
+                building_cells=all_built,
                 tag=name,
             ))
 

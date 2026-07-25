@@ -389,3 +389,10 @@ claimed. Numbers are from a measured pass over all 10 showcase builds + school +
 >>> DONE @VAL_SPIRAL_SHELL — Spiral shell: `spiral_newel` greybox pillar + assemble emit on helix levels; `_ensure_spiral_drum_enclosure` fills missing `tower_arc` quarters; critical `spiral_newel_exists` / `spiral_drum_enclosure` (door-bay exempt tags for @VAL_TOWER_DOOR). Tests: `test_spiral_shell.py` 7 passed. Shared: assemble spiral extras (on branch), columns.py, blender tint. Gaps: hall door (@VAL_TOWER_DOOR), circular railing continuity.
 
 >>> DONE @VAL_TOWER_DOOR — Hall→drum doorway: `pae/tower_entry.place_tower_entry_doors` (tag `tower_entry`) on attach face at ground + hall landings; critical `tower_entry_door` existence when spiral/tower-stair; `aperture_reachability` treats hall floor as landing; rim door exempt from stair-exit headroom plug. Tests: `test_tower_entry_door.py` 6 passed. Did not wipe VAL_SPIRAL_SHELL newel/drum.
+
+2026-07-25 — Master: VALIDATION PASSES landed (spiral shell/door/rampart, stair typology, roof connect, eng continuity). Suite after merge: 647 pass / 28 fail — mostly NEW CHECKS catching crown deck egress, roof bearing, tower_entry walkability, balustrade support. Spawning triage (fix fixtures/geometry, do NOT demote).
+>>> TRIGGER @VAL_TRIAGE_EGRESS — storey_egress for tower_deck/rampart + tower_entry aperture_sanity walkability.
+>>> TRIGGER @VAL_TRIAGE_ROOF — roof_bears_on_wall gallery/flat + floating balustrades.
+>>> TRIGGER @VAL_TRIAGE_MISC — fitout merge + magic 350.0 in tower_entry + gallery blender assert.
+
+>>> DONE @VAL_TRIAGE_ROOF ? Gallery roofs: building-face overhang WALL_T_CM so eaves kiss wall heads (EAVE was 30 cm < 35 cm XY tol); roof_bears_on_wall kept critical, no gallery exemption (posts alone still fail). Trim: skip tower_deck/tower_top for railings + count tower_arc as wall cells ? stops floating balustrade_stone mid-drum (gatehouse/chapel/library). test_roof_connect uncovered warn still green (20). trim/showcase/freestanding/eng_continuity green for owned fails.
