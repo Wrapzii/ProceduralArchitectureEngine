@@ -63,9 +63,12 @@ GALLERY_CAM_DIRECTION = (1.0, -1.0, 0.65)
 GALLERY_CAM_MARGIN = 1.38
 GALLERY_CAM_LENS_MM = 40.0
 GALLERY_CAM_ORTHO = True
-# M2 stair proof: tighter SE-elevated view framed on stair + floor_hole AABB only.
-STAIR_PROOF_CAM_DIRECTION = (1.0, -0.72, 0.48)
-STAIR_PROOF_CAM_MARGIN = 1.18
+# M2 stair proof: side view perpendicular to stair run (world AABB), not along treads.
+STAIR_PROOF_CAM_ELEVATION = 0.55
+STAIR_PROOF_CAM_SIDE_Y = -1.0  # run longer in X → camera from −Y
+STAIR_PROOF_CAM_SIDE_X = 1.0  # run longer in Y → camera from +X
+STAIR_PROOF_CAM_MARGIN = 1.15
+GALLERY_SUN_ENERGY = 4.5
 # M1 openings proof: SE (+X, −Y) elevated on south door + west windows — exterior shell only.
 OPENINGS_PROOF_CAM_DIRECTION = (1.0, -0.92, 0.58)
 OPENINGS_PROOF_CAM_MARGIN = 1.22
@@ -300,18 +303,51 @@ def stair_proof_bounds_m(
     )
 
 
+def stair_proof_camera_direction_from_bounds_m(
+    bb_min: Tuple[float, float, float],
+    bb_max: Tuple[float, float, float],
+) -> Tuple[float, float, float]:
+    """Unit offset from target: perpendicular to the longer horizontal run axis."""
+    sx = max(bb_max[0] - bb_min[0], 1e-6)
+    sy = max(bb_max[1] - bb_min[1], 1e-6)
+    elev = STAIR_PROOF_CAM_ELEVATION
+    if sx >= sy:
+        return _normalize_vec3((0.0, STAIR_PROOF_CAM_SIDE_Y, elev))
+    return _normalize_vec3((STAIR_PROOF_CAM_SIDE_X, 0.0, elev))
+
+
+def stair_proof_ortho_scale_from_bounds_m(
+    bb_min: Tuple[float, float, float],
+    bb_max: Tuple[float, float, float],
+    *,
+    margin: float = STAIR_PROOF_CAM_MARGIN,
+) -> float:
+    """Ortho scale on the face visible when shooting perpendicular to the run."""
+    sx = max(bb_max[0] - bb_min[0], 0.5)
+    sy = max(bb_max[1] - bb_min[1], 0.5)
+    sz = max(bb_max[2] - bb_min[2], 0.5)
+    if sx >= sy:
+        return max(sx, sz) * margin
+    return max(sy, sz) * margin
+
+
 def stair_proof_camera_pose_from_bounds_m(
     bb_min: Tuple[float, float, float],
     bb_max: Tuple[float, float, float],
 ) -> Dict[str, Any]:
     """Deterministic camera pose for the M2 stair + hole proof shot."""
-    return camera_pose_from_bounds_m(
+    direction = stair_proof_camera_direction_from_bounds_m(bb_min, bb_max)
+    pose = camera_pose_from_bounds_m(
         bb_min,
         bb_max,
         margin=STAIR_PROOF_CAM_MARGIN,
-        direction=STAIR_PROOF_CAM_DIRECTION,
+        direction=direction,
         ortho=GALLERY_CAM_ORTHO,
     )
+    pose["ortho_scale"] = stair_proof_ortho_scale_from_bounds_m(
+        bb_min, bb_max, margin=STAIR_PROOF_CAM_MARGIN
+    )
+    return pose
 
 
 def is_openings_proof_placement(p) -> bool:
@@ -936,9 +972,9 @@ def _ensure_gallery_lighting() -> None:
     sun = next((o for o in bpy.data.objects if o.type == "LIGHT" and o.name.startswith("PAE_Sun")), None)
     if sun is None:
         light_data = bpy.data.lights.new(name="PAE_Sun", type="SUN")
-        light_data.energy = 3.0
         sun = bpy.data.objects.new("PAE_Sun", light_data)
         bpy.context.scene.collection.objects.link(sun)
+    sun.data.energy = GALLERY_SUN_ENERGY
     sun.rotation_euler = (math.radians(40), math.radians(15), math.radians(-30))
 
 

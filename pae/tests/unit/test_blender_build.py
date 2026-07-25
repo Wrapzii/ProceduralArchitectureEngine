@@ -268,9 +268,10 @@ def test_stair_proof_camera_pose_targets_stair_aabb_center():
     import math
 
     from pae.blender_build import (
-        STAIR_PROOF_CAM_DIRECTION,
         stair_proof_bounds_m,
+        stair_proof_camera_direction_from_bounds_m,
         stair_proof_camera_pose_from_bounds_m,
+        stair_proof_ortho_scale_from_bounds_m,
     )
     from pae.pipeline import run_through_assemble
     from pae.spec import m2_two_storey_stair_spec
@@ -290,11 +291,52 @@ def test_stair_proof_camera_pose_targets_stair_aabb_center():
     dy = loc[1] - tgt[1]
     dz = loc[2] - tgt[2]
     length = math.sqrt(dx * dx + dy * dy + dz * dz)
-    exp_x, exp_y, exp_z = STAIR_PROOF_CAM_DIRECTION
-    exp_len = math.sqrt(exp_x * exp_x + exp_y * exp_y + exp_z * exp_z)
-    assert dx / length == pytest.approx(exp_x / exp_len, abs=1e-6)
-    assert dy / length == pytest.approx(exp_y / exp_len, abs=1e-6)
-    assert dz / length == pytest.approx(exp_z / exp_len, abs=1e-6)
+    exp_x, exp_y, exp_z = stair_proof_camera_direction_from_bounds_m(bb_min, bb_max)
+    assert dx / length == pytest.approx(exp_x, abs=1e-6)
+    assert dy / length == pytest.approx(exp_y, abs=1e-6)
+    assert dz / length == pytest.approx(exp_z, abs=1e-6)
+    assert pose["ortho_scale"] == pytest.approx(
+        stair_proof_ortho_scale_from_bounds_m(bb_min, bb_max), rel=1e-9
+    )
+
+
+def test_stair_proof_camera_offset_y_when_run_longer_in_x():
+    from pae.blender_build import stair_proof_camera_pose_from_bounds_m
+
+    bb_min = (0.0, 0.0, 0.0)
+    bb_max = (10.0, 3.0, 2.5)
+    pose = stair_proof_camera_pose_from_bounds_m(bb_min, bb_max)
+    loc = pose["location"]
+    tgt = pose["target"]
+    assert abs(loc[1] - tgt[1]) > abs(loc[0] - tgt[0])
+    assert loc[2] > tgt[2]
+
+
+def test_stair_proof_camera_offset_x_when_run_longer_in_y():
+    from pae.blender_build import stair_proof_camera_pose_from_bounds_m
+
+    bb_min = (0.0, 0.0, 0.0)
+    bb_max = (3.0, 10.0, 2.5)
+    pose = stair_proof_camera_pose_from_bounds_m(bb_min, bb_max)
+    loc = pose["location"]
+    tgt = pose["target"]
+    assert abs(loc[0] - tgt[0]) > abs(loc[1] - tgt[1])
+    assert loc[2] > tgt[2]
+
+
+def test_m2_stair_proof_camera_perpendicular_to_y_run():
+    """M2 straight run spans Y in world space — camera offsets along X, not Y."""
+    from pae.blender_build import stair_proof_bounds_m, stair_proof_camera_pose_from_bounds_m
+    from pae.pipeline import run_through_assemble
+    from pae.spec import m2_two_storey_stair_spec
+
+    _, _, assembly, _ = run_through_assemble(m2_two_storey_stair_spec())
+    bb_min, bb_max = stair_proof_bounds_m(assembly)
+    assert bb_max[1] - bb_min[1] > bb_max[0] - bb_min[0]
+    pose = stair_proof_camera_pose_from_bounds_m(bb_min, bb_max)
+    loc = pose["location"]
+    tgt = pose["target"]
+    assert abs(loc[0] - tgt[0]) > abs(loc[1] - tgt[1])
 
 
 def test_build_m2_stair_proof_headless():
