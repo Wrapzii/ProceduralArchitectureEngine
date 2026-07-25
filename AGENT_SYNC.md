@@ -174,6 +174,7 @@ Suite at close: 405 passed, 1 failed (@TOWER_ATTACH above). Renders: Saved/Scree
 >>> TRIGGER @RM_ENTRANCE — EntranceSpec roles+placement (1.1–1.2) + existence check. Owns: pae/spec.py entrances, assemble door role mapping, validate existence.
 >>> TRIGGER @RM_CELLS — Sweep remaining validate checks off p.cell onto covered_cells (Handbook 5.1 / S-129). Owns: validate.py only (coordinate with P0_5).
 >>> TRIGGER @RM_SPIRAL — Place stair_spiral_quarter from stair_kind=spiral in towers (3.1). Owns: solver/plan/assemble spiral path; re-enable SUPPORTED spiral with stacking.
+>>> DONE @RM_SPIRAL_POLISH - Phase 3.1 spiral tower stairs: solver single tower cell + tower-required gate; plan STAIR/VOID on drum; assemble 4x stair_spiral_quarter Z-stack per climb; _punch_stair_exit_holes via covered_cells (Rule 5.1). test_spiral_stairs.py 11 passed; trim+validate green. Commit 63aaa11.
 >>> TRIGGER @RM_ROOF — Steep pitch style + hip roof primitive + L/U valley stub (S-011/S-012/S-019). Owns: primitives/roofs.py, assemble pitched/hip.
 >>> TRIGGER @RM_ROOMS — RoomSpec graph + double-height hall (2.1/2.4) extending school carve. Owns: plan.py/spec.py rooms.
 >>> TRIGGER @RM_LIGHTS — LightAnchor placements S-068..S-070 + manifest export. Owns: new anchors module, decorate/trim anchors, export schema.
