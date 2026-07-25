@@ -1,10 +1,8 @@
-"""Property tests over random specs (§10.2) — M1 green; multi-wing still xfail."""
+"""Property tests over random specs (§10.2) — L/U/rect/courtyard within M1–M3."""
 
 from __future__ import annotations
 
 import random
-
-import pytest
 
 from pae.tests.property.determinism import hash_assembly
 from pae.tests.property.spec_factory import random_building_spec
@@ -101,16 +99,12 @@ def test_m1_assembly_hash_stable_across_two_runs():
     assert len(h1) == 64
 
 
-@pytest.mark.xfail(
-    reason="WP-5+: multi-wing / multi-storey random specs still fail validate "
-    "(floating floors, enclosure leaks, solve_none) — M1 rect is covered separately",
-    strict=False,
-)
 def test_random_specs_validate_ok():
     """For random specs within sane bounds, validator must pass (§10.2).
 
     Any failing assembly is a solver/assemble bug, not a bad spec.
-    Kept xfail while non-rect / multi-storey paths remain broken.
+    Generator draws rect/L/U/courtyard with exterior tower attach cells;
+    solver local-repair also nudges interior/overlapping towers outside.
     """
     rng = random.Random(99)
     for _ in range(20):

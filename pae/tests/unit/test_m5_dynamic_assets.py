@@ -12,6 +12,7 @@ from pae.assets.fit import snap_fit
 from pae.assets.import_ import MeasuredAABB, import_asset_measured
 from pae.assets.query import list_decorative_for_generator
 from pae.comfy import confirm_decorative, ingest_decorative
+from pae.contract import STOREY_CM
 from pae.decorate import decorate, pick_prop_assets
 from pae.pipeline import run_through_decorate
 from pae.spec import m1_box_house_spec
@@ -42,7 +43,7 @@ class TestM5SnapFitUntouched:
             "prop",
             MeasuredAABB(
                 min_corner=(0.0, 0.0, 0.0),
-                max_corner=(176.0, 176.0, 350.0),
+                max_corner=(176.0, 176.0, STOREY_CM),
             ),
         )
         assert result.asset is None

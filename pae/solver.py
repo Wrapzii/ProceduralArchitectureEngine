@@ -381,26 +381,87 @@ def _stair_storey_failures(spec: BuildingSpec, volumes: List[Volume]) -> List[Fa
     return []
 
 
+def _tower_needs_repair(tower: Volume, bodies: List[Volume]) -> bool:
+    """True if tower overlaps a body or fails to attach to any body."""
+    if any(tower.overlaps(b) for b in bodies):
+        return True
+    return not any(_tower_touches(tower, b) for b in bodies)
+
+
+def _exterior_tower_candidates(bodies: List[Volume]) -> List[Tuple[int, int]]:
+    """Wall-edge then corner cells outside every enclosed body (M3 prefers wall)."""
+    wall: List[Tuple[int, int]] = []
+    corners: List[Tuple[int, int]] = []
+    for body in bodies:
+        mx = body.x0 + (body.x1 - body.x0) // 2
+        my = body.y0 + (body.y1 - body.y0) // 2
+        wall.extend(
+            [
+                (body.x0 - 1, my),
+                (body.x1 + 1, my),
+                (mx, body.y0 - 1),
+                (mx, body.y1 + 1),
+            ]
+        )
+        corners.extend(
+            [
+                (body.x0 - 1, body.y0 - 1),
+                (body.x1 + 1, body.y0 - 1),
+                (body.x0 - 1, body.y1 + 1),
+                (body.x1 + 1, body.y1 + 1),
+            ]
+        )
+    # Prefer wall abut (edge) over diagonal corners — keeps 4-connect circulation.
+    ordered = wall + corners
+    good: List[Tuple[int, int]] = []
+    seen: Set[Tuple[int, int]] = set()
+    for cx, cy in ordered:
+        if (cx, cy) in seen:
+            continue
+        seen.add((cx, cy))
+        cand = Volume(
+            id="_cand",
+            x0=cx,
+            y0=cy,
+            x1=cx,
+            y1=cy,
+            storeys=1,
+            role="tower",
+        )
+        if any(cand.overlaps(b) for b in bodies):
+            continue
+        if not any(_tower_touches(cand, b) for b in bodies):
+            continue
+        good.append((cx, cy))
+    return good
+
+
 def _local_repair_towers(volumes: List[Volume]) -> List[Volume]:
-    """Nudge free-floating towers to nearest body corner/wall."""
+    """Nudge free-floating *or overlapping* towers to nearest exterior wall/corner.
+
+    Historical bug: interior tower cells ``_tower_touches`` the body via overlap,
+    so repair skipped them and ``volumes_no_overlap`` failed the solve.
+    """
     mains = [v for v in volumes if v.role in ("main", "wing")]
     if not mains:
         return volumes
-    body = mains[0]
+    candidates = _exterior_tower_candidates(mains)
     repaired: List[Volume] = []
     for v in volumes:
-        if v.role != "tower" or _tower_touches(v, body):
+        if v.role != "tower" or not _tower_needs_repair(v, mains):
             repaired.append(v)
             continue
-        # Snap to nearest corner of primary body.
-        corners = [
-            (body.x0 - 1, body.y0 - 1),
-            (body.x1 + 1, body.y0 - 1),
-            (body.x0 - 1, body.y1 + 1),
-            (body.x1 + 1, body.y1 + 1),
-        ]
         tx, ty = v.x0, v.y0
-        best = min(corners, key=lambda c: abs(c[0] - tx) + abs(c[1] - ty))
+        if not candidates:
+            # Fallback: primary-body corners (legacy behaviour).
+            body = mains[0]
+            candidates = [
+                (body.x0 - 1, body.y0 - 1),
+                (body.x1 + 1, body.y0 - 1),
+                (body.x0 - 1, body.y1 + 1),
+                (body.x1 + 1, body.y1 + 1),
+            ]
+        best = min(candidates, key=lambda c: abs(c[0] - tx) + abs(c[1] - ty))
         repaired.append(
             Volume(
                 id=v.id,

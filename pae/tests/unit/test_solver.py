@@ -70,6 +70,32 @@ def test_tower_must_attach():
     assert _touches(t, body)
 
 
+def test_interior_tower_repaired_outside_footprint():
+    """Interior tower cells overlapped the body and used to fail solve.
+
+    Local repair must push them to an exterior wall/corner attach.
+    """
+    spec = BuildingSpec(
+        name="interior_tower",
+        style="keep",
+        footprint=FootprintSpec(kind="rect", bays_x=4, bays_y=4),
+        storeys=2,
+        storey_use=["hall", "hall"],
+        towers=[TowerSpec(cell=(1, 1), storeys=3, attached_to="wall")],
+        circulation=CirculationSpec(stair_kind="straight", stair_cells=[]),
+        openings=OpeningPolicy(doors_ground=1),
+        roof=RoofSpec(kind="flat"),
+    )
+    massing, report = solve(spec)
+    assert report.ok is True, report.critical
+    assert massing is not None
+    body = next(v for v in massing.volumes if v.role == "main")
+    tower = next(v for v in massing.volumes if v.role == "tower")
+    assert not tower.overlaps(body)
+    assert (tower.x0, tower.y0) != (1, 1)
+    assert _touches(tower, body)
+
+
 def _touches(tower: Volume, body: Volume) -> bool:
     body_cells = body.cells()
     for tx, ty in tower.cells():
