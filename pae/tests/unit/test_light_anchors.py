@@ -56,3 +56,33 @@ def test_validate_anchor_placements_warning_only():
     )
     failures = validate_anchor_placements(assembly)
     assert all(not f.critical for f in failures)
+
+
+def test_light_anchor_handbook_section3_registration():
+    """Handbook §3 — light_anchor must be fully registered end-to-end."""
+    from pae.blender_build import KIND_MATERIAL_COLORS
+    from pae.primitives.catalog import catalog_by_id, build_mesh
+    from pae.primitives.measure import footprint_contract_errors
+    from pae.validate import ISLAND_EXEMPT_KINDS, ISLAND_EXEMPT_TAGS
+
+    cat = catalog_by_id()
+    for pid in (
+        "light_anchor_sconce",
+        "light_anchor_chandelier",
+        "light_anchor_pendant",
+    ):
+        assert pid in cat
+        desc = cat[pid]
+        assert desc.kind == "light_anchor"
+        assert footprint_contract_errors(desc) == []
+        # build_mesh dispatch exists (may raise without bpy — KeyError would mean missing)
+        try:
+            build_mesh(pid)
+        except RuntimeError as exc:
+            assert "bpy" in str(exc).lower() or "blender" in str(exc).lower()
+        except Exception as exc:  # pragma: no cover - surface unexpected dispatch holes
+            if "no bpy builder" in str(exc).lower() or "unknown" in str(exc).lower():
+                raise
+    assert "light_anchor" in ISLAND_EXEMPT_KINDS
+    assert "light_anchor" in ISLAND_EXEMPT_TAGS
+    assert "light_anchor" in KIND_MATERIAL_COLORS

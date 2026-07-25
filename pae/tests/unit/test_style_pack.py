@@ -88,6 +88,30 @@ def test_unknown_roof_nested_key_rejected(tmp_path: Path, monkeypatch: pytest.Mo
     assert pack is None
     assert report.ok is False
     assert any("roof" in f.message for f in report.failures)
+    assert any(f.check == "style_schema" and f.critical for f in report.failures)
+
+
+def test_roof_hints_known_keys_accepted(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """S-011 RoofHints stay first-class; only unknown nested keys fail closed."""
+    good = {
+        "id": "roof_ok",
+        "roof": {
+            "pitch_min": 1.6,
+            "pitch_max": 2.0,
+            "steep_silhouette": True,
+            "kind_default": "pitched",
+        },
+        "window": {"tag": "window_plain", "per_bay": 1, "skip_ground": False},
+    }
+    (tmp_path / "roof_ok.json").write_text(json.dumps(good), encoding="utf-8")
+    monkeypatch.setattr("pae.style_pack._STYLES_DIR", tmp_path)
+
+    pack, report = load_style_pack("roof_ok")
+    assert report.ok is True, [f.message for f in report.failures]
+    assert pack is not None
+    assert pack.roof.steep_silhouette is True
+    assert pack.roof.kind_default == "pitched"
+    assert pack.roof.pitch_min == pytest.approx(1.6)
 
 
 def test_unknown_top_level_key_rejected(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
