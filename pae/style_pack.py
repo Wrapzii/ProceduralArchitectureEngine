@@ -4,21 +4,40 @@ Resolution order (deterministic): engine defaults → style pack (with optional
 ``extends`` chain) → per-call overrides.
 
 S-007 piece substitution and S-011 steep-pitch roof hints live here; assembly
-consumes ``resolve_roof_pitch`` / ``resolve_piece_id`` without re-parsing JSON.
+consumes ``resolve_roof_pitch`` / ``resolve_roof_kind`` / ``resolve_piece_id``
+without re-parsing JSON.
 """
 
 from __future__ import annotations
 
 import json
+import random
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Dict, FrozenSet, Mapping, Optional, Tuple
+from typing import Any, Dict, FrozenSet, Mapping, Optional, Sequence, Tuple
 
 from pae.contract import FLOOR_T_CM
 from pae.report import Failure, Report
 from pae.spec import ROOF_PITCH_MAX, ROOF_PITCH_MIN, STEEP_PITCH_MIN
 
 _STYLES_DIR = Path(__file__).resolve().parent / "styles"
+
+
+class StylePackError(ValueError):
+    """Fail-closed style schema / inheritance error.
+
+    ``check`` mirrors Report failure codes: ``style_schema`` | ``style_extends`` |
+    ``style_missing`` | ``style_load``.
+    """
+
+    def __init__(self, message: str, *, check: str = "style_schema") -> None:
+        super().__init__(message)
+        self.check = check
+
+
+def styles_dir(override: Optional[Path] = None) -> Path:
+    """Resolved styles directory (tests pass *override* instead of monkeypatch)."""
+    return Path(override) if override is not None else _STYLES_DIR
 
 _TOP_LEVEL_KEYS: FrozenSet[str] = frozenset(
     {
@@ -65,6 +84,10 @@ def _reject_unknown_keys(
     if unknown:
         return f"{section}: unknown key(s): {', '.join(unknown)}"
     return None
+
+
+def _raise_schema(message: str) -> None:
+    raise StylePackError(message, check="style_schema")
 
 
 @dataclass(frozen=True)
@@ -165,6 +188,8 @@ class StylePack:
         """Re-resolve this pack id then apply optional per-call overrides."""
         try:
             resolved = resolve_style_pack(self.id)
+        except StylePackError:
+            resolved = None
         except ValueError:
             resolved = None
         if resolved is None:
@@ -209,7 +234,7 @@ def _overlay_from_raw(base: StylePack, raw: Mapping[str, Any], *, style_id: str)
             defaults=pack.geometry,
         )
         if err:
-            raise ValueError(err)
+            _raise_schema(err)
         pack = _rebuild_pack(pack, style_id=style_id, geometry=geometry)
 
     if "window" in raw:
@@ -221,7 +246,7 @@ def _overlay_from_raw(base: StylePack, raw: Mapping[str, Any], *, style_id: str)
             defaults=pack.window,
         )
         if err:
-            raise ValueError(err)
+            _raise_schema(err)
         pack = _rebuild_pack(pack, style_id=style_id, window=window)
 
     if "door" in raw:
@@ -233,7 +258,7 @@ def _overlay_from_raw(base: StylePack, raw: Mapping[str, Any], *, style_id: str)
             defaults=pack.door,
         )
         if err:
-            raise ValueError(err)
+            _raise_schema(err)
         pack = _rebuild_pack(pack, style_id=style_id, door=door)
 
     if "materials" in raw:
@@ -245,7 +270,7 @@ def _overlay_from_raw(base: StylePack, raw: Mapping[str, Any], *, style_id: str)
             defaults=pack.materials,
         )
         if err:
-            raise ValueError(err)
+            _raise_schema(err)
         pack = _rebuild_pack(pack, style_id=style_id, materials=materials)
 
     if "wall_bands" in raw:
@@ -257,7 +282,7 @@ def _overlay_from_raw(base: StylePack, raw: Mapping[str, Any], *, style_id: str)
             defaults=pack.wall_bands,
         )
         if err:
-            raise ValueError(err)
+            _raise_schema(err)
         pack = _rebuild_pack(pack, style_id=style_id, wall_bands=wall_bands)
 
     if "tower" in raw:
@@ -269,7 +294,7 @@ def _overlay_from_raw(base: StylePack, raw: Mapping[str, Any], *, style_id: str)
             defaults=pack.tower,
         )
         if err:
-            raise ValueError(err)
+            _raise_schema(err)
         pack = _rebuild_pack(pack, style_id=style_id, tower=tower)
 
     if "roof" in raw:
@@ -281,17 +306,17 @@ def _overlay_from_raw(base: StylePack, raw: Mapping[str, Any], *, style_id: str)
             defaults=pack.roof,
         )
         if err:
-            raise ValueError(err)
+            _raise_schema(err)
         pack = _rebuild_pack(pack, style_id=style_id, roof=roof)
 
     if "substitutions" in raw:
         raw_subs = raw.get("substitutions")
         if not isinstance(raw_subs, dict):
-            raise ValueError("substitutions: expected object")
+            _raise_schema("substitutions: expected object")
         subs = dict(pack.substitutions)
         for key, value in raw_subs.items():
             if not isinstance(key, str) or not isinstance(value, str):
-                raise ValueError("substitutions: keys and values must be strings")
+                _raise_schema("substitutions: keys and values must be strings")
             subs[key] = value
         pack = _rebuild_pack(pack, style_id=style_id, substitutions=subs)
 
@@ -303,7 +328,7 @@ def _overlay_from_raw(base: StylePack, raw: Mapping[str, Any], *, style_id: str)
 def _apply_overrides(pack: StylePack, overrides: Mapping[str, Any]) -> StylePack:
     err = _reject_unknown_keys(overrides, _TOP_LEVEL_KEYS - {"extends"}, section="overrides")
     if err:
-        raise ValueError(err)
+        _raise_schema(err)
     return _overlay_from_raw(pack, overrides, style_id=pack.id)
 
 
@@ -368,6 +393,78 @@ def resolve_roof_pitch(
     if roof.pitch_max is not None:
         pitch = min(pitch, roof.pitch_max)
     return max(ROOF_PITCH_MIN, min(ROOF_PITCH_MAX, pitch))
+
+
+# Concrete roof kinds assemblers place (excludes ``auto``).
+_CONCRETE_ROOF_KINDS: Tuple[str, ...] = ("flat", "pitched", "hip")
+
+
+def resolve_roof_kind(
+    style: StylePack | Mapping[str, Any],
+    *,
+    spec_kind: Optional[str] = None,
+) -> str:
+    """S-011…S-021 hook — style ``kind_default`` fills in when spec is open.
+
+    Explicit ``flat`` / ``pitched`` / ``hip`` always win. ``None`` or ``\"auto\"``
+    selects style ``RoofHints.kind_default``, else ``flat``.
+    """
+    if isinstance(style, StylePack):
+        roof = style.roof
+    elif isinstance(style, dict):
+        roof = _roof_hints_from_mapping(style)
+    else:
+        roof = RoofHints()
+
+    if spec_kind is not None and spec_kind not in ("", "auto"):
+        kind = str(spec_kind).lower()
+        if kind not in _CONCRETE_ROOF_KINDS:
+            supported = ", ".join(_CONCRETE_ROOF_KINDS)
+            raise ValueError(
+                f"unsupported roof kind '{kind}' — supported: {supported}, auto"
+            )
+        return kind
+
+    default = roof.kind_default
+    if isinstance(default, str) and default.lower() in _CONCRETE_ROOF_KINDS:
+        return default.lower()
+    return "flat"
+
+
+def choose_roof_kind(
+    style: StylePack | Mapping[str, Any],
+    *,
+    seed: int = 0,
+    spec_kind: Optional[str] = None,
+    choices: Optional[Sequence[str]] = None,
+    key: str = "roof_kind",
+) -> str:
+    """Seed-stable roof kind for variation (flat / pitched / hip).
+
+    Explicit spec kinds win. With ``auto`` / ``None``, uses style ``kind_default``
+    when set; otherwise picks from *choices* (default all concrete kinds) by seed.
+    """
+    if spec_kind is not None and spec_kind not in ("", "auto"):
+        return resolve_roof_kind(style, spec_kind=spec_kind)
+
+    if isinstance(style, StylePack):
+        roof = style.roof
+    elif isinstance(style, dict):
+        roof = _roof_hints_from_mapping(style)
+    else:
+        roof = RoofHints()
+    if isinstance(roof.kind_default, str) and roof.kind_default.lower() in _CONCRETE_ROOF_KINDS:
+        return roof.kind_default.lower()
+
+    pool = tuple(
+        c.lower()
+        for c in (choices if choices is not None else _CONCRETE_ROOF_KINDS)
+        if str(c).lower() in _CONCRETE_ROOF_KINDS
+    )
+    if not pool:
+        pool = _CONCRETE_ROOF_KINDS
+    rng = random.Random(f"{seed}:{key}")
+    return rng.choice(pool)
 
 
 def is_steep_silhouette_style(style: StylePack | Mapping[str, Any]) -> bool:
@@ -506,8 +603,12 @@ def _parse_style_dict(
     )
 
 
-def _load_raw_json(style_id: str) -> Tuple[Optional[Dict[str, Any]], Report]:
-    path = _STYLES_DIR / f"{style_id}.json"
+def _load_raw_json(
+    style_id: str,
+    *,
+    styles_dir_path: Optional[Path] = None,
+) -> Tuple[Optional[Dict[str, Any]], Report]:
+    path = styles_dir(styles_dir_path) / f"{style_id}.json"
     if not path.is_file():
         return None, Report.from_failures(
             [
@@ -548,16 +649,24 @@ def _resolve_with_extends(
     pack: StylePack,
     *,
     chain: Tuple[str, ...] = (),
+    styles_dir_path: Optional[Path] = None,
 ) -> StylePack:
     if not pack.extends:
         return _overlay_from_raw(ENGINE_DEFAULTS, raw, style_id=pack.id)
     parent_id = pack.extends
     if parent_id in chain:
         cycle = " → ".join((*chain, parent_id))
-        raise ValueError(f"style inheritance cycle: {cycle}")
-    parent = resolve_style_pack(parent_id, _chain=(*chain, pack.id))
+        raise StylePackError(f"style inheritance cycle: {cycle}", check="style_extends")
+    parent = resolve_style_pack(
+        parent_id,
+        _chain=(*chain, pack.id),
+        styles_dir_path=styles_dir_path,
+    )
     if parent is None:
-        raise ValueError(f"style extends unknown parent: {parent_id!r}")
+        raise StylePackError(
+            f"style extends unknown parent: {parent_id!r}",
+            check="style_extends",
+        )
     return _overlay_from_raw(parent, raw, style_id=pack.id)
 
 
@@ -566,34 +675,44 @@ def resolve_style_pack(
     overrides: Optional[Mapping[str, Any]] = None,
     *,
     _chain: Tuple[str, ...] = (),
+    styles_dir_path: Optional[Path] = None,
 ) -> Optional[StylePack]:
     """Load and fully resolve a style pack (engine → extends chain → pack).
 
-    Inheritance cycles raise ``ValueError`` (caught by ``load_style_pack`` as
-    ``style_extends``). Schema errors on a parent return ``None``.
+    Inheritance cycles raise ``StylePackError`` (caught by ``load_style_pack`` as
+    ``style_extends``). Schema errors on a parent raise ``StylePackError``.
+    Missing presets return ``None``.
     """
     if style_id in _chain:
         cycle = " → ".join((*_chain, style_id))
-        raise ValueError(f"style inheritance cycle: {cycle}")
-    data, report = _load_raw_json(style_id)
+        raise StylePackError(f"style inheritance cycle: {cycle}", check="style_extends")
+    data, report = _load_raw_json(style_id, styles_dir_path=styles_dir_path)
     if data is None or not report.ok:
         return None
     pack, err = _parse_style_dict(data, style_id=style_id)
     if err or pack is None:
-        return None
-    resolved = _resolve_with_extends(data, pack, chain=_chain)
+        raise StylePackError(err or "style parse failed", check="style_schema")
+    resolved = _resolve_with_extends(
+        data, pack, chain=_chain, styles_dir_path=styles_dir_path
+    )
     if overrides:
         resolved = _apply_overrides(resolved, overrides)
     return resolved
 
 
-def load_style_pack(style_id: str) -> Tuple[Optional[StylePack], Report]:
+def load_style_pack(
+    style_id: str,
+    *,
+    styles_dir_path: Optional[Path] = None,
+) -> Tuple[Optional[StylePack], Report]:
     """Load a style preset from ``pae/styles/<id>.json`` with schema validation.
 
     Unknown top-level / nested keys → ``style_schema`` (fail-closed).
     Broken ``extends`` chains / cycles → ``style_extends`` (fail-closed).
+
+    Pass ``styles_dir_path`` from tests instead of monkeypatching ``_STYLES_DIR``.
     """
-    data, report = _load_raw_json(style_id)
+    data, report = _load_raw_json(style_id, styles_dir_path=styles_dir_path)
     if data is None:
         return None, report
     pack, err = _parse_style_dict(data, style_id=style_id)
@@ -610,8 +729,22 @@ def load_style_pack(style_id: str) -> Tuple[Optional[StylePack], Report]:
         )
     assert pack is not None
     try:
-        resolved = _resolve_with_extends(data, pack)
+        resolved = _resolve_with_extends(
+            data, pack, styles_dir_path=styles_dir_path
+        )
+    except StylePackError as exc:
+        return None, Report.from_failures(
+            [
+                Failure(
+                    check=exc.check,
+                    message=str(exc),
+                    world_xyz=None,
+                    critical=True,
+                )
+            ]
+        )
     except ValueError as exc:
+        # Legacy callers / nested ValueError — still fail-closed as extends.
         return None, Report.from_failures(
             [
                 Failure(

@@ -59,14 +59,19 @@ def validate(assembly: Assembly) -> Tuple[Assembly, Report]:
     failures.extend(_check_aperture_alignment(assembly))
     failures.extend(_check_structural_islands(assembly))
     failures.extend(_check_canopy_attachment(assembly))
+    failures.extend(_check_roof_bears_on_wall(assembly))
     failures.extend(_check_roof_penetration(assembly))
+    failures.extend(_check_roof_valley_join(assembly))
     failures.extend(_check_band_attachment(assembly))
     failures.extend(_check_aperture_reachability(assembly))
     failures.extend(_check_upper_entrance_landing(assembly))
     failures.extend(_check_storey_egress(assembly))
     failures.extend(_check_stair_landing_clearance(assembly))
+    failures.extend(_check_stair_typology_match(assembly))
     failures.extend(_check_headroom(assembly))
-    failures.extend(_check_watertight_envelope(assembly))
+    failures.extend(_check_roof_covers_enclosed(assembly))
+    failures.extend(_check_spiral_shell(assembly))
+    failures.extend(_check_tower_ramparts(assembly))
     failures = _sort_failures(failures)
     return assembly, Report.from_failures(failures)
 
@@ -457,6 +462,21 @@ def _designed_tower_cell_pair(a: SolidPlacement, b: SolidPlacement) -> bool:
             return tower.level == other.level
         if _is_roof_deck(other):
             return True
+        # Phase 4.7 crown deck + crenel shells co-occupy the drum cell with the
+        # junction/crown/cap stack (designed contact — not a penetration demotion).
+        if "tower_deck" in other.tags or "tower_crenel" in other.tags:
+            return tower.level == other.level
+        if other.kind == "battlement" and "tower" in other.tags:
+            return tower.level == other.level
+        if other.kind == "floor" and "tower_deck" in other.tags:
+            return tower.level == other.level
+    tags_a, tags_b = set(a.tags), set(b.tags)
+    if {"tower_deck", "tower_crenel", "tower_rampart"} & tags_a and {
+        "tower_deck",
+        "tower_crenel",
+        "tower_rampart",
+    } & tags_b:
+        return a.level == b.level
     return False
 
 
@@ -587,6 +607,11 @@ def _interpenetration_pair_allowed(
     if _designed_roof_gable_slope_pair(a, b):
         return True
     if _designed_roof_valley_pair(a, b):
+        return True
+    # Spiral newel shares the drum cell with helix quarters / tower_arc AABBs.
+    from pae.spiral_shell import designed_spiral_newel_pair
+
+    if designed_spiral_newel_pair(a, b):
         return True
     return False
 
@@ -1688,6 +1713,130 @@ def _check_canopy_attachment(assembly: Assembly) -> List[Failure]:
     return failures
 
 
+# Primary roof decks that must bear on the envelope (not valley stubs alone).
+_ROOF_BEARING_ASSET_IDS = frozenset(
+    {
+        "roof_flat",
+        "roof_pitched_slope",
+        "roof_gable_infill",
+        "roof_hip",
+    }
+)
+
+
+def _is_roof_bearing_support(p: SolidPlacement) -> bool:
+    """Walls / parapets / battlements that can carry a roof eave."""
+    if p.kind in ("wall", "battlement"):
+        return True
+    if p.kind == "barrier" and "parapet" in p.tags:
+        return True
+    return False
+
+
+def _check_roof_bears_on_wall(assembly: Assembly) -> List[Failure]:
+    """Every primary roof deck must rest on a wall or parapet (Support class).
+
+    WHY THIS IS SEPARATE FROM ``canopy_attachment`` AND ``vertical_support``:
+    - canopy_attachment (Connection) only asks "does the roof AABB touch a wall?"
+      — a slab kissing a wall face sideways passes while floating past the eaves.
+    - vertical_support accepts ANYTHING underneath, including freestanding posts —
+      the gallery-on-columns defect that shipped as a detached canopy.
+
+    So: roof bottom must meet a wall/parapet/battlement top within vertical
+    support tolerance, with XY footprint overlap. Valley stubs (``roof_valley``)
+    are exempt — they sit in the wing trough and are carried by abutting decks
+    (S-019); ``canopy_attachment`` still requires they join the roof graph.
+    """
+    tol = VERTICAL_SUPPORT_TOL_CM
+    roofs = [
+        p
+        for p in assembly.placements
+        if p.kind == "roof" and p.asset_id in _ROOF_BEARING_ASSET_IDS
+    ]
+    if not roofs:
+        return []
+    supports = [p for p in assembly.placements if _is_roof_bearing_support(p)]
+    if not supports:
+        return []
+
+    support_boxes = [_placement_aabb(p) for p in supports]
+    failures: List[Failure] = []
+    for roof in roofs:
+        rmin, rmax = _placement_aabb(roof)
+        bottom_z = rmin[2]
+        bears = False
+        for smin, smax in support_boxes:
+            top_z = smax[2]
+            if abs(top_z - bottom_z) > tol and not (smin[2] < bottom_z <= top_z + tol):
+                continue
+            if _xy_footprint_overlap(
+                rmin, rmax, smin, smax, _support_overlap_tol(rmin, rmax, tol)
+            ):
+                bears = True
+                break
+        if bears:
+            continue
+        failures.append(
+            Failure(
+                check="roof_bears_on_wall",
+                message=(
+                    f"roof {roof.piece_id} ({roof.asset_id}) does not bear on a wall "
+                    f"or parapet within {tol} cm of its eave (z={bottom_z:.1f})"
+                ),
+                world_xyz=_centre(rmin, rmax),
+                piece_id=roof.piece_id,
+                critical=True,
+            )
+        )
+    return failures
+
+
+def _check_roof_valley_join(assembly: Assembly) -> List[Failure]:
+    """Multi-wing hip roofs must place valley stubs on abutments (S-019 Existence).
+
+    Reconstructs wing spans from ``roof_hip`` covered cells and compares against
+    ``roof_valley`` count. Pitched-only multi-wing valleys remain assemble-asserted
+    (``test_hip_roof``) until span reconstruction covers slope kits.
+    """
+    from pae.primitives.roofs import roof_valley_seams
+    from pae.trim import covered_cells
+
+    hips = [p for p in assembly.placements if p.asset_id == "roof_hip"]
+    if len(hips) < 2:
+        return []
+    spans: List[Tuple[int, int, int, int]] = []
+    for hip in hips:
+        cells = covered_cells(hip)
+        if not cells:
+            continue
+        xs = [c[0] for c in cells]
+        ys = [c[1] for c in cells]
+        spans.append((min(xs), min(ys), max(xs), max(ys)))
+    seams = roof_valley_seams(spans)
+    if not seams:
+        return []
+    valleys = [p for p in assembly.placements if p.asset_id == "roof_valley"]
+    if len(valleys) >= len(seams):
+        return []
+    sample = seams[0]
+    return [
+        Failure(
+            check="roof_valley_join",
+            message=(
+                f"multi-wing hip roof has {len(seams)} abutment seam(s) but only "
+                f"{len(valleys)} valley stub(s) — L/U wing joins need valleys (S-019)"
+            ),
+            world_xyz=(
+                sample.run0 * MODULE_CM + MODULE_CM * 0.5,
+                sample.cross_hi * MODULE_CM,
+                float(hips[0].level * STOREY_CM + STOREY_CM),
+            ),
+            piece_id=hips[0].piece_id,
+            critical=True,
+        )
+    ]
+
+
 def _designed_roof_penetration_eave_tuck(
     piece: SolidPlacement,
     *,
@@ -2180,11 +2329,17 @@ def _check_headroom(assembly: Assembly) -> List[Failure]:
     return failures
 
 
-# --- §7.19 watertight envelope stub (S-021) ----------------------------------
+# --- §7.19 roof covers enclosed / watertight progress (S-021) ---------------
 
 
-def _check_watertight_envelope(assembly: Assembly) -> List[Failure]:
-    """Warning stub: top-storey interior floor cells should have roof ``covered_cells``."""
+def _check_roof_covers_enclosed(assembly: Assembly) -> List[Failure]:
+    """Top-storey enclosed interior cells should have roof ``covered_cells``.
+
+    Watertight progress toward S-021 (one resolved multi-wing surface). Still a
+    **warning** until full envelope merge ships — critical would block every
+    courtyard / double-height void we intentionally leave open. Renamed from
+    ``watertight_envelope`` so connection-suite tests can assert the slug.
+    """
     from pae.trim import covered_cells
 
     floor_by_level: Dict[int, Set[Tuple[int, int]]] = {}
@@ -2220,10 +2375,10 @@ def _check_watertight_envelope(assembly: Assembly) -> List[Failure]:
     sample = next(iter(uncovered))
     return [
         Failure(
-            check="watertight_envelope",
+            check="roof_covers_enclosed",
             message=(
-                f"storey {top_level} has {len(uncovered)} floor cell(s) without roof "
-                f"coverage (e.g. {sample})"
+                f"storey {top_level} has {len(uncovered)} enclosed floor cell(s) "
+                f"without roof coverage (e.g. {sample})"
             ),
             world_xyz=(
                 sample[0] * MODULE_CM + MODULE_CM * 0.5,
@@ -2234,6 +2389,11 @@ def _check_watertight_envelope(assembly: Assembly) -> List[Failure]:
             critical=False,
         )
     ]
+
+
+def _check_watertight_envelope(assembly: Assembly) -> List[Failure]:
+    """Alias for ``roof_covers_enclosed`` (S-021 stub name kept for callers)."""
+    return _check_roof_covers_enclosed(assembly)
 
 
 # --- 7.18 stair landing clearance -------------------------------------------
@@ -2251,6 +2411,189 @@ def _check_stair_landing_clearance(assembly: Assembly) -> List[Failure]:
     from pae.stair_occupancy import check_stair_landing_clearance
 
     return check_stair_landing_clearance(assembly)
+
+
+def _check_stair_typology_match(assembly: Assembly) -> List[Failure]:
+    """Stair assets must match building_class policy (VAL_STAIR_TYPOLOGY).
+
+    Rules (see Docs/VALIDATION_HANDBOOK + DEFECT_LEDGER D-22):
+    - Never place buttress pieces as stairs (critical).
+    - House / cottage must not get monumental ``stair_wide`` / ``stair_switchback``
+      (critical).
+    - Industrial / academy / castle multi-storey with a 2×2 well available must not
+      be served only by a compact single-cell ``stair_straight`` (warning).
+    """
+    from pae.spec import (
+        COMPACT_STAIR_ASSETS,
+        MONUMENTAL_STAIR_ASSETS,
+        SPIRAL_STAIR_ASSETS,
+        STAIR_TYPOLOGY_FORBIDDEN_ASSETS,
+        STAIR_TYPOLOGY_POLICY,
+        continuity_safe_stair_kinds,
+        stair_kind_from_asset,
+    )
+
+    building_class = str(
+        getattr(assembly, "building_class", None) or "generic"
+    ).lower()
+    if building_class not in STAIR_TYPOLOGY_POLICY:
+        building_class = "generic"
+
+    stairs = [p for p in assembly.placements if p.kind == "stair"]
+    mislabeled = [
+        p
+        for p in assembly.placements
+        if p.kind == "stair"
+        and (
+            p.asset_id in STAIR_TYPOLOGY_FORBIDDEN_ASSETS
+            or str(p.asset_id).startswith("buttress")
+        )
+    ]
+
+    failures: List[Failure] = []
+    for p in mislabeled:
+        bb_min, bb_max = _placement_aabb(p)
+        failures.append(
+            Failure(
+                check="stair_typology_match",
+                message=(
+                    f"buttress asset {p.asset_id!r} placed as kind=stair — "
+                    "buttresses are structural trim, never circulation"
+                ),
+                world_xyz=_centre(bb_min, bb_max),
+                piece_id=p.piece_id,
+                critical=True,
+            )
+        )
+
+    if assembly.storeys <= 1 and not stairs:
+        return failures
+
+    declared_kind = str(getattr(assembly, "stair_kind", "") or "").lower()
+    wide_well = bool(getattr(assembly, "wide_stair_well_available", False))
+    has_tower = declared_kind == "spiral" or any(
+        p.asset_id in SPIRAL_STAIR_ASSETS for p in stairs
+    )
+    safe = continuity_safe_stair_kinds(
+        building_class,
+        has_tower=has_tower,
+        wide_well=wide_well,
+        storeys=assembly.storeys,
+    )
+    policy_allowed = set(
+        STAIR_TYPOLOGY_POLICY.get(building_class, STAIR_TYPOLOGY_POLICY["generic"])[
+            "allowed"
+        ]
+    )
+
+    if assembly.storeys > 1 and declared_kind:
+        if declared_kind not in policy_allowed:
+            critical = building_class in ("house", "cottage") or declared_kind in (
+                "wide",
+                "switchback",
+                "spiral",
+            )
+            if not (
+                building_class in ("industrial", "academy", "castle")
+                and declared_kind == "straight"
+            ):
+                failures.append(
+                    Failure(
+                        check="stair_typology_match",
+                        message=(
+                            f"building_class={building_class!r} forbids "
+                            f"stair_kind={declared_kind!r}; "
+                            f"allowed={sorted(policy_allowed)}"
+                        ),
+                        world_xyz=None,
+                        critical=critical,
+                    )
+                )
+
+    placed_kinds: Set[str] = set()
+    compact_only = True
+    for p in stairs:
+        if p.asset_id in STAIR_TYPOLOGY_FORBIDDEN_ASSETS or str(p.asset_id).startswith(
+            "buttress"
+        ):
+            continue
+        kind = stair_kind_from_asset(p.asset_id)
+        if kind is None:
+            continue
+        placed_kinds.add(kind)
+        if p.asset_id not in COMPACT_STAIR_ASSETS:
+            compact_only = False
+
+        if building_class in ("house", "cottage") and p.asset_id in MONUMENTAL_STAIR_ASSETS:
+            bb_min, bb_max = _placement_aabb(p)
+            failures.append(
+                Failure(
+                    check="stair_typology_match",
+                    message=(
+                        f"{building_class} must use compact stairs "
+                        f"(stair_straight / stair_half); got {p.asset_id}"
+                    ),
+                    world_xyz=_centre(bb_min, bb_max),
+                    piece_id=p.piece_id,
+                    critical=True,
+                )
+            )
+        elif kind not in policy_allowed and kind not in safe:
+            bb_min, bb_max = _placement_aabb(p)
+            failures.append(
+                Failure(
+                    check="stair_typology_match",
+                    message=(
+                        f"stair asset {p.asset_id} (kind={kind}) not allowed for "
+                        f"building_class={building_class!r}; "
+                        f"allowed={sorted(policy_allowed)}"
+                    ),
+                    world_xyz=_centre(bb_min, bb_max),
+                    piece_id=p.piece_id,
+                    critical=building_class in ("house", "cottage"),
+                )
+            )
+
+    if (
+        building_class in ("industrial", "academy", "castle")
+        and assembly.storeys >= 2
+        and wide_well
+        and stairs
+        and compact_only
+        and not (placed_kinds & {"wide", "switchback", "spiral"})
+    ):
+        sample = stairs[0]
+        bb_min, bb_max = _placement_aabb(sample)
+        failures.append(
+            Failure(
+                check="stair_typology_match",
+                message=(
+                    f"{building_class} multi-storey with 2×2 well available must not "
+                    f"use undersized compact stairs only "
+                    f"(got {[p.asset_id for p in stairs[:4]]}); "
+                    "expected stair_wide or stair_switchback"
+                ),
+                world_xyz=_centre(bb_min, bb_max),
+                piece_id=sample.piece_id,
+                critical=False,
+            )
+        )
+
+    return failures
+
+
+def _check_spiral_shell(assembly: Assembly) -> List[Failure]:
+    """Spiral tower newel existence + continuous drum enclosure (@VAL_SPIRAL_SHELL)."""
+    from pae.spiral_shell import check_spiral_shell
+
+    return check_spiral_shell(assembly)
+
+
+def _check_tower_ramparts(assembly: Assembly) -> List[Failure]:
+    """Phase 4.7 — walkable crown deck, rampart ring coverage, view crenels."""
+    from pae.tower_rampart import check_tower_ramparts
+
+    return check_tower_ramparts(assembly)
 
 
 def _check_run_fit(assembly: Assembly) -> List[Failure]:
@@ -2512,6 +2855,7 @@ __all__ = [
     "APERTURE_ALIGNMENT_TOL_CM",
     "placement_footprint_cells",
     "_check_stair_exit_clearance",
+    "_check_stair_typology_match",
     "_check_headroom",
     "_check_no_bare_aperture_holes",
     "_check_aperture_alignment",

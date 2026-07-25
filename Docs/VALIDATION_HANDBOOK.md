@@ -36,15 +36,15 @@ list and ask which of these it can now violate. That is your check list.
 
 | # | Class | The question | Existing checks |
 |---|---|---|---|
-| 1 | **Existence** | Did the thing that was asked for actually get placed? | *(gap — see §7)* |
+| 1 | **Existence** | Did the thing that was asked for actually get placed? | `spiral_newel_exists`, entrance/ensemble existence *(still thin — see §7)* |
 | 2 | **Dimension** | Does the piece match the grid contract? | `footprint_contract_errors` |
 | 3 | **Placement** | Is it in the cell/orientation it was meant to be? | `run_fit` |
-| 4 | **Connection** | Does it touch what it must touch? | `end_connectivity`, `collinear_gap`, `canopy_attachment` |
-| 5 | **Support** | Is something underneath it? | `vertical_support` |
+| 4 | **Connection** | Does it touch what it must touch? | `end_connectivity`, `collinear_gap`, `canopy_attachment`, `tower_hall_kiss`, `roof_valley_join` |
+| 5 | **Support** | Is something underneath it? | `vertical_support` (parapet wall-head), `roof_bears_on_wall` |
 | 6 | **Coherence** | Is it part of one building, or its own island? | `freestanding` |
 | 7 | **Exclusion** | Does it avoid what it must avoid? | `interpenetration`, `roof_penetration` |
-| 8 | **Containment** | Is the envelope sealed, floored, covered? | `enclosure`, `floor_coverage` |
-| 9 | **Use** | Can a person reach it, enter it, walk it, leave it? | `stair_reachability`, `stair_exit_clearance`, `classroom_corridor`, `aperture_sanity` |
+| 8 | **Containment** | Is the envelope sealed, floored, covered? | `enclosure`, `floor_coverage`, `roof_covers_enclosed`, `spiral_drum_enclosure` |
+| 9 | **Use** | Can a person reach it, enter it, walk it, leave it? | `stair_reachability`, `stair_exit_clearance`, `stair_typology_match`, `classroom_corridor`, `aperture_sanity` |
 
 A tenth class — **proportion** ("does it look right") — is *not* mechanically checkable and
 must not be faked. See §9.
@@ -238,6 +238,45 @@ somewhere" is not a bug report.
 Shipping a new check as a warning is acceptable *once*, with a roadmap entry to triage and
 promote it. `roof_penetration` was triaged (M7 / defect 0.3) and is now **critical**.
 A warning that stays a warning for more than one milestone is decoration.
+
+---
+
+## 6b. Variation vs continuity
+
+Style and kit **variation** (swap a window family, pitch a roof, restyle a door, pick a
+stair kind) is allowed only inside kinds that still satisfy the building's continuity
+contracts:
+
+| Contract | Checks | What variation may not break |
+|---|---|---|
+| Connection | `end_connectivity`, `collinear_gap`, `tower_hall_kiss`, `canopy_attachment`, `roof_valley_join` | Wall runs stay jointed; tower drums still kiss the hall; roofs still meet the envelope |
+| Support | `vertical_support` (parapet/battlement wall-head), `roof_bears_on_wall` | A restyled roof or parapet still bears on a wall head — posts alone are not enough |
+| Exclusion | `interpenetration`, `roof_penetration` | Swapping a piece must not invent a new overlap class without a designed-pair exemption |
+| Stair typology | `stair_typology_match` | Stair kind stays in the class allow-list; never place buttresses as stairs |
+
+### Stair typology policy (`building_class`)
+
+| Class | Default `stair_kind` | Allowed kinds | Placed assets |
+|---|---|---|---|
+| `house` / `cottage` | `straight` | `straight` only | `stair_straight`, `stair_half` (compact) |
+| `industrial` | `wide` | `wide`, `switchback` | `stair_wide`, `stair_switchback` |
+| `academy` | `switchback` | `wide`, `switchback` | same |
+| `castle` | `switchback` | `wide`, `switchback`, `spiral` | monumental + spiral in towers |
+| `tower` | `spiral` | `spiral` | `stair_spiral_quarter` |
+| `generic` | `straight` | any continuity-safe supported kind | — |
+
+Continuity-safe filter (`continuity_safe_stair_kinds` / `vary_spec`):
+- `spiral` requires a tower volume
+- `wide` / `switchback` require a 2×2 well (short footprint side ≥ 4)
+- thin castle curtains may fall back to `straight` without a typology critical
+
+**Buttresses are structural trim** (`pae/trim.py`) — never circulation stairs.
+`stair_typology_match`: **critical** when a house gets `stair_wide`/`stair_switchback`
+or a buttress is tagged `kind=stair`; **warning** when industrial/academy/castle
+multi-storey keep only compact `stair_straight` while a 2×2 well is available.
+
+If a variant cannot meet those checks, it is not a legal variant — fix the assemble path
+or reject the style choice. Do **not** demote a critical check to green a restyle.
 
 ---
 

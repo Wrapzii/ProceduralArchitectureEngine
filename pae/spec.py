@@ -28,10 +28,72 @@ _STYLES_DIR = Path(__file__).resolve().parent / "styles"
 
 # Auto-placed circulation kinds. Spiral uses same-cell stacking (tower well).
 SUPPORTED_STAIR_KINDS = frozenset({"straight", "switchback", "wide", "spiral"})
-SUPPORTED_ROOF_KINDS = frozenset({"flat", "pitched", "hip"})
+# ``auto`` → style RoofHints.kind_default via ``resolve_roof_kind`` (variation hook).
+SUPPORTED_ROOF_KINDS = frozenset({"flat", "pitched", "hip", "auto"})
 ROOF_PITCH_MIN = 0.5
 ROOF_PITCH_MAX = 2.5
 STEEP_PITCH_MIN = 1.6  # S-011 anime-fantasy silhouette
+
+# Building typology — drives default / allowed stair kinds (VAL_STAIR_TYPOLOGY).
+# Buttresses are structural trim, NEVER stairs (see STAIR_TYPOLOGY_FORBIDDEN_ASSETS).
+BUILDING_CLASSES = frozenset(
+    {"house", "cottage", "industrial", "academy", "castle", "tower", "generic"}
+)
+# Compact dwelling stairs (1×1 / 2×1). ``stair_half`` is an asset, not a stair_kind.
+COMPACT_STAIR_ASSETS = frozenset({"stair_straight", "stair_half", "stair_landing"})
+# Monumental / institutional wells (2×2).
+MONUMENTAL_STAIR_ASSETS = frozenset({"stair_wide", "stair_switchback"})
+SPIRAL_STAIR_ASSETS = frozenset({"stair_spiral_quarter"})
+# Never treat these as circulation stairs.
+STAIR_TYPOLOGY_FORBIDDEN_ASSETS = frozenset(
+    {"buttress", "buttress_flying", "flying_buttress"}
+)
+STAIR_ASSET_TO_KIND = {
+    "stair_straight": "straight",
+    "stair_half": "straight",  # compact half-rise → same typology as straight
+    "stair_landing": "straight",
+    "stair_wide": "wide",
+    "stair_switchback": "switchback",
+    "stair_spiral_quarter": "spiral",
+}
+# Policy table: class → default kind + allowed kinds (continuity-safe subset applied later).
+STAIR_TYPOLOGY_POLICY: Dict[str, Dict[str, Any]] = {
+    "house": {
+        "default": "straight",
+        "allowed": frozenset({"straight"}),
+        "notes": "Houses / small dwellings → compact stair_straight / stair_half only",
+    },
+    "cottage": {
+        "default": "straight",
+        "allowed": frozenset({"straight"}),
+        "notes": "Cottages share house compact stairs",
+    },
+    "industrial": {
+        "default": "wide",
+        "allowed": frozenset({"wide", "switchback"}),
+        "notes": "Workshops / mills → monumental wells when footprint allows",
+    },
+    "academy": {
+        "default": "switchback",
+        "allowed": frozenset({"wide", "switchback"}),
+        "notes": "Schools / large academies → switchback or wide",
+    },
+    "castle": {
+        "default": "switchback",
+        "allowed": frozenset({"wide", "switchback", "spiral"}),
+        "notes": "Castle ranges → wide/switchback; towers may use spiral",
+    },
+    "tower": {
+        "default": "spiral",
+        "allowed": frozenset({"spiral"}),
+        "notes": "Standalone / keep towers → spiral with newel (shell owned elsewhere)",
+    },
+    "generic": {
+        "default": "straight",
+        "allowed": frozenset({"straight", "switchback", "wide", "spiral"}),
+        "notes": "Unclassified — any continuity-safe supported kind",
+    },
+}
 
 ROOM_KINDS = frozenset(
     {"classroom", "hall", "chapel", "library", "dormitory", "kitchen", "store"}
@@ -73,7 +135,7 @@ class TowerSpec:
 
 @dataclass
 class RoofSpec:
-    kind: str = "flat"  # flat | pitched | hip
+    kind: str = "flat"  # flat | pitched | hip | auto (→ style kind_default)
     pitch: float = 1.0
 
 
@@ -143,6 +205,145 @@ class BuildingSpec:
     # Intent only — geometry emitted by assemble (WP-5).
     ground_slab: bool = True
     rooms: List[RoomSpec] = field(default_factory=list)
+    #: Typology hint for stair policy. None → derived from massing/program.
+    building_class: Optional[str] = None
+
+
+def footprint_allows_wide_stair_well(footprint: FootprintSpec) -> bool:
+    """True when primary body can host a 2×2 switchback/wide stairwell."""
+    return min(int(footprint.bays_x), int(footprint.bays_y)) >= 4
+
+
+def derive_building_class(spec: BuildingSpec) -> str:
+    """Resolve building_class from explicit field or massing/program hints.
+
+    Order: explicit → footprint.kind school → tower-only keep → style/name cues
+    → footprint size + storeys (industrial vs house) → generic.
+    """
+    raw = (spec.building_class or "").strip().lower()
+    if raw in BUILDING_CLASSES:
+        return raw
+
+    if spec.footprint.kind == "school":
+        return "academy"
+
+    name = (spec.name or "").lower()
+    style = (spec.style or "").lower()
+    if "industrial" in name or "workshop" in name or "mill" in name:
+        return "industrial"
+    if "academy" in name or "school" in name or "gothic_academy" in style:
+        return "academy"
+    if "cottage" in name or "wealden" in name:
+        return "cottage"
+    if "house" in name or style in ("townhouse",):
+        # Small dwellings only — large townhouse ranges stay generic below.
+        if max(spec.footprint.bays_x, spec.footprint.bays_y) <= 6 and spec.storeys <= 3:
+            return "house"
+    if "castle" in name or "curtain" in name or "gatehouse" in name or style == "keep":
+        if spec.towers and spec.footprint.bays_x <= 4 and spec.footprint.bays_y <= 4:
+            return "tower"
+        return "castle"
+    if "tower" in name or (spec.towers and max(spec.footprint.bays_x, spec.footprint.bays_y) <= 3):
+        return "tower"
+
+    area = spec.footprint.bays_x * spec.footprint.bays_y
+    if area >= 48 and spec.storeys >= 2:
+        return "industrial"
+    if area <= 20 and spec.storeys <= 3 and not spec.towers:
+        return "house"
+    return "generic"
+
+
+def continuity_safe_stair_kinds(
+    building_class: str,
+    *,
+    has_tower: bool = False,
+    wide_well: bool = False,
+    storeys: int = 1,
+) -> frozenset:
+    """Allowed stair_kinds for a class that the solver can actually place.
+
+    Spiral requires a tower. Wide/switchback require a 2×2 well and ≥2 storeys.
+    Never returns empty — falls back to ``straight`` so continuity checks stay green.
+    """
+    policy = STAIR_TYPOLOGY_POLICY.get(
+        building_class, STAIR_TYPOLOGY_POLICY["generic"]
+    )
+    allowed = set(policy["allowed"])
+    if storeys <= 1:
+        # Single-storey buildings need no climb; keep straight as a no-op default.
+        return frozenset({"straight"}) & allowed or frozenset({"straight"})
+    if "spiral" in allowed and not has_tower:
+        allowed.discard("spiral")
+    if not wide_well:
+        allowed.discard("wide")
+        allowed.discard("switchback")
+    # House/cottage must stay compact even if a large footprint accidentally
+    # satisfies wide_well — policy already excludes monumental kinds.
+    if not allowed:
+        allowed = {"straight"}
+    return frozenset(allowed)
+
+
+def default_stair_kind_for_class(
+    building_class: str,
+    *,
+    has_tower: bool = False,
+    wide_well: bool = False,
+    storeys: int = 1,
+) -> str:
+    """Default stair_kind for a building class (continuity-safe)."""
+    policy = STAIR_TYPOLOGY_POLICY.get(
+        building_class, STAIR_TYPOLOGY_POLICY["generic"]
+    )
+    safe = continuity_safe_stair_kinds(
+        building_class,
+        has_tower=has_tower,
+        wide_well=wide_well,
+        storeys=storeys,
+    )
+    preferred = str(policy["default"])
+    if preferred in safe:
+        return preferred
+    # Prefer monumental when both available, else any stable order.
+    for kind in ("switchback", "wide", "spiral", "straight"):
+        if kind in safe:
+            return kind
+    return "straight"
+
+
+def pick_stair_kind_for_class(
+    building_class: str,
+    seed: int,
+    *,
+    has_tower: bool = False,
+    wide_well: bool = False,
+    storeys: int = 1,
+    name: str = "",
+) -> str:
+    """Seeded pick among continuity-safe kinds for ``building_class``."""
+    import random
+
+    safe = sorted(
+        continuity_safe_stair_kinds(
+            building_class,
+            has_tower=has_tower,
+            wide_well=wide_well,
+            storeys=storeys,
+        )
+    )
+    if len(safe) == 1:
+        return safe[0]
+    rng = random.Random(f"{seed}:stair_kind:{name or building_class}")
+    return rng.choice(safe)
+
+
+def stair_kind_from_asset(asset_id: str) -> Optional[str]:
+    """Map a placed stair asset to a typology kind; None if unknown/non-stair."""
+    aid = (asset_id or "").lower()
+    if aid in STAIR_TYPOLOGY_FORBIDDEN_ASSETS or aid.startswith("buttress"):
+        return None  # caller treats as forbidden-as-stair
+    return STAIR_ASSET_TO_KIND.get(aid)
 
 
 def _scan_forbidden_keys(node: Any, path: str = "") -> List[str]:
@@ -404,6 +605,15 @@ def load_spec(data: dict) -> Tuple[Optional[BuildingSpec], Report]:
             storey_use = ["hall"] * storeys
         while len(storey_use) < storeys:
             storey_use.append(storey_use[-1] if storey_use else "hall")
+        building_class_raw = data.get("building_class")
+        building_class: Optional[str] = None
+        if building_class_raw is not None and str(building_class_raw).strip():
+            building_class = str(building_class_raw).strip().lower()
+            if building_class not in BUILDING_CLASSES:
+                known = ", ".join(sorted(BUILDING_CLASSES))
+                raise ValueError(
+                    f"building_class must be one of {known}, got {building_class!r}"
+                )
         spec = BuildingSpec(
             name=str(data.get("name", "unnamed")),
             style=str(data.get("style", "townhouse")),
@@ -418,6 +628,7 @@ def load_spec(data: dict) -> Tuple[Optional[BuildingSpec], Report]:
             seed=int(data.get("seed", 0)),
             ground_slab=bool(data.get("ground_slab", True)),
             rooms=_parse_rooms(data.get("rooms")),
+            building_class=building_class,
         )
     except (KeyError, TypeError, ValueError) as exc:
         failures.append(
@@ -482,6 +693,7 @@ def m1_box_house_spec(*, seed: int = 1) -> BuildingSpec:
         ),
         seed=seed,
         ground_slab=True,
+        building_class="house",
     )
 
 
@@ -490,6 +702,7 @@ def m2_two_storey_stair_spec(*, seed: int = 2) -> BuildingSpec:
 
     Solver auto-places a 2-module straight run; plan marks VOID above the
     stair top; assembly emits ``stair_straight`` + ``floor_hole``.
+    Compact house typology — never wide/switchback.
     """
     return BuildingSpec(
         name="m2_two_storey_stair",
@@ -508,6 +721,7 @@ def m2_two_storey_stair_spec(*, seed: int = 2) -> BuildingSpec:
         ),
         seed=seed,
         ground_slab=True,
+        building_class="house",
     )
 
 
@@ -714,6 +928,7 @@ def m_spiral_tower_spec(*, seed: int = 31) -> BuildingSpec:
         openings=spec.openings,
         seed=spec.seed,
         ground_slab=spec.ground_slab,
+        building_class="tower",
     )
 
 
@@ -937,6 +1152,35 @@ def school_academy_spec(*, seed: int = 70) -> BuildingSpec:
                 area_bays=classroom_count,
             ),
         ],
+        building_class="academy",
+    )
+
+
+def industrial_workshop_spec(*, seed: int = 80) -> BuildingSpec:
+    """Multi-storey industrial hall — monumental stair well (wide default).
+
+    Large footprint (≥4×4) so continuity-safe typology can place ``wide`` /
+    ``switchback``. Compact ``straight`` is a typology mismatch when a 2×2 well
+    fits.
+    """
+    return BuildingSpec(
+        name="industrial_workshop",
+        style="townhouse",
+        footprint=FootprintSpec(kind="rect", bays_x=10, bays_y=8),
+        storeys=3,
+        storey_use=["hall", "hall", "hall"],
+        towers=[],
+        roof=RoofSpec(kind="flat", pitch=1.0),
+        circulation=CirculationSpec(stair_kind="wide", stair_cells=[]),
+        openings=OpeningPolicy(
+            windows_per_bay=1,
+            doors_ground=2,
+            windows_ground=None,
+            skip_ground_windows=False,
+        ),
+        seed=seed,
+        ground_slab=True,
+        building_class="industrial",
     )
 
 
@@ -971,6 +1215,7 @@ def castle_curtain_wall_spec(
         ),
         seed=seed,
         ground_slab=True,
+        building_class="castle",
     )
 
 

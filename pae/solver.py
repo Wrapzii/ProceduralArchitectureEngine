@@ -105,6 +105,7 @@ class Massing:
     storey_use: List[str] = field(default_factory=list)
     rooms: List[RoomSpec] = field(default_factory=list)
     entrances: List[EntranceSpec] = field(default_factory=list)
+    building_class: str = "generic"
 
     def volume_by_id(self, vid: str) -> Optional[Volume]:
         for v in self.volumes:
@@ -800,6 +801,19 @@ def solve(spec: BuildingSpec) -> Tuple[Optional[Massing], Report]:
     if failures:
         return None, Report.from_failures(failures)
 
+    # S-011…S-021 — style/spec roof hooks (kind + pitch clamps) resolve here once.
+    from pae.spec import derive_building_class
+    from pae.style_pack import resolve_roof_kind, resolve_roof_pitch, resolve_style_pack
+
+    style_pack = None
+    try:
+        style_pack = resolve_style_pack(spec.style)
+    except Exception:
+        style_pack = None
+    style_arg = style_pack if style_pack is not None else {}
+    roof_kind = resolve_roof_kind(style_arg, spec_kind=spec.roof.kind)
+    roof_pitch = resolve_roof_pitch(style_arg, spec_pitch=spec.roof.pitch)
+
     massing = Massing(
         volumes=volumes,
         entrance_volume_id=entrance.id,
@@ -814,10 +828,11 @@ def solve(spec: BuildingSpec) -> Tuple[Optional[Massing], Report]:
         openings_skip_ground_windows=spec.openings.skip_ground_windows,
         stair_kind=spec.circulation.stair_kind,
         stair_cells=stair_cells,
-        roof_kind=spec.roof.kind,
-        roof_pitch=spec.roof.pitch,
+        roof_kind=roof_kind,
+        roof_pitch=roof_pitch,
         storey_use=list(spec.storey_use),
         entrances=list(spec.entrances),
         rooms=list(spec.rooms),
+        building_class=derive_building_class(spec),
     )
     return massing, Report.from_failures([])

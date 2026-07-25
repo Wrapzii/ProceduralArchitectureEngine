@@ -13,9 +13,12 @@ from pae.solver import solve
 from pae.spec import STEEP_PITCH_MIN, load_style, m1_box_house_spec
 from pae.style_pack import (
     ENGINE_DEFAULTS,
+    StylePackError,
+    choose_roof_kind,
     is_steep_silhouette_style,
     load_style_pack,
     resolve_piece_id,
+    resolve_roof_kind,
     resolve_roof_pitch,
     resolve_style_pack,
 )
@@ -48,6 +51,9 @@ def test_wizard_academy_steep_pitch_and_inheritance():
     assert pack.roof.kind_default == "pitched"
     assert is_steep_silhouette_style(pack)
     assert resolve_roof_pitch(pack) >= STEEP_PITCH_MIN
+    assert resolve_roof_kind(pack, spec_kind="auto") == "pitched"
+    assert resolve_roof_kind(pack, spec_kind="flat") == "flat"
+    assert choose_roof_kind(pack, seed=0, spec_kind="auto") == "pitched"
     assert pack.window.tag == "window_gothic"
     # Inherited from gothic_academy
     assert pack.materials.wall == "stone_ashlar"
@@ -75,23 +81,22 @@ def test_resolve_roof_pitch_clamps_to_style_floor():
     assert resolve_roof_pitch(overridden, spec_pitch=1.5) == pytest.approx(1.7)
 
 
-def test_unknown_roof_nested_key_rejected(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+def test_unknown_roof_nested_key_rejected(tmp_path: Path):
     bad = {
         "id": "bad_roof",
         "roof": {"pitch_min": 1.6, "unexpected": True},
         "window": {"tag": "window_plain", "per_bay": 1, "skip_ground": False},
     }
     (tmp_path / "bad_roof.json").write_text(json.dumps(bad), encoding="utf-8")
-    monkeypatch.setattr("pae.style_pack._STYLES_DIR", tmp_path)
 
-    pack, report = load_style_pack("bad_roof")
+    pack, report = load_style_pack("bad_roof", styles_dir_path=tmp_path)
     assert pack is None
     assert report.ok is False
     assert any("roof" in f.message for f in report.failures)
     assert any(f.check == "style_schema" and f.critical for f in report.failures)
 
 
-def test_roof_hints_known_keys_accepted(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+def test_roof_hints_known_keys_accepted(tmp_path: Path):
     """S-011 RoofHints stay first-class; only unknown nested keys fail closed."""
     good = {
         "id": "roof_ok",
@@ -104,9 +109,8 @@ def test_roof_hints_known_keys_accepted(tmp_path: Path, monkeypatch: pytest.Monk
         "window": {"tag": "window_plain", "per_bay": 1, "skip_ground": False},
     }
     (tmp_path / "roof_ok.json").write_text(json.dumps(good), encoding="utf-8")
-    monkeypatch.setattr("pae.style_pack._STYLES_DIR", tmp_path)
 
-    pack, report = load_style_pack("roof_ok")
+    pack, report = load_style_pack("roof_ok", styles_dir_path=tmp_path)
     assert report.ok is True, [f.message for f in report.failures]
     assert pack is not None
     assert pack.roof.steep_silhouette is True
@@ -114,50 +118,59 @@ def test_roof_hints_known_keys_accepted(tmp_path: Path, monkeypatch: pytest.Monk
     assert pack.roof.pitch_min == pytest.approx(1.6)
 
 
-def test_unknown_top_level_key_rejected(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+def test_unknown_top_level_key_rejected(tmp_path: Path):
     bad = {
         "id": "bad_style",
         "roof_pitch": 1.0,
         "window": {"tag": "window_plain", "per_bay": 1, "skip_ground": False},
         "unexpected_field": True,
     }
-    bad_path = tmp_path / "bad_style.json"
-    bad_path.write_text(json.dumps(bad), encoding="utf-8")
-    monkeypatch.setattr("pae.style_pack._STYLES_DIR", tmp_path)
+    (tmp_path / "bad_style.json").write_text(json.dumps(bad), encoding="utf-8")
 
-    pack, report = load_style_pack("bad_style")
+    pack, report = load_style_pack("bad_style", styles_dir_path=tmp_path)
     assert pack is None
     assert report.ok is False
     assert any(f.check == "style_schema" for f in report.failures)
 
 
-def test_unknown_nested_key_rejected(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+def test_unknown_nested_key_rejected(tmp_path: Path):
     bad = {
         "id": "bad_nested",
         "geometry": {"roof_pitch": 1.2, "bogus": 1},
         "window": {"tag": "window_plain", "per_bay": 1, "skip_ground": False},
     }
-    bad_path = tmp_path / "bad_nested.json"
-    bad_path.write_text(json.dumps(bad), encoding="utf-8")
-    monkeypatch.setattr("pae.style_pack._STYLES_DIR", tmp_path)
+    (tmp_path / "bad_nested.json").write_text(json.dumps(bad), encoding="utf-8")
 
-    pack, report = load_style_pack("bad_nested")
+    pack, report = load_style_pack("bad_nested", styles_dir_path=tmp_path)
     assert pack is None
     assert report.ok is False
     assert any("geometry" in f.message for f in report.failures)
 
 
-def test_inheritance_cycle_rejected(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+def test_inheritance_cycle_rejected(tmp_path: Path):
     a = {"id": "cycle_a", "extends": "cycle_b", "window": {"tag": "window_plain"}}
     b = {"id": "cycle_b", "extends": "cycle_a", "window": {"tag": "window_plain"}}
     (tmp_path / "cycle_a.json").write_text(json.dumps(a), encoding="utf-8")
     (tmp_path / "cycle_b.json").write_text(json.dumps(b), encoding="utf-8")
-    monkeypatch.setattr("pae.style_pack._STYLES_DIR", tmp_path)
 
-    pack, report = load_style_pack("cycle_a")
+    pack, report = load_style_pack("cycle_a", styles_dir_path=tmp_path)
     assert pack is None
     assert report.ok is False
     assert any(f.check == "style_extends" for f in report.failures)
+    assert any("cycle" in f.message.lower() for f in report.failures)
+
+
+def test_style_pack_error_type_on_schema(tmp_path: Path):
+    """Direct resolve raises StylePackError (not bare ValueError) on bad schema."""
+    bad = {
+        "id": "err_type",
+        "geometry": {"roof_pitch": 1.0, "nope": True},
+        "window": {"tag": "window_plain"},
+    }
+    (tmp_path / "err_type.json").write_text(json.dumps(bad), encoding="utf-8")
+    with pytest.raises(StylePackError) as ei:
+        resolve_style_pack("err_type", styles_dir_path=tmp_path)
+    assert ei.value.check == "style_schema"
 
 
 def test_resolution_order_engine_default_then_pack_then_override():
