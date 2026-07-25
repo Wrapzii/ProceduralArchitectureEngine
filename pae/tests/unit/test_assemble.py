@@ -116,7 +116,7 @@ def test_m1_validate_passes():
 
 
 def test_m1_east_wall_aabb_on_outer_boundary():
-    """East wall outer strip sits on x = (x1+1)*MODULE = 4*MODULE."""
+    """East wall thickness tucks under roof: [4*MODULE − WALL_T, 4*MODULE]."""
     assembly, _ = _m1_assembly()
     east = next(p for p in assembly.placements if p.kind == "wall" and p.cell == (4, 1))
     bb_min, bb_max = placement_world_aabb(
@@ -127,11 +127,48 @@ def test_m1_east_wall_aabb_on_outer_boundary():
         east.size_cm,
         east.offset_cm,
     )
-    # After §2.2 offset, yaw-180 wall occupies [4*MODULE, 4*MODULE+WALL_T] in X…
-    # actually low-X strip after 180+offset lands with min at 4*MODULE.
-    assert abs(bb_min[0] - 4 * MODULE_CM) < 1.0
-    assert abs(bb_max[0] - (4 * MODULE_CM + WALL_T_CM)) < 1.0
+    edge = 4 * MODULE_CM
+    assert abs(bb_min[0] - (edge - WALL_T_CM)) < 1.0
+    assert abs(bb_max[0] - edge) < 1.0
     assert abs(bb_max[2] - STOREY_CM) < 1.0
+
+
+def test_m1_north_and_east_tuck_under_footprint_roof():
+    """North/east thickness under roof; west/south already on the low edges."""
+    assembly, _ = _m1_assembly()
+    roof = next(p for p in assembly.placements if p.kind == "roof")
+    roof_min, roof_max = placement_world_aabb(
+        roof.cell[0],
+        roof.cell[1],
+        roof.level,
+        roof.yaw,
+        roof.size_cm,
+        roof.offset_cm,
+    )
+
+    def _aabb(p):
+        return placement_world_aabb(
+            p.cell[0], p.cell[1], p.level, p.yaw, p.size_cm, p.offset_cm
+        )
+
+    for p in assembly.placements:
+        if p.kind != "wall":
+            continue
+        mn, mx = _aabb(p)
+        # Entire wall XY footprint under (or flush with) the roof slab.
+        assert mn[0] >= roof_min[0] - 1.0, (p.piece_id, mn, roof_min)
+        assert mn[1] >= roof_min[1] - 1.0, (p.piece_id, mn, roof_min)
+        assert mx[0] <= roof_max[0] + 1.0, (p.piece_id, mx, roof_max)
+        assert mx[1] <= roof_max[1] + 1.0, (p.piece_id, mx, roof_max)
+
+    east = next(p for p in assembly.placements if p.cell == (4, 1) and p.kind == "wall")
+    north = next(p for p in assembly.placements if p.cell == (1, 3) and p.kind == "wall")
+    e_min, e_max = _aabb(east)
+    n_min, n_max = _aabb(north)
+    assert abs(e_max[0] - roof_max[0]) < 1.0
+    assert abs(n_max[1] - roof_max[1]) < 1.0
+    assert e_min[0] < roof_max[0]  # thickness inward
+    assert n_min[1] < roof_max[1]
 
 
 def test_boundary_wall_corner_ownership_no_duplicate_cells():

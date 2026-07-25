@@ -196,8 +196,18 @@ def _boundary_wall_offset_cm(
     yaw: int,
     piece: _ResolvedPiece,
 ) -> Tuple[float, float, float]:
-    """§2.2 yaw offset for every face — never skip E/N/S."""
-    del face  # face selects yaw; offset table is yaw-driven
+    """§2.2 yaw offset + roof-tuck for east/north.
+
+    West/south keep the stock rotation table — thickness sits under a footprint-
+    sized roof (``[0, T]`` from the low edges).
+
+    East/north sit on the ``x1+1`` / ``y1+1`` boundary *lines* but their
+    thickness must go *inward* under the roof (``[edge − T, edge]``), not
+    outward past it. Otherwise one pair of walls is tucked and the other
+    sticks out past a footprint-exact roof slab.
+    """
+    from pae.contract import WALL_T_CM
+
     sx, sy, _ = piece.size_cm
     ox, oy = rotation_offset_cm(
         yaw,
@@ -205,6 +215,15 @@ def _boundary_wall_offset_cm(
         sy,
         rotates_about_center=piece.rotates_about_center,
     )
+    face = face.lower()
+    if face == "east":
+        # Stock yaw-180 offset is (sx, sy) → thickness [edge, edge+T] (outside).
+        # Drop sx so thickness is [edge − T, edge] under the roof.
+        ox = ox - WALL_T_CM
+    elif face == "north":
+        # Stock yaw-90 offset is (sy, 0) → thickness [edge, edge+T] (outside).
+        # Pull back by wall thickness in Y.
+        oy = oy - WALL_T_CM
     return (ox, oy, 0.0)
 
 
