@@ -65,3 +65,6 @@ Project root: `C:\Users\WhiteWidow\Documents\GitHub\ProceduralArchitectureEngine
 >>> DONE @EXPORT_ALL â€” `tools/export_manifest.py` (`--milestone m1|m2|m3|m4_l|m4_u|m4_c` â†’ `Saved/exports/{milestone}_manifest.json`, fail-closed on critical); `export_m1_manifest.py` thin wrapper; `ue_manifest_dry_run.py` `--milestone` + generalized auto-export; `test_export_manifest_cli.py` (per-milestone export + m1/m3 dry-run integration); full pytest green.
 ```
 >>> DONE @GALLERY_CAM_FIX — Collection unlink used Object.users_collection by mistake; parent scan via scene+data children. Gallery rebuild ok (m1=39 m2=55 m3=104 m4_l=102).
+
+>>> DONE @GALLERY_FRAME — depsgraph update before bounds; hide sibling collections per-milestone; fixed tiny/empty PNGs.
+

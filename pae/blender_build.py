@@ -593,6 +593,11 @@ def frame_camera_on_meshes(*, collection: Optional[str] = None) -> None:
     bpy_util.require_bpy()
     import bpy
 
+    # Linked dupes / just-moved instances have stale matrix_world until depsgraph
+    # update — framing on identity matrices treats cm meshes as world metres and
+    # parks the camera kilometres away (tiny speck / empty PNGs).
+    bpy.context.view_layer.update()
+
     if collection:
         target_coll = bpy.data.collections.get(collection)
         if target_coll is None:
@@ -606,9 +611,17 @@ def frame_camera_on_meshes(*, collection: Optional[str] = None) -> None:
         raise RuntimeError(f"no PAE mesh instances to frame in {label}")
 
     bb_min, bb_max = mesh_world_bounds_m(meshes)
+    # Sanity: gallery buildings live in metres after scale=0.01. If bounds look
+    # like raw centimetres, force another update and remeasure.
+    span = max(bb_max[0] - bb_min[0], bb_max[1] - bb_min[1], bb_max[2] - bb_min[2])
+    if span > 250.0:
+        bpy.context.view_layer.update()
+        bb_min, bb_max = mesh_world_bounds_m(meshes)
     pose = camera_pose_from_bounds_m(bb_min, bb_max)
     _apply_camera_pose(pose)
     _ensure_gallery_lighting()
+    # Ensure render camera sees the updated transform.
+    bpy.context.view_layer.update()
 
 
 def write_screenshot(path: Optional[Path] = None) -> Path:
@@ -700,6 +713,7 @@ def build_gallery(
     results = []
     cursor_x_m = 0.0
     per_shots: Dict[str, str] = {}
+    import bpy
 
     for label, coll_name, factory in factories:
         assembly, report = assemble_and_validate(label, factory)
@@ -730,11 +744,24 @@ def build_gallery(
             }
         )
         if write_png:
+            # Hide sibling milestone collections so the render is just this building.
+            for other_lbl, other_coll, _fn in factories:
+                oc = bpy.data.collections.get(other_coll)
+                if oc is None:
+                    continue
+                oc.hide_render = other_coll != coll_name
+                oc.hide_viewport = other_coll != coll_name
             frame_camera_on_meshes(collection=coll_name)
             shot = write_screenshot(_per_milestone_screenshot_path(label))
             per_shots[label] = str(shot)
         cursor_x_m += width_m + gap_m
 
+    # Restore visibility for overview shot.
+    for _lbl, other_coll, _fn in factories:
+        oc = bpy.data.collections.get(other_coll)
+        if oc is not None:
+            oc.hide_render = False
+            oc.hide_viewport = False
     gallery_shot = write_gallery_screenshot() if write_png else None
     return {
         "ok": True,
