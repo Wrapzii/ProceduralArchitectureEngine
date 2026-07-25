@@ -54,6 +54,11 @@ GALLERY_SCREENSHOT_REL = Path("Saved") / "Screenshots" / "gallery_m1_m4.png"
 PAE_ROOT_COLLECTION = "PAE_Live"
 GALLERY_ROOT_COLLECTION = "PAE_Gallery"
 GALLERY_GAP_M = 2.0
+# Deterministic gallery camera: SE (+X, −Y) elevated — never random orbit per run.
+GALLERY_CAM_DIRECTION = (1.0, -1.0, 0.65)
+GALLERY_CAM_MARGIN = 1.38
+GALLERY_CAM_LENS_MM = 40.0
+GALLERY_CAM_ORTHO = True
 
 
 def reload_pae() -> List[str]:
@@ -138,6 +143,115 @@ def assembly_footprint_extent_m(assembly) -> Tuple[float, float, float]:
     )
 
 
+def assembly_world_bounds_m(
+    assembly,
+    offset_m: Tuple[float, float, float] = (0.0, 0.0, 0.0),
+) -> Tuple[Tuple[float, float, float], Tuple[float, float, float]]:
+    """World AABB (m) for an assembly after gallery/live offset."""
+    bb_min, bb_max = assembly_bounds_cm(assembly)
+    ox, oy, oz = offset_m
+    return (
+        (
+            bb_min[0] * CM_TO_M + ox,
+            bb_min[1] * CM_TO_M + oy,
+            bb_min[2] * CM_TO_M + oz,
+        ),
+        (
+            bb_max[0] * CM_TO_M + ox,
+            bb_max[1] * CM_TO_M + oy,
+            bb_max[2] * CM_TO_M + oz,
+        ),
+    )
+
+
+def _normalize_vec3(v: Tuple[float, float, float]) -> Tuple[float, float, float]:
+    x, y, z = v
+    length = math.sqrt(x * x + y * y + z * z)
+    if length < 1e-12:
+        return (0.0, 0.0, 1.0)
+    return (x / length, y / length, z / length)
+
+
+def camera_pose_from_bounds_m(
+    bb_min: Tuple[float, float, float],
+    bb_max: Tuple[float, float, float],
+    *,
+    margin: float = GALLERY_CAM_MARGIN,
+    direction: Tuple[float, float, float] = GALLERY_CAM_DIRECTION,
+    ortho: bool = GALLERY_CAM_ORTHO,
+) -> Dict[str, Any]:
+    """Deterministic camera pose from a world AABB in metres (import-safe, no bpy)."""
+    cx = (bb_min[0] + bb_max[0]) * 0.5
+    cy = (bb_min[1] + bb_max[1]) * 0.5
+    cz = (bb_min[2] + bb_max[2]) * 0.5
+    sx = max(bb_max[0] - bb_min[0], 0.5)
+    sy = max(bb_max[1] - bb_min[1], 0.5)
+    sz = max(bb_max[2] - bb_min[2], 0.5)
+    radius = max(sx, sy, sz) * margin
+    dx, dy, dz = _normalize_vec3(direction)
+    location = (cx + dx * radius, cy + dy * radius, cz + dz * radius)
+    target = (cx, cy, cz)
+    # Ortho scale fits the ground footprint plus height when viewed from SE.
+    ortho_scale = max(math.hypot(sx, sy), sz) * margin
+    return {
+        "location": location,
+        "target": target,
+        "radius_m": radius,
+        "ortho": ortho,
+        "ortho_scale": ortho_scale,
+        "lens_mm": GALLERY_CAM_LENS_MM,
+    }
+
+
+def _is_gallery_instance_mesh(obj) -> bool:
+    return (
+        obj.type == "MESH"
+        and not obj.hide_get()
+        and not obj.hide_render
+        and obj.name.startswith("PAE_")
+        and "Proto" not in obj.name
+    )
+
+
+def _meshes_in_collection_tree(coll) -> List[Any]:
+    """All visible PAE instance meshes under *coll* (not global scene scan)."""
+    found: List[Any] = []
+
+    def _walk(node) -> None:
+        for obj in node.objects:
+            if _is_gallery_instance_mesh(obj):
+                found.append(obj)
+        for child in node.children:
+            _walk(child)
+
+    _walk(coll)
+    return found
+
+
+def mesh_world_bounds_m(objects: Sequence[Any]) -> Tuple[Tuple[float, float, float], Tuple[float, float, float]]:
+    """Union world AABB (m) for Blender mesh objects using ``bound_box`` corners."""
+    from mathutils import Vector
+
+    mins = [1e18, 1e18, 1e18]
+    maxs = [-1e18, -1e18, -1e18]
+    count = 0
+    for obj in objects:
+        if obj.type != "MESH":
+            continue
+        count += 1
+        for corner in obj.bound_box:
+            w = obj.matrix_world @ Vector(corner)
+            mins[0] = min(mins[0], w.x)
+            mins[1] = min(mins[1], w.y)
+            mins[2] = min(mins[2], w.z)
+            maxs[0] = max(maxs[0], w.x)
+            maxs[1] = max(maxs[1], w.y)
+            maxs[2] = max(maxs[2], w.z)
+    if count == 0:
+        raise RuntimeError("no PAE mesh instances to frame")
+    return (tuple(mins), tuple(maxs))
+
+
 def _gallery_factories() -> List[Tuple[str, str, Any]]:
     """Return ``(label, collection_name, factory)`` for the M1–M4 gallery row."""
     from pae import spec as spec_mod
@@ -213,13 +327,28 @@ def _ensure_collection(name: str, *, parent=None):
 
 
 def _unlink_collection_tree(coll) -> None:
+    """Recursively delete a collection tree.
+
+    Blender ``Collection`` has no ``users_collection`` (that is an Object API).
+    Parents are found by scanning scene + data collections' ``children``.
+    """
     import bpy
 
     for child in list(coll.children):
         _unlink_collection_tree(child)
     for obj in list(coll.objects):
         bpy.data.objects.remove(obj, do_unlink=True)
-    for parent in list(coll.users_collection):
+
+    parents: List[Any] = []
+    scene_root = bpy.context.scene.collection
+    if coll.name in {c.name for c in scene_root.children}:
+        parents.append(scene_root)
+    for other in bpy.data.collections:
+        if other is coll:
+            continue
+        if coll.name in {c.name for c in other.children}:
+            parents.append(other)
+    for parent in parents:
         parent.children.unlink(coll)
     bpy.data.collections.remove(coll)
 
@@ -415,70 +544,31 @@ def instance_assembly(
     return count
 
 
-def frame_camera_on_meshes(*, collection: Optional[str] = None) -> None:
-    from pae.primitives import bpy_util
-
-    bpy_util.require_bpy()
+def _apply_camera_pose(pose: Dict[str, Any]) -> None:
+    """Apply a ``camera_pose_from_bounds_m`` dict to the active scene camera."""
     import bpy
     from mathutils import Vector
 
-    target_coll = bpy.data.collections.get(collection) if collection else None
-    allowed_colls: Optional[set] = None
-    if target_coll is not None:
-        allowed_colls = {target_coll.name}
-
-        def _descendants(coll):
-            for child in coll.children:
-                allowed_colls.add(child.name)
-                _descendants(child)
-
-        _descendants(target_coll)
-
-    def _in_scope(obj) -> bool:
-        if obj.type != "MESH" or obj.hide_get():
-            return False
-        if not obj.name.startswith("PAE_"):
-            return False
-        if "Proto" in obj.name:
-            return False
-        if allowed_colls is None:
-            return True
-        return any(c.name in allowed_colls for c in obj.users_collection)
-
-    mins = Vector((1e9, 1e9, 1e9))
-    maxs = Vector((-1e9, -1e9, -1e9))
-    found = 0
-    for obj in bpy.data.objects:
-        if not _in_scope(obj):
-            continue
-        found += 1
-        for corner in obj.bound_box:
-            w = obj.matrix_world @ Vector(corner)
-            mins.x = min(mins.x, w.x)
-            mins.y = min(mins.y, w.y)
-            mins.z = min(mins.z, w.z)
-            maxs.x = max(maxs.x, w.x)
-            maxs.y = max(maxs.y, w.y)
-            maxs.z = max(maxs.z, w.z)
-    if found == 0:
-        raise RuntimeError("no PAE mesh instances to frame")
-
-    center = (mins + maxs) * 0.5
-    size = maxs - mins
-    radius = max(size.x, size.y, size.z, 1.0) * 1.45
-    direction = Vector((1.15, -1.35, 0.75)).normalized()
-
+    target = Vector(pose["target"])
     cam = bpy.context.scene.camera
     if cam is None:
         bpy.ops.object.camera_add()
         cam = bpy.context.active_object
         bpy.context.scene.camera = cam
-    cam.location = center + direction * radius
-    cam.rotation_euler = (center - cam.location).to_track_quat("-Z", "Y").to_euler()
-    if hasattr(cam.data, "lens"):
-        cam.data.lens = 35
+    cam.location = Vector(pose["location"])
+    cam.rotation_euler = (target - cam.location).to_track_quat("-Z", "Y").to_euler()
+    if pose.get("ortho"):
+        cam.data.type = "ORTHO"
+        cam.data.ortho_scale = float(pose["ortho_scale"])
+    else:
+        cam.data.type = "PERSP"
+        if hasattr(cam.data, "lens"):
+            cam.data.lens = float(pose.get("lens_mm", GALLERY_CAM_LENS_MM))
 
-    # Soft workbench-friendly world.
+
+def _ensure_gallery_lighting() -> None:
+    import bpy
+
     world = bpy.data.worlds.get("World") or bpy.data.worlds.new("World")
     bpy.context.scene.world = world
     world.use_nodes = True
@@ -487,7 +577,6 @@ def frame_camera_on_meshes(*, collection: Optional[str] = None) -> None:
         bg.inputs[0].default_value = (0.55, 0.60, 0.68, 1.0)
         bg.inputs[1].default_value = 1.0
 
-    # Sun for depth.
     sun = next((o for o in bpy.data.objects if o.type == "LIGHT" and o.name.startswith("PAE_Sun")), None)
     if sun is None:
         light_data = bpy.data.lights.new(name="PAE_Sun", type="SUN")
@@ -495,6 +584,31 @@ def frame_camera_on_meshes(*, collection: Optional[str] = None) -> None:
         sun = bpy.data.objects.new("PAE_Sun", light_data)
         bpy.context.scene.collection.objects.link(sun)
     sun.rotation_euler = (math.radians(40), math.radians(15), math.radians(-30))
+
+
+def frame_camera_on_meshes(*, collection: Optional[str] = None) -> None:
+    """Frame visible PAE instances — scoped to *collection* when provided."""
+    from pae.primitives import bpy_util
+
+    bpy_util.require_bpy()
+    import bpy
+
+    if collection:
+        target_coll = bpy.data.collections.get(collection)
+        if target_coll is None:
+            raise RuntimeError(f"collection not found: {collection!r}")
+        meshes = _meshes_in_collection_tree(target_coll)
+    else:
+        meshes = [obj for obj in bpy.data.objects if _is_gallery_instance_mesh(obj)]
+
+    if not meshes:
+        label = collection or "scene"
+        raise RuntimeError(f"no PAE mesh instances to frame in {label}")
+
+    bb_min, bb_max = mesh_world_bounds_m(meshes)
+    pose = camera_pose_from_bounds_m(bb_min, bb_max)
+    _apply_camera_pose(pose)
+    _ensure_gallery_lighting()
 
 
 def write_screenshot(path: Optional[Path] = None) -> Path:
