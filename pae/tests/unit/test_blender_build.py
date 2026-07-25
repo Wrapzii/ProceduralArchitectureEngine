@@ -522,3 +522,60 @@ def test_material_color_for_placement_kind_fallback():
 
     assert material_color_for_placement("wall_plain", "wall") == material_color_for_kind("wall")
     assert material_color_for_placement("floor", "floor") == material_color_for_kind("floor")
+
+
+def test_configure_workbench_screenshot_scene_sets_material_shading():
+    from types import SimpleNamespace
+
+    from pae.blender_build import (
+        WORKBENCH_SCREENSHOT_RESOLUTION,
+        WORKBENCH_SCREENSHOT_VIEW_TRANSFORM,
+        configure_workbench_screenshot_scene,
+    )
+
+    shading = SimpleNamespace(type="", light="", color_type="")
+    display = SimpleNamespace(shading=shading)
+    view_settings = SimpleNamespace(view_transform="", look="")
+    render = SimpleNamespace(
+        engine="",
+        resolution_x=0,
+        resolution_y=0,
+        resolution_percentage=0,
+        image_settings=SimpleNamespace(file_format=""),
+    )
+    scene = SimpleNamespace(render=render, display=display, view_settings=view_settings)
+    configure_workbench_screenshot_scene(scene)
+    w, h = WORKBENCH_SCREENSHOT_RESOLUTION
+    assert render.engine == "BLENDER_WORKBENCH"
+    assert render.resolution_x == w
+    assert render.resolution_y == h
+    assert render.resolution_percentage == 100
+    assert render.image_settings.file_format == "PNG"
+    assert shading.type == "SOLID"
+    assert shading.light == "STUDIO"
+    assert shading.color_type == "MATERIAL"
+    assert view_settings.view_transform == WORKBENCH_SCREENSHOT_VIEW_TRANSFORM
+    assert view_settings.look == "None"
+
+
+def test_apply_material_base_color_sets_diffuse_and_principled():
+    from types import SimpleNamespace
+
+    from pae.blender_build import apply_material_base_color
+
+    rgba = (0.55, 0.28, 0.12, 1.0)
+    bsdf = SimpleNamespace(
+        inputs={
+            "Base Color": SimpleNamespace(default_value=(0.0, 0.0, 0.0, 1.0)),
+            "Roughness": SimpleNamespace(default_value=0.5),
+        }
+    )
+    mat = SimpleNamespace(
+        diffuse_color=(0.0, 0.0, 0.0, 1.0),
+        use_nodes=True,
+        node_tree=SimpleNamespace(nodes={"Principled BSDF": bsdf}),
+    )
+    apply_material_base_color(mat, rgba)
+    assert mat.diffuse_color == rgba
+    assert bsdf.inputs["Base Color"].default_value == rgba
+    assert bsdf.inputs["Roughness"].default_value == 0.7

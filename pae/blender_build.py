@@ -107,6 +107,10 @@ ASSET_MATERIAL_COLORS: Dict[str, Tuple[float, float, float, float]] = {
 _TINTED_ASSET_PREFIXES = ("roof_", "tower_", "stair_")
 _TINTED_ASSET_EXACT = frozenset(ASSET_MATERIAL_COLORS.keys())
 
+# Workbench PNGs read ``scene.display.shading`` + material viewport color — not Cycles lights.
+WORKBENCH_SCREENSHOT_VIEW_TRANSFORM = "Standard"
+WORKBENCH_SCREENSHOT_RESOLUTION = (1280, 720)
+
 
 def material_color_for_kind(kind: str) -> Tuple[float, float, float, float]:
     """Return RGBA base color for a placement *kind* (import-safe, no bpy)."""
@@ -133,6 +137,39 @@ def material_color_for_placement(
     if material_key_for_placement(asset_id, kind) != kind:
         return material_color_for_kind(kind)
     return material_color_for_kind(kind)
+
+
+def configure_workbench_screenshot_scene(scene: Any) -> None:
+    """Configure Workbench render + solid shading so material base colors appear in PNGs."""
+    w, h = WORKBENCH_SCREENSHOT_RESOLUTION
+    scene.render.engine = "BLENDER_WORKBENCH"
+    scene.render.resolution_x = w
+    scene.render.resolution_y = h
+    scene.render.resolution_percentage = 100
+    if hasattr(scene.render, "image_settings"):
+        scene.render.image_settings.file_format = "PNG"
+    view_settings = getattr(scene, "view_settings", None)
+    if view_settings is not None:
+        view_settings.view_transform = WORKBENCH_SCREENSHOT_VIEW_TRANSFORM
+        if hasattr(view_settings, "look"):
+            view_settings.look = "None"
+    display = getattr(scene, "display", None)
+    if display is not None and hasattr(display, "shading"):
+        shading = display.shading
+        if hasattr(shading, "type"):
+            shading.type = "SOLID"
+        shading.light = "STUDIO"
+        shading.color_type = "MATERIAL"
+
+
+def apply_material_base_color(mat: Any, rgba: Tuple[float, float, float, float]) -> None:
+    """Set Principled Base Color and viewport diffuse — Workbench MATERIAL mode uses both."""
+    mat.diffuse_color = rgba
+    if getattr(mat, "use_nodes", False) and mat.node_tree is not None:
+        bsdf = mat.node_tree.nodes.get("Principled BSDF")
+        if bsdf is not None:
+            bsdf.inputs["Base Color"].default_value = rgba
+            bsdf.inputs["Roughness"].default_value = 0.7
 
 
 def reload_pae() -> List[str]:
@@ -721,10 +758,7 @@ def _ensure_material(asset_id: str, kind: str = "wall"):
     if mat is None:
         mat = bpy.data.materials.new(name)
         mat.use_nodes = True
-    bsdf = mat.node_tree.nodes.get("Principled BSDF") if mat.node_tree else None
-    if bsdf is not None:
-        bsdf.inputs["Base Color"].default_value = rgba
-        bsdf.inputs["Roughness"].default_value = 0.7
+    apply_material_base_color(mat, rgba)
     return mat
 
 
@@ -1264,15 +1298,8 @@ def write_screenshot(path: Optional[Path] = None) -> Path:
     out = path or _screenshot_path()
     out.parent.mkdir(parents=True, exist_ok=True)
     scene = bpy.context.scene
-    scene.render.engine = "BLENDER_WORKBENCH"
-    if hasattr(scene.display, "shading"):
-        scene.display.shading.light = "STUDIO"
-        scene.display.shading.color_type = "MATERIAL"
-    scene.render.resolution_x = 1280
-    scene.render.resolution_y = 720
-    scene.render.resolution_percentage = 100
+    configure_workbench_screenshot_scene(scene)
     scene.render.filepath = str(out)
-    scene.render.image_settings.file_format = "PNG"
     bpy.ops.render.render(write_still=True)
     return out
 
