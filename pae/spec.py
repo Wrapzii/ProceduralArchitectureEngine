@@ -12,6 +12,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from pae.contract import (
+    STOREY_CM,
+    resolve_height_cm,
+    resolve_height_storeys,
+)
 from pae.report import Failure, Report
 
 # Keys / patterns that imply world placement or centimetre coordinates.
@@ -117,20 +122,33 @@ ENTRANCE_FACADES = frozenset({"south", "north", "east", "west"})
 
 @dataclass
 class FootprintSpec:
-    kind: str  # rect | L | U | courtyard | compound | school
+    kind: str  # rect | L | U | courtyard | compound | school | cells
     bays_x: int
     bays_y: int
     wing_depth: int = 2
     courtyard: bool = False
+    #: ``kind="cells"`` only — an ARBITRARY footprint as an explicit cell mask.
+    #: This is what lets a sketch (``pae/sketch.py``) describe any outline instead of
+    #: choosing from the five named shapes, which is why the project filled up with
+    #: hardcoded preset scenes. The solver decomposes the mask into rectangular
+    #: volumes; ``bays_x``/``bays_y`` remain the mask's bounding extent so existing
+    #: code that reads them keeps working.
+    cells: Tuple[Tuple[int, int], ...] = ()
 
 
 @dataclass
 class TowerSpec:
-    """Tower attachment in *cell* space (never world cm)."""
+    """Tower attachment in *cell* space (never world cm).
+
+    ``stair_kind="spiral"`` asks assemble to put a helical climb *inside* this
+    drum (Phase 4.7 habitable keeps) even when the hall uses switchback/straight.
+    Empty / unset → no per-tower drum stair (hall ``CirculationSpec`` still rules).
+    """
 
     cell: Tuple[int, int]
     storeys: int
     attached_to: str = "corner"  # wall | corner
+    stair_kind: str = ""  # "" | spiral — drum vertical circulation
 
 
 @dataclass
@@ -179,14 +197,56 @@ class EntranceSpec:
     storey: int = 0  # 0 = ground; upper_exterior requires >= 1
 
 
+@dataclass(frozen=True)
+class HeightDecl:
+    """Declared vertical extent for a volume / room / wall span.
+
+    Prefer ``storeys`` (int or float). ``height_cm`` is a Python/measured override —
+    BuildingSpec JSON must keep using ``height_storeys`` (``*_cm`` keys are rejected).
+    """
+
+    storeys: Optional[float] = None
+    height_cm: Optional[float] = None
+
+    def resolve_cm(self, *, storey_cm: float = STOREY_CM) -> float:
+        return resolve_height_cm(
+            storeys=self.storeys, height_cm=self.height_cm, storey_cm=storey_cm
+        )
+
+    def resolve_storeys(self, *, storey_cm: float = STOREY_CM) -> float:
+        return resolve_height_storeys(
+            storeys=self.storeys, height_cm=self.height_cm, storey_cm=storey_cm
+        )
+
+
 @dataclass
 class RoomSpec:
-    """Programmed room intent — geometry resolved in plan/assemble."""
+    """Programmed room intent — geometry resolved in plan/assemble.
+
+    Vertical extent: prefer ``height_storeys`` (float/int, not capped at 2).
+    ``double_height=True`` remains a shorthand for ``height_storeys=2``.
+    """
 
     name: str
     kind: str  # classroom | hall | chapel | library | dormitory | kitchen | store
     area_bays: Optional[int] = None
     double_height: bool = False
+    height_storeys: Optional[float] = None
+
+
+def room_height_storeys(room: RoomSpec) -> float:
+    """Resolved room height in storeys — ``height_storeys`` wins over ``double_height``."""
+    if room.height_storeys is not None:
+        h = float(room.height_storeys)
+        if h < 1.0:
+            raise ValueError(f"room.height_storeys must be >= 1, got {h}")
+        return h
+    return 2.0 if room.double_height else 1.0
+
+
+def room_is_multi_height(room: RoomSpec) -> bool:
+    """True when the room opens more than one storey of vertical clearance."""
+    return room_height_storeys(room) > 1.0 + 1e-9
 
 
 @dataclass
@@ -207,6 +267,18 @@ class BuildingSpec:
     rooms: List[RoomSpec] = field(default_factory=list)
     #: Typology hint for stair policy. None → derived from massing/program.
     building_class: Optional[str] = None
+    #: Optional envelope / monumental wall span (storeys). None → ``storeys``.
+    wall_height_storeys: Optional[float] = None
+
+
+def building_wall_height_storeys(spec: BuildingSpec) -> float:
+    """Declared wall/envelope height in storeys (gates and tall leaves span this)."""
+    if spec.wall_height_storeys is not None:
+        h = float(spec.wall_height_storeys)
+        if h < 1.0:
+            raise ValueError(f"wall_height_storeys must be >= 1, got {h}")
+        return h
+    return float(max(1, int(spec.storeys)))
 
 
 def footprint_allows_wide_stair_well(footprint: FootprintSpec) -> bool:
@@ -430,11 +502,17 @@ def _parse_towers(raw: Any) -> List[TowerSpec]:
         attached = str(item.get("attached_to", "corner"))
         if attached not in ("wall", "corner"):
             raise ValueError(f"tower.attached_to must be wall|corner, got {attached}")
+        raw_stair = str(item.get("stair_kind", "") or "").lower()
+        if raw_stair and raw_stair not in ("spiral",):
+            raise ValueError(
+                f"tower.stair_kind must be '' or 'spiral', got {raw_stair!r}"
+            )
         out.append(
             TowerSpec(
                 cell=_as_int_pair(item["cell"], "tower.cell"),
                 storeys=int(item["storeys"]),
                 attached_to=attached,
+                stair_kind=raw_stair,
             )
         )
     return out
@@ -491,12 +569,22 @@ def _parse_rooms(raw: Any) -> List[RoomSpec]:
             raise ValueError(f"room.kind must be one of {kinds}, got {kind!r}")
         area_raw = item.get("area_bays")
         area_bays = None if area_raw is None else int(area_raw)
+        height_raw = item.get("height_storeys")
+        height_storeys = None if height_raw is None else float(height_raw)
+        if height_storeys is not None and height_storeys < 1.0:
+            raise ValueError(
+                f"room.height_storeys must be >= 1, got {height_storeys}"
+            )
+        double_height = bool(item.get("double_height", False))
+        if height_storeys is not None and height_storeys > 1.0:
+            double_height = True
         out.append(
             RoomSpec(
                 name=str(item.get("name", kind)),
                 kind=kind,
                 area_bays=area_bays,
-                double_height=bool(item.get("double_height", False)),
+                double_height=double_height,
+                height_storeys=height_storeys,
             )
         )
     return out
@@ -614,6 +702,12 @@ def load_spec(data: dict) -> Tuple[Optional[BuildingSpec], Report]:
                 raise ValueError(
                     f"building_class must be one of {known}, got {building_class!r}"
                 )
+        wall_h_raw = data.get("wall_height_storeys")
+        wall_height_storeys = None if wall_h_raw is None else float(wall_h_raw)
+        if wall_height_storeys is not None and wall_height_storeys < 1.0:
+            raise ValueError(
+                f"wall_height_storeys must be >= 1, got {wall_height_storeys}"
+            )
         spec = BuildingSpec(
             name=str(data.get("name", "unnamed")),
             style=str(data.get("style", "townhouse")),
@@ -629,6 +723,7 @@ def load_spec(data: dict) -> Tuple[Optional[BuildingSpec], Report]:
             ground_slab=bool(data.get("ground_slab", True)),
             rooms=_parse_rooms(data.get("rooms")),
             building_class=building_class,
+            wall_height_storeys=wall_height_storeys,
         )
     except (KeyError, TypeError, ValueError) as exc:
         failures.append(
@@ -1220,7 +1315,11 @@ def castle_curtain_wall_spec(
 
 
 def castle_gatehouse_spec(*, seed: int = 41) -> BuildingSpec:
-    """Twin-tower gate block with a south ``gate`` entrance (``wall_gate_arch``)."""
+    """Twin-tower gate block with a south ``gate`` entrance (``wall_gate_arch``).
+
+    Hall keeps two floor levels (tower drums remain taller). Gate leaves span
+    ``wall_height_storeys`` so the arch is not a one-MODULE stub.
+    """
     return BuildingSpec(
         name="castle_gatehouse",
         style="keep",
@@ -1242,6 +1341,8 @@ def castle_gatehouse_spec(*, seed: int = 41) -> BuildingSpec:
         entrances=[EntranceSpec(role="gate", facade="south")],
         seed=seed,
         ground_slab=True,
+        building_class="castle",
+        wall_height_storeys=2.0,
     )
 
 
@@ -1273,7 +1374,7 @@ def fortress_keep_spec(
     storeys: int = 3,
     seed: int = 50,
 ) -> BuildingSpec:
-    """Central multi-storey hall/manor — steep gable, corner + wall towers.
+    """Central multi-storey hall/manor — steep four-slope hip, corner + wall towers.
 
     Composed for :func:`pae.compound.build_fortress_compound`. Towers at several
     heights; conical/needle spires come from keep trim (``spire_needle``).
@@ -1288,15 +1389,24 @@ def fortress_keep_spec(
         storeys=storeys,
         storey_use=["hall"] * storeys,
         towers=[
-            # Several heights; SW/SE on the court front, NW corner, west wall drum.
-            TowerSpec(cell=(0, 0), storeys=3, attached_to="corner"),
-            TowerSpec(cell=(bx - 1, 0), storeys=4, attached_to="corner"),
-            TowerSpec(cell=(0, by - 1), storeys=3, attached_to="corner"),
+            # Habitable drums: spiral inside each keep tower (hall keeps switchback).
+            TowerSpec(
+                cell=(0, 0), storeys=3, attached_to="corner", stair_kind="spiral"
+            ),
+            TowerSpec(
+                cell=(bx - 1, 0), storeys=4, attached_to="corner", stair_kind="spiral"
+            ),
+            TowerSpec(
+                cell=(0, by - 1), storeys=3, attached_to="corner", stair_kind="spiral"
+            ),
             # Wall-attached on the west flank — keep the south court facade clear
             # for the main entrance (door existence fails if a drum owns that bay).
-            TowerSpec(cell=(-1, mid_y), storeys=3, attached_to="wall"),
+            TowerSpec(
+                cell=(-1, mid_y), storeys=3, attached_to="wall", stair_kind="spiral"
+            ),
         ],
-        roof=RoofSpec(kind="pitched", pitch=1.7),
+        roof=RoofSpec(kind="hip", pitch=1.7),
+        # Hall vertical circulation; per-tower drum stairs are TowerSpec.stair_kind.
         circulation=CirculationSpec(stair_kind="switchback", stair_cells=[]),
         openings=OpeningPolicy(
             windows_per_bay=1,
@@ -1308,24 +1418,41 @@ def fortress_keep_spec(
         seed=seed,
         ground_slab=True,
         building_class="castle",
+        wall_height_storeys=float(storeys),
     )
 
 
 def fortress_gatehouse_spec(*, seed: int = 51) -> BuildingSpec:
-    """Twin-arch gatehouse — two south gate leaves + corner drum towers.
+    """Monumental twin-tower gatehouse — wide bays, tall body, grand gate leaves.
 
-    Footprint matches :func:`castle_gatehouse_spec` (4×3, storeys=3 drums) so
-    ``tower_hall_kiss`` stays green; twin ``gate`` bays give the double entrance.
+    Sized for flat-ground fortress massing (not the smaller ``castle_gatehouse``
+    greybox): 6×4 footprint, 3 hall storeys, twin central ``gate`` bays. Corner drums
+    are hall+1 storeys so ``tower_hall_kiss`` still reaches the top arc. The hall stair
+    well expands 4×2 so L0/L1 flights offset (D3-3). Arch asset: ``wall_gate_arch_grand``.
     """
+    bx, by = 6, 4
+    hall_storeys = 3
+    # Top drum level must still AABB-kiss a hall wall (touching Z counts).
+    drum_storeys = hall_storeys + 1
     return BuildingSpec(
         name="fortress_gatehouse",
         style="keep",
-        footprint=FootprintSpec(kind="rect", bays_x=4, bays_y=3),
-        storeys=2,
-        storey_use=["hall", "hall"],
+        footprint=FootprintSpec(kind="rect", bays_x=bx, bays_y=by),
+        storeys=hall_storeys,
+        storey_use=["hall"] * hall_storeys,
         towers=[
-            TowerSpec(cell=(0, 0), storeys=3, attached_to="corner"),
-            TowerSpec(cell=(3, 0), storeys=3, attached_to="corner"),
+            TowerSpec(
+                cell=(0, 0),
+                storeys=drum_storeys,
+                attached_to="corner",
+                stair_kind="spiral",
+            ),
+            TowerSpec(
+                cell=(bx - 1, 0),
+                storeys=drum_storeys,
+                attached_to="corner",
+                stair_kind="spiral",
+            ),
         ],
         roof=RoofSpec(kind="flat", pitch=1.0),
         circulation=CirculationSpec(stair_kind="straight", stair_cells=[]),
@@ -1336,12 +1463,13 @@ def fortress_gatehouse_spec(*, seed: int = 51) -> BuildingSpec:
             skip_ground_windows=True,
         ),
         entrances=[
-            EntranceSpec(role="gate", facade="south", bay=1),
             EntranceSpec(role="gate", facade="south", bay=2),
+            EntranceSpec(role="gate", facade="south", bay=3),
         ],
         seed=seed,
         ground_slab=True,
         building_class="castle",
+        wall_height_storeys=float(hall_storeys),
     )
 
 
@@ -1361,7 +1489,7 @@ def fortress_cloister_range_spec(
         storeys=storeys,
         storey_use=["hall"] * storeys,
         towers=[],
-        roof=RoofSpec(kind="pitched", pitch=1.25),
+        roof=RoofSpec(kind="hip", pitch=1.25),
         circulation=CirculationSpec(stair_kind="straight", stair_cells=[]),
         openings=OpeningPolicy(
             windows_per_bay=1,
@@ -1378,7 +1506,7 @@ def fortress_cloister_range_spec(
 def fortress_north_curtain_spec(
     length_bays: int,
     *,
-    storeys: int = 2,
+    storeys: int = 3,
     depth_bays: int = 3,
     seed: int = 53,
 ) -> BuildingSpec:
@@ -1404,9 +1532,11 @@ class FortressBaileySpec:
     court_bays_y: int = 5
     range_depth: int = 3
     curtain_length_bays: int = 5
-    curtain_storeys: int = 2
-    approach_rows: int = 3
-    approach_width_bays: int = 5
+    curtain_storeys: int = 3
+    approach_rows: int = 1
+    approach_width_bays: int = 6
+    # Empty bays between gate south face and first step row (walkable clear path).
+    approach_clearance_bays: int = 1
     keep_seed: int = 50
     gatehouse_seed: int = 51
     west_cloister_seed: int = 52
@@ -1521,8 +1651,12 @@ def school_academy_dict(*, seed: int = 70) -> dict:
                 "name": r.name,
                 "kind": r.kind,
                 "area_bays": r.area_bays,
-                "double_height": r.double_height,
+                "double_height": r.double_height or room_is_multi_height(r),
+                "height_storeys": (
+                    room_height_storeys(r) if room_is_multi_height(r) else None
+                ),
             }
             for r in spec.rooms
         ],
+        "wall_height_storeys": spec.wall_height_storeys,
     }

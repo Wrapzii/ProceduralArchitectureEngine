@@ -43,6 +43,8 @@ class Volume:
     storeys: int
     role: str = "main"  # main | wing | hall | admin | classroom_wing | tower | courtyard
     entrance: bool = False
+    # Per-tower drum circulation (from TowerSpec.stair_kind). "" = none.
+    stair_kind: str = ""
 
     def cells(self) -> Set[Tuple[int, int]]:
         return {
@@ -106,6 +108,8 @@ class Massing:
     rooms: List[RoomSpec] = field(default_factory=list)
     entrances: List[EntranceSpec] = field(default_factory=list)
     building_class: str = "generic"
+    #: Envelope / monumental wall span (storeys). None → ``storeys``.
+    wall_height_storeys: Optional[float] = None
 
     def volume_by_id(self, vid: str) -> Optional[Volume]:
         for v in self.volumes:
@@ -145,6 +149,35 @@ def _rect_volume(
 def _place_footprint(fp: FootprintSpec, storeys: int) -> List[Volume]:
     """Greedy footprint volumes from FootprintSpec."""
     vols: List[Volume] = []
+    if fp.kind == "cells":
+        # ARBITRARY OUTLINE. The mask is decomposed into maximal rectangles because the
+        # rest of the solver reasons in rectangular Volumes. This is the path that lets
+        # a sketch describe any shape instead of picking one of five named kinds — the
+        # limitation that turned every non-standard building into a hardcoded preset.
+        from pae.sketch import rect_cover
+
+        mask = {(int(x), int(y)) for x, y in (fp.cells or ())}
+        if not mask:
+            return vols
+        rects = rect_cover(mask)
+        # Largest first, so the biggest mass becomes 'main' and carries the entrance.
+        # Ties break on position, keeping the decomposition deterministic.
+        rects.sort(key=lambda r: (-((r[2] - r[0] + 1) * (r[3] - r[1] + 1)), r[0], r[1]))
+        for i, (x0, y0, x1, y1) in enumerate(rects):
+            vols.append(
+                Volume(
+                    id="main" if i == 0 else f"wing_{i}",
+                    x0=x0,
+                    y0=y0,
+                    x1=x1,
+                    y1=y1,
+                    storeys=storeys,
+                    role="main" if i == 0 else "wing",
+                    entrance=(i == 0),
+                )
+            )
+        return vols
+
     if fp.kind == "rect":
         vols.append(
             _rect_volume("main", 0, 0, fp.bays_x, fp.bays_y, storeys, "main", True)
@@ -339,6 +372,7 @@ def _tower_volume(spec: TowerSpec, index: int, building_storeys: int) -> Volume:
         storeys=storeys,
         role="tower",
         entrance=False,
+        stair_kind=str(getattr(spec, "stair_kind", "") or "").lower(),
     )
 
 
@@ -630,6 +664,7 @@ def _local_repair_towers(volumes: List[Volume]) -> List[Volume]:
                 storeys=v.storeys,
                 role=v.role,
                 entrance=False,
+                stair_kind=str(getattr(v, "stair_kind", "") or ""),
             )
         )
     return repaired
@@ -676,6 +711,24 @@ def _tower_stair_cell(volumes: List[Volume]) -> Optional[Tuple[int, int]]:
         if v.role == "tower":
             return (v.x0, v.y0)
     return None
+
+
+def _tower_blocked_cells(volumes: List[Volume]) -> Set[Tuple[int, int]]:
+    """Hall grid cells owned by attached tower drums (not outboard snap coords)."""
+    blocked: Set[Tuple[int, int]] = set()
+    mains = [v for v in volumes if v.role in WING_ROLES]
+    for tower in volumes:
+        if tower.role != "tower":
+            continue
+        blocked.add((tower.x0, tower.y0))
+        for hall in mains:
+            if tower.y0 < hall.y0 or tower.y0 >= hall.y1:
+                continue
+            if tower.x0 < hall.x0:
+                blocked.add((hall.x0, tower.y0))
+            if tower.x0 >= hall.x1:
+                blocked.add((hall.x1, tower.y0))
+    return blocked
 
 
 def _default_stair_cells(
@@ -750,6 +803,49 @@ def _default_stair_cells(
     auto = _default_stair_cell(volumes)
     if auto is None:
         return []
+    if storeys < 3:
+        return [auto, (auto[0], auto[1] + 1)]
+    m = _primary_body(volumes)
+    if m is None:
+        return [auto, (auto[0], auto[1] + 1)]
+    blocked = _tower_blocked_cells(volumes)
+    # Multi-flight straight runs need two 2×2 pads (Roadmap 10.4 / D3-3).
+    pads: List[List[Tuple[int, int]]] = []
+    for x0 in range(m.x0, m.x1 - 1):
+        for y0 in range(m.y0, m.y1):
+            if y0 + 3 >= m.y1:
+                continue
+            cand = [(x0 + i, y0 + j) for i in range(2) for j in range(4)]
+            if not all(
+                m.x0 <= c[0] <= m.x1 and m.y0 <= c[1] <= m.y1 for c in cand
+            ):
+                continue
+            if any(c in blocked for c in cand):
+                continue
+            pads.append(cand)
+    if not pads:
+        for x0 in range(m.x0, max(m.x0, m.x1 - 2)):
+            for y0 in range(m.y0, m.y1 + 1):
+                if y0 + 1 > m.y1:
+                    continue
+                cand = [(x0 + i, y0 + j) for i in range(4) for j in range(2)]
+                if not all(
+                m.x0 <= c[0] <= m.x1 and m.y0 <= c[1] <= m.y1 for c in cand
+            ):
+                    continue
+                if any(c in blocked for c in cand):
+                    continue
+                pads.append(cand)
+    if pads:
+        def _pad_rank(cand: List[Tuple[int, int]]) -> Tuple[int, int, int, int]:
+            """Prefer auto anchor, avoid south perimeter and outer X columns, favour depth."""
+            south_row = sum(1 for c in cand if c[1] == m.y0)
+            edge_cols = sum(1 for c in cand if c[0] == m.x0 or c[0] == m.x1)
+            depth = min(c[1] for c in cand)
+            auto_miss = 0 if auto in cand else 1
+            return (auto_miss, south_row, edge_cols, -depth)
+
+        return min(pads, key=_pad_rank)
     return [auto, (auto[0], auto[1] + 1)]
 
 
@@ -874,5 +970,6 @@ def solve(spec: BuildingSpec) -> Tuple[Optional[Massing], Report]:
         entrances=list(spec.entrances),
         rooms=list(spec.rooms),
         building_class=derive_building_class(spec),
+        wall_height_storeys=spec.wall_height_storeys,
     )
     return massing, Report.from_failures([])
