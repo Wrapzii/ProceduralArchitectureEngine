@@ -1261,6 +1261,166 @@ def castle_bailey_spec() -> CastleBaileySpec:
     return CastleBaileySpec()
 
 
+# ---------------------------------------------------------------------------
+# Fortress / bailey campus (flat-ground compound massing)
+# ---------------------------------------------------------------------------
+
+
+def fortress_keep_spec(
+    *,
+    bays_x: int = 8,
+    bays_y: int = 5,
+    storeys: int = 3,
+    seed: int = 50,
+) -> BuildingSpec:
+    """Central multi-storey hall/manor — steep gable, corner + wall towers.
+
+    Composed for :func:`pae.compound.build_fortress_compound`. Towers at several
+    heights; conical/needle spires come from keep trim (``spire_needle``).
+    """
+    bx = max(4, int(bays_x))
+    by = max(3, int(bays_y))
+    mid_y = by // 2
+    return BuildingSpec(
+        name="fortress_keep",
+        style="keep",
+        footprint=FootprintSpec(kind="rect", bays_x=bx, bays_y=by),
+        storeys=storeys,
+        storey_use=["hall"] * storeys,
+        towers=[
+            # Several heights; SW/SE on the court front, NW corner, west wall drum.
+            TowerSpec(cell=(0, 0), storeys=3, attached_to="corner"),
+            TowerSpec(cell=(bx - 1, 0), storeys=4, attached_to="corner"),
+            TowerSpec(cell=(0, by - 1), storeys=3, attached_to="corner"),
+            # Wall-attached on the west flank — keep the south court facade clear
+            # for the main entrance (door existence fails if a drum owns that bay).
+            TowerSpec(cell=(-1, mid_y), storeys=3, attached_to="wall"),
+        ],
+        roof=RoofSpec(kind="pitched", pitch=1.7),
+        circulation=CirculationSpec(stair_kind="switchback", stair_cells=[]),
+        openings=OpeningPolicy(
+            windows_per_bay=1,
+            doors_ground=1,
+            windows_ground=None,
+            skip_ground_windows=False,
+        ),
+        entrances=[EntranceSpec(role="main", facade="south", bay=2)],
+        seed=seed,
+        ground_slab=True,
+        building_class="castle",
+    )
+
+
+def fortress_gatehouse_spec(*, seed: int = 51) -> BuildingSpec:
+    """Twin-arch gatehouse — two south gate leaves + corner drum towers.
+
+    Footprint matches :func:`castle_gatehouse_spec` (4×3, storeys=3 drums) so
+    ``tower_hall_kiss`` stays green; twin ``gate`` bays give the double entrance.
+    """
+    return BuildingSpec(
+        name="fortress_gatehouse",
+        style="keep",
+        footprint=FootprintSpec(kind="rect", bays_x=4, bays_y=3),
+        storeys=2,
+        storey_use=["hall", "hall"],
+        towers=[
+            TowerSpec(cell=(0, 0), storeys=3, attached_to="corner"),
+            TowerSpec(cell=(3, 0), storeys=3, attached_to="corner"),
+        ],
+        roof=RoofSpec(kind="flat", pitch=1.0),
+        circulation=CirculationSpec(stair_kind="straight", stair_cells=[]),
+        openings=OpeningPolicy(
+            windows_per_bay=0,
+            doors_ground=0,
+            windows_ground=None,
+            skip_ground_windows=True,
+        ),
+        entrances=[
+            EntranceSpec(role="gate", facade="south", bay=1),
+            EntranceSpec(role="gate", facade="south", bay=2),
+        ],
+        seed=seed,
+        ground_slab=True,
+        building_class="castle",
+    )
+
+
+def fortress_cloister_range_spec(
+    name: str,
+    bays_x: int,
+    bays_y: int,
+    *,
+    storeys: int = 2,
+    seed: int = 52,
+) -> BuildingSpec:
+    """Cloister / lodging range — arcade colonnade via compound cloister trim."""
+    return BuildingSpec(
+        name=name,
+        style="keep",
+        footprint=FootprintSpec(kind="rect", bays_x=bays_x, bays_y=bays_y),
+        storeys=storeys,
+        storey_use=["hall"] * storeys,
+        towers=[],
+        roof=RoofSpec(kind="pitched", pitch=1.25),
+        circulation=CirculationSpec(stair_kind="straight", stair_cells=[]),
+        openings=OpeningPolicy(
+            windows_per_bay=1,
+            doors_ground=1,
+            windows_ground=None,
+            skip_ground_windows=False,
+        ),
+        seed=seed,
+        ground_slab=True,
+        building_class="castle",
+    )
+
+
+def fortress_north_curtain_spec(
+    length_bays: int,
+    *,
+    storeys: int = 2,
+    depth_bays: int = 3,
+    seed: int = 53,
+) -> BuildingSpec:
+    """North curtain closing the outer bailey — plain envelope, battlement trim."""
+    return castle_curtain_wall_spec(
+        "north_curtain",
+        length_bays,
+        storeys=storeys,
+        depth_bays=depth_bays,
+        seed=seed,
+    )
+
+
+@dataclass(frozen=True)
+class FortressBaileySpec:
+    """Layout knobs for :func:`pae.compound.build_fortress_compound`.
+
+    Flat-ground nested bailey: south curtain+gate, west/east cloisters around an
+    open court, north keep/manor, and a stepped approach causeway south of the gate.
+    """
+
+    court_bays_x: int = 8
+    court_bays_y: int = 5
+    range_depth: int = 3
+    curtain_length_bays: int = 5
+    curtain_storeys: int = 2
+    approach_rows: int = 3
+    approach_width_bays: int = 5
+    keep_seed: int = 50
+    gatehouse_seed: int = 51
+    west_cloister_seed: int = 52
+    east_cloister_seed: int = 54
+    west_curtain_seed: int = 55
+    east_curtain_seed: int = 56
+    north_curtain_seed: int = 53
+
+
+def fortress_bailey_compound_spec() -> FortressBaileySpec:
+    """Default fortress / bailey campus preset (flat Z=0 compound massing)."""
+    return FortressBaileySpec()
+
+
 def m8_entrances_spec(*, seed: int = 8) -> BuildingSpec:
     """Factory for Milestone 8 — declarative entrance roles on south/north facades.
 

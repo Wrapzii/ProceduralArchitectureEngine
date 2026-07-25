@@ -49,10 +49,12 @@ Cell = Tuple[int, int]
 #: Mirror of ``validate.HEADROOM_CLEARANCE_CM``; imported lazily there to avoid a cycle.
 _HEADROOM_CM = 210.0
 BUTTRESS_MIN_STOREYS = 3
+BUTTRESS_CASTLE_MIN_STOREYS = 2
 BUTTRESS_EVERY_BAYS = 2
 DORMER_EVERY_BAYS = 2
 CHIMNEY_EVERY_BAYS = 4
 SPIRE_MIN_TOWER_PIECES = 2
+_STEEP_ROOF_HEIGHT_FRAC = 0.55  # of STOREY — pitched slope taller than flat deck
 
 
 @dataclass(frozen=True)
@@ -74,6 +76,33 @@ class TrimOptions:
     spire_piece: str = "spire_octagonal"
     finial_piece: str = "finial"
     arcade_piece: str = "arch_freestanding"
+    exterior_steps: bool = False
+    steps_piece: str = "steps_external"
+    buttress_min_storeys: Optional[int] = None
+
+
+def _buttress_min_storeys(assembly: Assembly, opts: TrimOptions) -> int:
+    if opts.buttress_min_storeys is not None:
+        return opts.buttress_min_storeys
+    if getattr(assembly, "building_class", "generic") == "castle":
+        return BUTTRESS_CASTLE_MIN_STOREYS
+    if any(
+        "curtain" in p.tags
+        for p in assembly.placements
+        if p.kind == "wall"
+    ):
+        return BUTTRESS_CASTLE_MIN_STOREYS
+    return BUTTRESS_MIN_STOREYS
+
+
+def _effective_dormer_piece(opts: TrimOptions, roof: SolidPlacement) -> str:
+    """Steep roof planes warrant the taller dormer variant when registered."""
+    if opts.dormer_piece != "dormer_gabled":
+        return opts.dormer_piece
+    steep_h = STOREY_CM * _STEEP_ROOF_HEIGHT_FRAC
+    if roof.size_cm[2] >= steep_h - TOL_CM and "dormer_steep" in catalog_by_id():
+        return "dormer_steep"
+    return opts.dormer_piece
 
 
 def _placement(
@@ -332,7 +361,8 @@ def _buttresses(assembly: Assembly, opts: TrimOptions) -> List[SolidPlacement]:
     corner cells. The freestanding check caught five of them in the school.
     """
     out: List[SolidPlacement] = []
-    if assembly.storeys < BUTTRESS_MIN_STOREYS:
+    min_storeys = _buttress_min_storeys(assembly, opts)
+    if assembly.storeys < min_storeys:
         return out
 
     # A round tower has no flat face to brace and no thrust to take: buttressing a drum
@@ -514,16 +544,26 @@ def _roofline(assembly: Assembly, opts: TrimOptions) -> List[SolidPlacement]:
                         suffix="stack",
                     )
                 )
-        elif i % DORMER_EVERY_BAYS == 0:
-            out.append(
-                _placement(
-                    opts.dormer_piece,
-                    p.cell,
-                    p.level,
-                    offset_cm=(0.0, 0.0, p.size_cm[2] * 0.35),
-                    suffix="dormer",
-                )
+
+    slopes = [
+        p for p in pitched
+        if "gable" not in p.asset_id and "valley" not in p.asset_id
+    ]
+    for i, p in enumerate(sorted(slopes, key=lambda q: (q.cell, q.level))):
+        if i % DORMER_EVERY_BAYS != 0:
+            continue
+        dormer_id = _effective_dormer_piece(opts, p)
+        dormer_h = catalog_by_id()[dormer_id].size_cm[2]
+        z_seat = p.offset_cm[2] + p.size_cm[2] * 0.42 - dormer_h * 0.05
+        out.append(
+            _placement(
+                dormer_id,
+                p.cell,
+                p.level,
+                offset_cm=(0.0, 0.0, z_seat),
+                suffix="dormer",
             )
+        )
 
     # Towers: spire on the cap, finial on the spire.
     caps = [p for p in assembly.placements if p.kind == "tower_cap"]
@@ -734,9 +774,37 @@ def _colonnade(assembly: Assembly, opts: TrimOptions) -> List[SolidPlacement]:
         return []
 
     walls = _wall_cells_by_level(assembly).get(0, set())
-    thick = catalog_by_id()[opts.arcade_piece].size_cm
+    piece_id = opts.arcade_piece
+    catalog = catalog_by_id()
+    if piece_id not in catalog:
+        return []
+    thick = catalog[piece_id].size_cm
     out: List[SolidPlacement] = []
     seen: Set[Tuple[Cell, str]] = set()
+
+    # ``wall_arcade`` mates to the courtyard-facing wall cell (cloister walk language).
+    if piece_id.startswith("wall_"):
+        for cx, cy in sorted(court):
+            for face, (dx, dy) in _NEIGHBOURS.items():
+                wall_cell = (cx + dx, cy + dy)
+                if wall_cell not in walls:
+                    continue
+                key = (wall_cell, face)
+                if key in seen:
+                    continue
+                seen.add(key)
+                out.append(
+                    _placement(
+                        piece_id,
+                        wall_cell,
+                        0,
+                        yaw=_FACE_YAW[_OPPOSITE[face]],
+                        offset_cm=_face_offset(_OPPOSITE[face], thick),
+                        suffix=f"cloister_{face}",
+                    )
+                )
+        return out
+
     for cx, cy in sorted(court):
         for face, (dx, dy) in _NEIGHBOURS.items():
             n = (cx + dx, cy + dy)
@@ -748,7 +816,7 @@ def _colonnade(assembly: Assembly, opts: TrimOptions) -> List[SolidPlacement]:
             seen.add(key)
             out.append(
                 _placement(
-                    opts.arcade_piece,
+                    piece_id,
                     (cx, cy),
                     0,
                     yaw=_FACE_YAW[face],
@@ -756,6 +824,62 @@ def _colonnade(assembly: Assembly, opts: TrimOptions) -> List[SolidPlacement]:
                     suffix=f"walk_{face}",
                 )
             )
+    return out
+
+
+def _exterior_steps(assembly: Assembly, opts: TrimOptions) -> List[SolidPlacement]:
+    """Grand approach steps outside ground-level entrance doors."""
+    catalog = catalog_by_id()
+    if opts.steps_piece not in catalog:
+        return []
+
+    step_desc = catalog[opts.steps_piece]
+    decks = _deck_cells_by_level(assembly).get(0, set())
+    drum_cells: Set[Cell] = set()
+    for p in assembly.placements:
+        if p.kind in ("tower_arc", "tower_cap"):
+            drum_cells |= covered_cells(p)
+
+    out: List[SolidPlacement] = []
+    seen: Set[Cell] = set()
+    for wall in sorted(
+        (p for p in _by_kind(assembly, "wall") if p.level == 0),
+        key=lambda p: (p.cell, p.piece_id),
+    ):
+        if "door" not in wall.asset_id and "gate" not in wall.asset_id:
+            continue
+        if "entrance_role" not in wall.tags and "gate" not in wall.asset_id:
+            # Ensemble / gate arches always get steps; ordinary doors need a role tag.
+            if not any(t.startswith("entrance_role") for t in wall.tags):
+                continue
+        cell = wall.cell
+        if cell in seen or cell in drum_cells:
+            continue
+        bb_min, bb_max = placement_world_aabb(
+            wall.cell[0], wall.cell[1], wall.level, wall.yaw, wall.size_cm,
+            wall.offset_cm, rotates_about_center=wall.rotates_about_center,
+        )
+        cx0, cy0 = cell[0] * MODULE_CM, cell[1] * MODULE_CM
+        near = MODULE_CM * 0.5
+        if (bb_max[0] - bb_min[0]) < (bb_max[1] - bb_min[1]):
+            face = "west" if (bb_min[0] - cx0) < near else "east"
+        else:
+            face = "south" if (bb_min[1] - cy0) < near else "north"
+        dx, dy = _NEIGHBOURS[face]
+        if (cell[0] + dx, cell[1] + dy) in decks:
+            continue
+        yaw, off = outward_offset_cm(face, step_desc.size_cm)
+        out.append(
+            _placement(
+                opts.steps_piece,
+                cell,
+                0,
+                yaw=yaw,
+                offset_cm=off,
+                suffix=f"approach_{face}",
+            )
+        )
+        seen.add(cell)
     return out
 
 
@@ -784,6 +908,7 @@ def trim(
         opts.spire_piece,
         opts.finial_piece,
         opts.arcade_piece,
+        opts.steps_piece,
     ):
         if piece not in catalog:
             failures.append(
@@ -804,6 +929,8 @@ def trim(
         extra.extend(_roofline(assembly, opts))
     if opts.colonnade:
         extra.extend(_colonnade(assembly, opts))
+    if opts.exterior_steps:
+        extra.extend(_exterior_steps(assembly, opts))
 
     # Deterministic order — the assembly hash must not depend on dict iteration.
     extra.sort(key=lambda p: (p.level, p.cell, p.asset_id, p.piece_id))

@@ -23,12 +23,13 @@ def test_reload_pae_drops_cached_modules():
 
 
 def test_gallery_factories_include_m1_through_m4_c():
-    from pae.blender_build import _gallery_factories
+    from pae.blender_build import FORTRESS_COLLECTION, _gallery_factories
 
     factories = _gallery_factories()
     labels = [lbl for lbl, _coll, _fn in factories]
     assert labels[:6] == ["m1", "m2", "m3", "m4_l", "m4_u", "m4_c"]
     assert "school" in labels
+    assert "fortress" in labels
     coll_names = [coll for _lbl, coll, _fn in factories]
     assert coll_names[:6] == [
         "PAE_M1",
@@ -39,6 +40,7 @@ def test_gallery_factories_include_m1_through_m4_c():
         "PAE_M4_C",
     ]
     assert "PAE_School" in coll_names
+    assert FORTRESS_COLLECTION in coll_names
 
 
 def test_assembly_bounds_cm_positive_extent():
@@ -82,7 +84,7 @@ def test_build_gallery_headless_all_milestones():
     result = build_gallery(write_png=False)
     assert result["ok"] is True
     assert result["mode"] == "gallery"
-    assert len(result["milestones"]) == 7
+    assert len(result["milestones"]) == 8
     for entry in result["milestones"]:
         assert entry["ok"] is True
         assert entry["placements"] > 0
@@ -217,10 +219,10 @@ def test_gallery_headless_offsets_are_monotonic_along_x():
     from pae.blender_build import build_gallery
 
     result = build_gallery(write_png=False)
-    assert len(result["milestones"]) == 7
+    assert len(result["milestones"]) == 8
     # Headless path records extent; blender path records offset_m — check labels order.
     labels = [m["label"] for m in result["milestones"]]
-    assert labels == ["m1", "m2", "m3", "m4_l", "m4_u", "m4_c", "school"]
+    assert labels == ["m1", "m2", "m3", "m4_l", "m4_u", "m4_c", "school", "fortress"]
 
 
 def test_stair_proof_visibility_allowlist():
@@ -645,3 +647,56 @@ def test_apply_material_base_color_sets_diffuse_and_principled():
     assert mat.diffuse_color == rgba
     assert bsdf.inputs["Base Color"].default_value == rgba
     assert bsdf.inputs["Roughness"].default_value == 0.7
+
+
+def test_resolve_fortress_compound_builder_prefers_fortress_when_present():
+    from pae.blender_build import resolve_fortress_compound_builder
+
+    import pae.compound as compound_mod
+
+    builder = resolve_fortress_compound_builder()
+    fortress = getattr(compound_mod, "build_fortress_compound", None)
+    if callable(fortress):
+        assert builder is fortress
+    else:
+        assert builder is compound_mod.build_castle_curtain_compound
+
+
+def test_build_fortress_or_curtain_compound_validates():
+    from pae.blender_build import build_fortress_or_curtain_compound
+
+    assembly, layout, report, builder_name = build_fortress_or_curtain_compound()
+    assert report.ok
+    assert assembly.placements
+    assert layout.ranges
+    assert builder_name in ("build_fortress_compound", "build_castle_curtain_compound")
+
+
+def test_assemble_fortress_compound_validates_clean():
+    from pae.blender_build import assemble_fortress_compound
+
+    assembly, report, layout, builder_name = assemble_fortress_compound()
+    assert report.ok
+    assert report.critical == []
+    assert assembly.placements
+    assert layout.ranges
+    assert builder_name in ("build_fortress_compound", "build_castle_curtain_compound")
+
+
+def test_build_fortress_live_headless():
+    from pae.blender_build import FORTRESS_COLLECTION, FORTRESS_SCREENSHOT_REL, build_fortress_live
+
+    result = build_fortress_live(write_png=False)
+    assert result["ok"] is True
+    assert result["mode"] == "fortress"
+    assert result["collection"] == FORTRESS_COLLECTION
+    assert result["placements"] > 0
+    assert result["ranges"]
+    assert result["compound_builder"] in (
+        "build_fortress_compound",
+        "build_castle_curtain_compound",
+    )
+    if not HAS_BPY:
+        assert result["blender"] is False
+        assert result["screenshot"] is None
+    assert str(FORTRESS_SCREENSHOT_REL).endswith("fortress_live.png")

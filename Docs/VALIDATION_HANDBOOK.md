@@ -36,12 +36,12 @@ list and ask which of these it can now violate. That is your check list.
 
 | # | Class | The question | Existing checks |
 |---|---|---|---|
-| 1 | **Existence** | Did the thing that was asked for actually get placed? | `spiral_newel_exists`, entrance/ensemble existence *(still thin — see §7)* |
+| 1 | **Existence** | Did the thing that was asked for actually get placed? | `spiral_newel_exists`, entrance/ensemble existence, `fortress_tower_capped`, `fortress_gate_exists`, `fortress_grand_approach` *(see §11b)* |
 | 2 | **Dimension** | Does the piece match the grid contract? | `footprint_contract_errors` |
-| 3 | **Placement** | Is it in the cell/orientation it was meant to be? | `run_fit` |
-| 4 | **Connection** | Does it touch what it must touch? | `end_connectivity`, `collinear_gap`, `canopy_attachment`, `tower_hall_kiss`, `roof_valley_join` |
+| 3 | **Placement** | Is it in the cell/orientation it was meant to be? | `run_fit`, `buttress_outward` |
+| 4 | **Connection** | Does it touch what it must touch? | `end_connectivity`, `collinear_gap`, `canopy_attachment`, `tower_hall_kiss`, `roof_valley_join`, `spire_freestanding`, `curtain_battlement_continuity` |
 | 5 | **Support** | Is something underneath it? | `vertical_support` (parapet wall-head), `roof_bears_on_wall` |
-| 6 | **Coherence** | Is it part of one building, or its own island? | `freestanding` |
+| 6 | **Coherence** | Is it part of one building, or its own island? | `freestanding`, `spire_freestanding` |
 | 7 | **Exclusion** | Does it avoid what it must avoid? | `interpenetration`, `roof_penetration` |
 | 8 | **Containment** | Is the envelope sealed, floored, covered? | `enclosure`, `floor_coverage`, `roof_covers_enclosed`, `spiral_drum_enclosure` |
 | 9 | **Use** | Can a person reach it, enter it, walk it, leave it? | `stair_reachability`, `stair_exit_clearance`, `stair_flight_stack`, `stair_typology_match`, `classroom_corridor`, `aperture_sanity` |
@@ -366,8 +366,61 @@ Before merging anything that places geometry:
 | Yaw + boundary offsets | `pae/boundary.py` |
 | Footprint rules per kind | `pae/primitives/measure.py` |
 | All checks | `pae/validate.py` |
+| Fortress / bailey compound checks | `pae/fortress_validate.py` (wired from `validate`) |
 | Additive placement passes | `pae/trim.py` |
 | Site / multi-building | `pae/site.py`, `pae/compound.py` |
 | Geometry only | `pae/assemble.py` + `pae/primitives/**` |
 
 **Geometry is created in `assemble.py` and the primitive library. Nowhere else.**
+
+---
+
+## 11b. Fortress / castle compound checks (@CASTLE_FORTRESS_VALIDATE)
+
+Phase 4 / Phase 6 — buildings only (flat-ground fortress / curtain bailey).
+Implemented in `pae/fortress_validate.py`, registered by `validate._check_fortress_compound`.
+Tests: `pae/tests/unit/test_fortress_validate.py` (broken fixtures first).
+
+| Check | Sev | Class | Fires when | Question answered |
+|---|---|---|---|---|
+| `fortress_tower_capped` | **critical** | Existence | Fortress compound | ≥ N towers finished with `tower_cap` and/or spire |
+| `fortress_gate_exists` | **critical** | Existence | Fortress compound | Gate leaf (`entrance_role_gate` or `wall_gate_arch`) |
+| `curtain_battlement_continuity` | **warning** | Connection | Curtain-tagged walls | Wall-walk battlement coverage + gap stub |
+| `buttress_outward` | **critical** | Placement | Any buttress present | Bears on a wall; `covered_cells` stay outside interior decks |
+| `spire_freestanding` | **critical** | Connection | Any spire/finial | Meets tower_cap/crown/roof or attached spire chain |
+| `fortress_grand_approach` | **critical** | Existence | Tag `grand_approach` | Exterior `steps_grand` / `steps_external` / ensemble steps at L0 |
+
+### Fortress detection
+
+An assembly is a fortress compound when **any** of:
+
+- tag `fortress_compound` / `fortress:*` / `building:fortress*`
+- tag `fortress` on a **non-roofline** piece (kit `spire_conical` carries style tag
+  `fortress` — that alone must **not** promote a keep)
+- interim curtain compound: `west_curtain` **and** `east_curtain`
+- massing: `north_curtain` + `gatehouse`
+
+Ordinary houses / M3 keeps without those markers are untouched.
+
+### Config
+
+| Knob | How |
+|---|---|
+| Min capped towers | Tag `fortress_min_towers:N` (default **2**) |
+| Grand approach required | Tag `grand_approach` (or `fortress_grand_approach`) |
+| Future BaileySpec | `CastleBaileySpec` / `FortressBaileySpec` may mirror these via getattr |
+
+### Standing rules applied
+
+- Rule **5.1**: curtain / buttress cell sets use `covered_cells`. Tower *identity* for
+  caps/spires that `rotates_about_center` uses the drum anchor cell (one tower per cell).
+- Rule **5.4**: buttress orientation is measured (AABB bearing + interior exclusion), not
+  inferred from neighbour emptiness alone.
+- Do **not** demote `aperture_reachability` or `stair_flight_stack` / stair integrity to
+  green a fortress restyle.
+
+### Continuity stub honesty
+
+`curtain_battlement_continuity` is a **warning** stub (coverage fraction + max gap in
+bays). Full wall-walk circuit / moat-scale enclosure remains roadmap 4.1 open work —
+promote to critical after triage against live fortress massing.

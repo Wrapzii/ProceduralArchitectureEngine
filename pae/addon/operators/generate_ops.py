@@ -77,6 +77,33 @@ if HAS_BPY:
             self.report({"INFO"}, "M1 box house preset loaded")
             return {"FINISHED"}
 
-    classes = (PAE_OT_run_pipeline_stage, PAE_OT_run_full_generate, PAE_OT_load_m1_preset)
+    class PAE_OT_build_fortress(bpy.types.Operator):
+        bl_idname = "pae.build_fortress"
+        bl_label = "Generate Fortress"
+        bl_description = "Build fortress compound into PAE_Fortress (flat ground)"
+        bl_options = {"REGISTER"}
+
+        def execute(self, context):
+            from pae.blender_build import build_fortress_live
+
+            result = build_fortress_live(write_png=True)
+            props = scene_props(context)
+            props.last_pipeline_message = (
+                f"Fortress OK ({result.get('placements', 0)} placements)"
+                if result.get("ok")
+                else "Fortress build failed"
+            )
+            self.report(
+                {"INFO" if result.get("ok") else "ERROR"},
+                props.last_pipeline_message,
+            )
+            return {"FINISHED"}
+
+    classes = (
+        PAE_OT_run_pipeline_stage,
+        PAE_OT_run_full_generate,
+        PAE_OT_load_m1_preset,
+        PAE_OT_build_fortress,
+    )
 else:
     classes = tuple()

@@ -75,6 +75,7 @@ def validate(assembly: Assembly) -> Tuple[Assembly, Report]:
     failures.extend(_check_roof_covers_enclosed(assembly))
     failures.extend(_check_spiral_shell(assembly))
     failures.extend(_check_tower_ramparts(assembly))
+    failures.extend(_check_fortress_compound(assembly))
     failures = _sort_failures(failures)
     return assembly, Report.from_failures(failures)
 
@@ -2897,6 +2898,13 @@ def _check_tower_ramparts(assembly: Assembly) -> List[Failure]:
     return check_tower_ramparts(assembly)
 
 
+def _check_fortress_compound(assembly: Assembly) -> List[Failure]:
+    """Phase 4 / 6 — fortress towers, gate, curtain battlements, buttresses, spires."""
+    from pae.fortress_validate import check_fortress_compound
+
+    return check_fortress_compound(assembly)
+
+
 def _check_run_fit(assembly: Assembly) -> List[Failure]:
     failures: List[Failure] = []
     for run in assembly.wall_runs:
@@ -3217,4 +3225,5 @@ __all__ = [
     "_check_no_bare_aperture_holes",
     "_check_aperture_alignment",
     "_check_upper_entrance_landing",
+    "_check_fortress_compound",
 ]

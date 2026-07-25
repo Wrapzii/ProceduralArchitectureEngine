@@ -66,6 +66,13 @@ CASTLE_BAILEY_SITE = SiteOptions(
     pave_courtyards=False,
 )
 
+# Fortress campus — cobbled walks, paved inner court, extra margin for approach causeway.
+FORTRESS_BAILEY_SITE = SiteOptions(
+    walk_piece="paving_cobble",
+    margin_bays=5,
+    pave_courtyards=True,
+)
+
 
 @dataclass
 class BuildingInstance:

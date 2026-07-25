@@ -57,10 +57,12 @@ Tolerance: **6.0 cm**. All dimensions from `pae/contract.py`.
 | `gate_iron` | barrier | 1x1 | 10.8x400.0x147.0 | (0.0,0.0,0.0) | min_corner | False | yes |
 | `spire_octagonal` | roofline | 1x1 | 400.0x400.0x840.0 | (0.0,0.0,0.0) | min_corner | True | yes |
 | `spire_needle` | roofline | 1x1 | 400.0x400.0x630.0 | (0.0,0.0,0.0) | min_corner | True | yes |
+| `spire_conical` | roofline | 1x1 | 400.0x400.0x700.0 | (0.0,0.0,0.0) | min_corner | True | yes |
 | `finial` | roofline | 1x1 | 40.0x40.0x105.0 | (0.0,0.0,0.0) | min_corner | True | yes |
 | `cupola` | roofline | 1x1 | 400.0x400.0x385.0 | (0.0,0.0,0.0) | min_corner | True | yes |
 | `chimney_stack` | roofline | 1x1 | 104.0x104.0x472.5 | (0.0,0.0,0.0) | min_corner | False | yes |
 | `dormer_gabled` | roofline | 1x1 | 220.0x220.0x252.0 | (0.0,0.0,0.0) | min_corner | False | yes |
+| `dormer_steep` | roofline | 1x1 | 220.0x220.0x315.0 | (0.0,0.0,0.0) | min_corner | False | yes |
 | `gablet` | roofline | 1x1 | 60.0x400.0x192.5 | (0.0,0.0,0.0) | min_corner | False | yes |
 | `paving_flagstone` | surface | 1x1 | 400.0x400.0x16.5 | (0.0,0.0,0.0) | min_corner | False | yes |
 | `paving_cobble` | surface | 1x1 | 400.0x400.0x16.5 | (0.0,0.0,0.0) | min_corner | False | yes |
@@ -68,6 +70,7 @@ Tolerance: **6.0 cm**. All dimensions from `pae/contract.py`.
 | `kerb_edge` | surface | 1x1 | 40.0x400.0x33.0 | (0.0,0.0,0.0) | min_corner | False | yes |
 | `lawn_patch` | surface | 1x1 | 400.0x400.0x9.0 | (0.0,0.0,0.0) | min_corner | False | yes |
 | `steps_external` | surface | 1x1 | 400.0x400.0x63.0 | (0.0,0.0,0.0) | min_corner | False | yes |
+| `steps_grand` | surface | 1x1 | 400.0x400.0x175.0 | (0.0,0.0,0.0) | min_corner | False | yes |
 | `band_course` | band | 1x1 | 15.0x400.0x24.5 | (0.0,0.0,0.0) | min_corner | False | yes |
 | `band_course_jettied` | band | 1x1 | 30.0x400.0x39.2 | (0.0,0.0,0.0) | min_corner | False | yes |
 | `band_pilaster` | band | 1x1 | 15.0x40.0x350.0 | (0.0,0.0,0.0) | min_corner | False | yes |

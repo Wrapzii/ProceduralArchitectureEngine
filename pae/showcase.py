@@ -26,6 +26,7 @@ from pae.spec import (
     OpeningPolicy,
     RoofSpec,
     TowerSpec,
+    fortress_keep_spec,
 )
 from pae.trim import TrimOptions, trim
 from pae.variation import VariationSpec, vary
@@ -232,6 +233,23 @@ def builds() -> List[Build]:
                         parapets=False, arcade_piece="arch_freestanding"),
             STONE_BANDING,
             site=True,
+        ),
+        Build(
+            "fortress_keep",
+            "Fortress Keep",
+            "Central bailey manor: steep gable, multi-height corner/wall towers, needle spires.",
+            fortress_keep_spec(seed=50),
+            TrimOptions(
+                buttresses=True,
+                roofline=True,
+                colonnade=False,
+                parapets=False,
+                dormer_piece="dormer_gabled",
+                spire_piece="spire_needle",
+                balustrade_piece="balustrade_stone",
+            ),
+            STONE_BANDING,
+            notes="Campus compound: pae.compound.build_fortress_compound().",
         ),
     ]
 

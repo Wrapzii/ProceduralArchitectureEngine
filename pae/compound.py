@@ -173,6 +173,50 @@ GATEHOUSE_TRIM = TrimOptions(
     parapets=False,
 )
 
+# Fortress / bailey campus — keep dormers + needle spires, cloister arcade, battlement curtains.
+# Buttresses stay off here: trim's outward pier check is still red on shallow curtain bars
+# (honest gap for @CASTLE_FORTRESS_KIT / trim). Battlements are added post-merge.
+FORTRESS_KEEP_TRIM = TrimOptions(
+    railings=True,
+    buttresses=False,
+    roofline=True,
+    colonnade=False,
+    parapets=False,
+    dormer_piece="dormer_gabled",
+    chimney_piece="chimney_stack",
+    spire_piece="spire_needle",
+    balustrade_piece="balustrade_stone",
+)
+
+FORTRESS_CLOISTER_TRIM = TrimOptions(
+    railings=True,
+    buttresses=False,
+    roofline=True,
+    colonnade=False,  # arcade placed post-merge (rect ranges have no COURTYARD cells)
+    parapets=False,
+    arcade_piece="arch_freestanding",
+    balustrade_piece="balustrade_stone",
+    dormer_piece="dormer_gabled",
+)
+
+FORTRESS_CURTAIN_TRIM = TrimOptions(
+    railings=False,
+    buttresses=False,
+    roofline=True,
+    colonnade=False,
+    parapets=True,
+    parapet_piece="parapet_solid",
+)
+
+FORTRESS_GATEHOUSE_TRIM = TrimOptions(
+    railings=False,
+    buttresses=False,
+    roofline=True,
+    colonnade=False,
+    parapets=False,
+    spire_piece="spire_needle",
+)
+
 
 def range_spec(name: str, bays_x: int, bays_y: int, *, storeys: int = 2, seed: int = 1):
     """A range: a long bar with a stair, sized in bays."""
@@ -904,3 +948,475 @@ def build_gatehouse_curtain(
 ) -> Tuple[Assembly, CompoundLayout, Report]:
     """Alias for :func:`build_castle_curtain_compound`."""
     return build_castle_curtain_compound(bailey=bailey, site_options=site_options)
+
+
+# ---------------------------------------------------------------------------
+# Fortress / bailey campus (nested courts on flat ground)
+# ---------------------------------------------------------------------------
+
+
+def fortress_bailey_ranges(
+    bailey=None,
+) -> List[RangeStyle]:
+    """Nested bailey: south curtains+gate, cloisters around a court, north keep."""
+    from pae.spec import (
+        FortressBaileySpec,
+        castle_curtain_wall_spec,
+        fortress_bailey_compound_spec,
+        fortress_cloister_range_spec,
+        fortress_gatehouse_spec,
+        fortress_keep_spec,
+    )
+
+    cfg = bailey if bailey is not None else fortress_bailey_compound_spec()
+    if not isinstance(cfg, FortressBaileySpec):
+        cfg = FortressBaileySpec()
+
+    depth = cfg.range_depth
+    court_x = cfg.court_bays_x
+    court_y = cfg.court_bays_y
+    wide = court_x + 2 * depth
+    curtain_len = cfg.curtain_length_bays
+    gh = fortress_gatehouse_spec(seed=cfg.gatehouse_seed)
+    gh_w = gh.footprint.bays_x
+    # South front spans the bailey width: curtain | gate | curtain.
+    # If curtain lengths undershoot, pad the east run so the north keep meets.
+    south_span = curtain_len + gh_w + curtain_len
+    east_len = curtain_len + max(0, wide - south_span)
+    # Origin: SW of west curtain / west cloister column (x = -depth).
+    ox = -depth
+    # South wall line sits one range-depth below the court (y = -depth).
+    sy = -depth
+    # Keep sits on the north edge of the court (closes the campus like a manor).
+    keep_y = court_y
+    keep_depth = max(4, depth + 1)
+
+    no_balcony = BalconySpec(enabled=False)
+    court_balcony = BalconySpec(
+        enabled=True,
+        sides=("west_cloister", "east_cloister", "north_keep"),
+        doors_per_range=1,
+        under_roof=True,
+    )
+
+    return [
+        RangeStyle(
+            "west_curtain",
+            (ox, sy),
+            FORTRESS_CURTAIN_TRIM,
+            "west curtain",
+            castle_curtain_wall_spec(
+                "west_curtain",
+                curtain_len,
+                storeys=cfg.curtain_storeys,
+                seed=cfg.west_curtain_seed,
+            ),
+            no_balcony,
+        ),
+        RangeStyle(
+            "gatehouse",
+            (ox + curtain_len, sy),
+            FORTRESS_GATEHOUSE_TRIM,
+            "gatehouse",
+            gh,
+            no_balcony,
+        ),
+        RangeStyle(
+            "east_curtain",
+            (ox + curtain_len + gh_w, sy),
+            FORTRESS_CURTAIN_TRIM,
+            "east curtain",
+            castle_curtain_wall_spec(
+                "east_curtain",
+                east_len,
+                storeys=cfg.curtain_storeys,
+                seed=cfg.east_curtain_seed,
+            ),
+            no_balcony,
+        ),
+        RangeStyle(
+            "west_cloister",
+            (ox, 0),
+            FORTRESS_CLOISTER_TRIM,
+            "west cloister",
+            fortress_cloister_range_spec(
+                "west_cloister",
+                depth,
+                court_y,
+                storeys=2,
+                seed=cfg.west_cloister_seed,
+            ),
+            court_balcony,
+        ),
+        RangeStyle(
+            "east_cloister",
+            (court_x, 0),
+            FORTRESS_CLOISTER_TRIM,
+            "east cloister",
+            fortress_cloister_range_spec(
+                "east_cloister",
+                depth,
+                court_y,
+                storeys=2,
+                seed=cfg.east_cloister_seed,
+            ),
+            court_balcony,
+        ),
+        RangeStyle(
+            "north_keep",
+            (ox, keep_y),
+            FORTRESS_KEEP_TRIM,
+            "great hall / keep",
+            fortress_keep_spec(
+                bays_x=wide,
+                bays_y=keep_depth,
+                storeys=3,
+                seed=cfg.keep_seed,
+            ),
+            court_balcony,
+        ),
+    ]
+
+
+def _strip_trim_tower_helixes(assembly: Assembly) -> Assembly:
+    """Drop trim-injected tower helix stairs (and their floor_hole wells).
+
+    WHY: ``trim._roofline`` places needle spires *and* a spiral helix in every
+    capped drum. Those helixes trip ``tower_entry_door`` / ``stair_exit_clearance``
+    until the spiral shell lane finishes. Fortress massing wants the silhouette
+    (dormers + spires) without claiming habitable spiral interiors — sibling kit
+    / spiral lanes own that. Caps, crowns, spires and finials stay.
+    """
+    drop: Set[str] = set()
+    for p in assembly.placements:
+        pid = p.piece_id or ""
+        aid = p.asset_id or ""
+        if "helix" in pid:
+            drop.add(p.piece_id)
+            continue
+        if p.kind == "stair" and "spiral" in aid:
+            drop.add(p.piece_id)
+            continue
+        if aid == "spiral_newel":
+            drop.add(p.piece_id)
+    if not drop:
+        return assembly
+    kept = [p for p in assembly.placements if p.piece_id not in drop]
+    return Assembly(
+        placements=kept,
+        floor_plan=assembly.floor_plan,
+        circulation=assembly.circulation,
+        wall_runs=assembly.wall_runs,
+        apertures=assembly.apertures,
+        storeys=assembly.storeys,
+        aperture_policy=assembly.aperture_policy,
+    )
+
+
+def _add_cloister_arcade(
+    assembly: Assembly,
+    courtyard: Set[Cell],
+    range_names: Sequence[str],
+    *,
+    arcade_piece: str = "arch_freestanding",
+) -> Assembly:
+    """Place freestanding arcade bays on court-facing ground walls of cloister ranges.
+
+    Per-range ``trim`` colonnade only fires when the floor plan has COURTYARD
+    cells; rect cloister bars never do. After the compound merge we know the
+    shared court, so the arcade is a compound-stage feature.
+    """
+    catalog = catalog_by_id()
+    if not courtyard or arcade_piece not in catalog:
+        return assembly
+    desc = catalog[arcade_piece]
+    names = set(range_names)
+    wall_cells: Dict[str, Set[Cell]] = {n: set() for n in names}
+    for p in assembly.placements:
+        if p.kind != "wall" or p.level != 0:
+            continue
+        for name in names:
+            if name in p.tags:
+                wall_cells[name] |= covered_cells(p)
+
+    extra: List[SolidPlacement] = []
+    seen: Set[Tuple[Cell, str]] = set()
+    for name in names:
+        walls = wall_cells.get(name, set())
+        if not walls:
+            continue
+        for cx, cy in sorted(courtyard):
+            for face, (dx, dy) in _NEIGHBOURS.items():
+                wall_cell = (cx + dx, cy + dy)
+                if wall_cell not in walls:
+                    continue
+                key = (wall_cell, face)
+                if key in seen:
+                    continue
+                seen.add(key)
+                # Arch sits in the court cell, facing the wall (same language as trim).
+                extra.append(
+                    SolidPlacement(
+                        piece_id=f"cloister_arcade_{name}_{cx}_{cy}_{face}",
+                        asset_id=arcade_piece,
+                        kind=desc.kind,
+                        cell=(cx, cy),
+                        level=0,
+                        yaw=FACE_YAW[face],
+                        offset_cm=boundary_offset_cm(face, desc.size_cm),
+                        size_cm=desc.size_cm,
+                        rotates_about_center=desc.rotates_about_center,
+                        tags=desc.tags
+                        | frozenset(
+                            {
+                                "cloister",
+                                "arcade",
+                                "trim",
+                                name,
+                                f"building:{name}",
+                            }
+                        ),
+                    )
+                )
+
+    if not extra:
+        return assembly
+    extra.sort(key=lambda p: (p.level, p.cell, p.asset_id, p.piece_id))
+    return Assembly(
+        placements=list(assembly.placements) + extra,
+        floor_plan=assembly.floor_plan,
+        circulation=assembly.circulation,
+        wall_runs=assembly.wall_runs,
+        apertures=assembly.apertures,
+        storeys=assembly.storeys,
+        aperture_policy=assembly.aperture_policy,
+    )
+
+
+def _add_approach_causeway(
+    assembly: Assembly,
+    *,
+    gatehouse_name: str = "gatehouse",
+    rows: int = 3,
+    width_bays: int = 5,
+) -> Assembly:
+    """Wide stepped causeway south of the gatehouse (flat-ground approach).
+
+    Places ``steps_external`` in a rectangular apron outside the gate — not
+    interior stair wells. Uses ``covered_cells`` for the gate footprint.
+    """
+    catalog = catalog_by_id()
+    if "steps_external" not in catalog or rows <= 0:
+        return assembly
+
+    desc = catalog["steps_external"]
+    gate_cells: Set[Cell] = set()
+    for p in assembly.placements:
+        if gatehouse_name not in p.tags:
+            continue
+        if p.level == 0 and p.kind in ("wall", "floor", "plinth", "ground"):
+            gate_cells |= covered_cells(p)
+    if not gate_cells:
+        return assembly
+
+    min_x = min(c[0] for c in gate_cells)
+    max_x = max(c[0] for c in gate_cells)
+    min_y = min(c[1] for c in gate_cells)
+    cx0 = (min_x + max_x - width_bays + 1) // 2
+    cx1 = cx0 + width_bays - 1
+    # Clamp to gate width so the causeway reads as the grand entrance apron.
+    cx0 = max(min_x, cx0)
+    cx1 = min(max_x, cx1)
+
+    existing = {
+        (p.cell, p.asset_id, p.level)
+        for p in assembly.placements
+        if p.asset_id == "steps_external"
+    }
+    extra: List[SolidPlacement] = []
+    for row in range(1, rows + 1):
+        y = min_y - row
+        for x in range(cx0, cx1 + 1):
+            key = ((x, y), "steps_external", 0)
+            if key in existing:
+                continue
+            existing.add(key)
+            extra.append(
+                SolidPlacement(
+                    piece_id=f"approach_steps_0_{x}_{y}_r{row}",
+                    asset_id="steps_external",
+                    kind=desc.kind,
+                    cell=(x, y),
+                    level=0,
+                    yaw=0,
+                    offset_cm=(0.0, 0.0, 0.0),
+                    size_cm=desc.size_cm,
+                    rotates_about_center=desc.rotates_about_center,
+                    tags=desc.tags
+                    | frozenset(
+                        {
+                            "approach",
+                            "causeway",
+                            "trim",
+                            gatehouse_name,
+                            f"building:{gatehouse_name}",
+                        }
+                    ),
+                )
+            )
+
+    if not extra:
+        return assembly
+    extra.sort(key=lambda p: (p.level, p.cell, p.asset_id, p.piece_id))
+    return Assembly(
+        placements=list(assembly.placements) + extra,
+        floor_plan=assembly.floor_plan,
+        circulation=assembly.circulation,
+        wall_runs=assembly.wall_runs,
+        apertures=assembly.apertures,
+        storeys=assembly.storeys,
+        aperture_policy=assembly.aperture_policy,
+    )
+
+
+def check_fortress_compound(assembly: Assembly) -> List[Failure]:
+    """South curtain chain + twin gate arches + keep presence."""
+    from pae.existence import check_entrance_existence
+    from pae.spec import fortress_gatehouse_spec
+
+    failures = check_range_chain_connection(
+        assembly, ["west_curtain", "gatehouse", "east_curtain"]
+    )
+    failures.extend(
+        check_entrance_existence(fortress_gatehouse_spec().entrances, assembly)
+    )
+    gates = [
+        p
+        for p in assembly.placements
+        if p.asset_id == "wall_gate_arch" and "gatehouse" in p.tags
+    ]
+    if len(gates) < 2:
+        failures.append(
+            Failure(
+                check="fortress_twin_gate",
+                message=(
+                    f"fortress gatehouse needs ≥2 wall_gate_arch (twin entrance); "
+                    f"got {len(gates)}"
+                ),
+                world_xyz=None,
+            )
+        )
+    keep_pieces = [p for p in assembly.placements if "north_keep" in p.tags]
+    if not keep_pieces:
+        failures.append(
+            Failure(
+                check="fortress_keep",
+                message="fortress compound missing north_keep range",
+                world_xyz=None,
+            )
+        )
+    return failures
+
+
+def build_fortress_compound(
+    *,
+    bailey=None,
+    site_options: Optional[SiteOptions] = None,
+    balconies: bool = False,
+) -> Tuple[Assembly, CompoundLayout, Report]:
+    """Assemble a flat-ground fortress / bailey campus approximating a castle plan.
+
+    Composition (reuses curtain + compound patterns):
+      * south curtain walls with battlements (buttress trim deferred — see gaps)
+      * twin-arch gatehouse with needle-spired drums
+      * west/east cloister ranges with court-facing arcade around an open court
+      * north multi-storey keep/manor with steep pitched roof + dormers
+      * grand exterior approach stairs (``steps_external`` causeway)
+
+    Balcony galleries default off — court-facing gallery roofs currently fail
+    ``roof_bears_on_wall`` on this layout; cloister arcade carries the walkway read.
+    """
+    from pae.pipeline import run_through_assemble
+    from pae.site import FORTRESS_BAILEY_SITE
+    from pae.spec import FortressBaileySpec, fortress_bailey_compound_spec
+
+    cfg = bailey if bailey is not None else fortress_bailey_compound_spec()
+    if not isinstance(cfg, FortressBaileySpec):
+        cfg = FortressBaileySpec()
+
+    styles = fortress_bailey_ranges(cfg)
+    if not balconies:
+        styles = [
+            RangeStyle(
+                s.name,
+                s.cell_offset,
+                s.trim,
+                s.label,
+                s.spec,
+                BalconySpec(enabled=False),
+            )
+            for s in styles
+        ]
+
+    layout = CompoundLayout(ranges=[s.name for s in styles])
+    instances: List[BuildingInstance] = []
+    for style in styles:
+        _, _, assembled, report = run_through_assemble(style.spec)
+        if not report.ok:
+            return assembled, layout, report
+        trimmed, treport = trim(assembled, style.trim)
+        if not treport.ok:
+            return assembled, layout, treport
+        # Spire silhouette without trim helix interiors (see helper docstring).
+        trimmed = _strip_trim_tower_helixes(trimmed)
+        layout.per_range_trim[style.name] = sum(
+            1 for p in trimmed.placements if "trim" in p.tags
+        )
+        instances.append(BuildingInstance(trimmed, style.cell_offset, style.name))
+
+    merged, mreport = place_buildings(instances)
+    if not mreport.ok:
+        return merged, layout, mreport
+
+    compound_failures = check_fortress_compound(merged)
+    if compound_failures:
+        return merged, layout, Report.from_failures(compound_failures)
+
+    curtain_names = {s.name for s in styles if "curtain" in s.name}
+    merged = _add_curtain_battlements(merged, curtain_names)
+    merged = _add_approach_causeway(
+        merged,
+        rows=cfg.approach_rows,
+        width_bays=cfg.approach_width_bays,
+    )
+
+    layout.courtyard = _courtyard_cells(_ground_cells(merged))
+    cloister_names = [s.name for s in styles if "cloister" in s.name]
+    merged = _add_cloister_arcade(merged, layout.courtyard, cloister_names)
+
+    if balconies:
+        merged, balcony_cells, breport = add_balconies(
+            merged, layout.courtyard, styles
+        )
+        if not breport.ok:
+            return merged, layout, breport
+        layout.balcony_cells = balcony_cells
+
+    opts = site_options if site_options is not None else FORTRESS_BAILEY_SITE
+    sited, site_layout, sreport = build_site(merged, opts)
+    if not sreport.ok:
+        return sited, layout, sreport
+    layout.courtyard = site_layout.courtyard
+    return sited, layout, Report.from_failures([])
+
+
+def build_fortress_bailey_compound(
+    *,
+    bailey=None,
+    site_options: Optional[SiteOptions] = None,
+    balconies: bool = False,
+) -> Tuple[Assembly, CompoundLayout, Report]:
+    """Alias for :func:`build_fortress_compound`."""
+    return build_fortress_compound(
+        bailey=bailey, site_options=site_options, balconies=balconies
+    )

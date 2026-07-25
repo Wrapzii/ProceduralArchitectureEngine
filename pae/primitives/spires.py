@@ -22,7 +22,9 @@ from pae.primitives.types import PrimitiveDescriptor, SocketDesc, module_tag
 BoxPart = Tuple[Tuple[float, float, float], Tuple[float, float, float]]
 
 _SPIRE_H_STOREYS = 2.4  # a spire is the tallest thing on the building
+_SPIRE_CONICAL_H_STOREYS = 2.0  # fortress round-tower cone (S-017)
 _SPIRE_BASE_FRAC = 0.62  # of MODULE, at the springing
+_SPIRE_CONICAL_BASE_FRAC = 0.50  # mates tower_cap drum diameter (2×MODULE)
 _SPIRE_SEGMENTS = 32
 _BROACH_H_FRAC = 0.18  # of spire height — square-to-octagon transition
 _FINIAL_H_FRAC = 0.30  # of STOREY
@@ -35,6 +37,7 @@ _CHIMNEY_H_STOREYS = 1.35
 _CHIMNEY_POTS = 2
 _DORMER_W_FRAC = 0.55  # of MODULE
 _DORMER_H_FRAC = 0.72  # of STOREY
+_DORMER_STEEP_H_FRAC = 0.90  # of STOREY — reads on steep pitched roofs
 _DORMER_D_FRAC = 0.55  # of MODULE
 _GABLET_H_FRAC = 0.55
 _ROOF_SEGMENTS = 16
@@ -108,6 +111,19 @@ def spire_needle() -> PrimitiveDescriptor:
     )
 
 
+def spire_conical() -> PrimitiveDescriptor:
+    """Round-tower conical cap — fortress / keep silhouette (S-017)."""
+    h = STOREY_CM * _SPIRE_CONICAL_H_STOREYS
+    return _roofline(
+        "spire_conical",
+        height_storeys=_SPIRE_CONICAL_H_STOREYS,
+        size_cm=(MODULE_CM, MODULE_CM, h),
+        tags=frozenset({"spire", "conical", "fortress", "tower"}),
+        notes="Smooth conical spire over a round tower drum; mates tower_cap.",
+        rotates_about_center=True,
+    )
+
+
 def finial() -> PrimitiveDescriptor:
     h = STOREY_CM * _FINIAL_H_FRAC
     w = MODULE_CM * _FINIAL_W_FRAC
@@ -159,6 +175,21 @@ def dormer_gabled() -> PrimitiveDescriptor:
     )
 
 
+def dormer_steep() -> PrimitiveDescriptor:
+    """Taller dormer for steep-pitch hall roofs (wizard academy / fortress ranges)."""
+    return _roofline(
+        "dormer_steep",
+        height_storeys=_DORMER_STEEP_H_FRAC,
+        size_cm=(
+            MODULE_CM * _DORMER_D_FRAC,
+            MODULE_CM * _DORMER_W_FRAC,
+            STOREY_CM * _DORMER_STEEP_H_FRAC,
+        ),
+        tags=frozenset({"dormer", "attic", "window", "steep"}),
+        notes="Steep gabled dormer — taller peak for high-pitch roof silhouettes.",
+    )
+
+
 def gablet() -> PrimitiveDescriptor:
     return _roofline(
         "gablet",
@@ -173,10 +204,12 @@ def all_spires() -> tuple:
     return (
         spire_octagonal(),
         spire_needle(),
+        spire_conical(),
         finial(),
         cupola(),
         chimney_stack(),
         dormer_gabled(),
+        dormer_steep(),
         gablet(),
     )
 
@@ -221,6 +254,29 @@ def _tapered_prism_verts(
     for i in range(segments):
         faces.append([base, (i + 1) % segments, i])
     return verts, faces
+
+
+def _conical_spire_mesh(name: str, desc: PrimitiveDescriptor):
+    """Smooth cone over a round tower — no broach, wide springing ring."""
+    from pae.primitives import bpy_util
+
+    cx = cy = MODULE_CM * 0.5
+    h = desc.size_cm[2]
+    r = MODULE_CM * _SPIRE_CONICAL_BASE_FRAC
+    verts: List[Tuple[float, float, float]] = []
+    faces: List[List[int]] = []
+
+    def add(vs, fs):
+        off = len(verts)
+        verts.extend(vs)
+        faces.extend([[i + off for i in f] for f in fs])
+
+    collar_h = h * 0.08
+    add(*_tapered_prism_verts((cx, cy), 0.0, collar_h, r * 1.04, r, _SPIRE_SEGMENTS, apex=False))
+    add(*_tapered_prism_verts((cx, cy), collar_h, h, r, 0.0, _SPIRE_SEGMENTS, apex=True))
+    obj = bpy_util.mesh_from_verts_faces(name, verts, faces)
+    bpy_util.smooth_shade_curved_faces(obj)
+    return obj
 
 
 def _spire_mesh(name: str, desc: PrimitiveDescriptor, *, segments: int, broach: bool):
@@ -295,11 +351,11 @@ def _chimney_parts(desc: PrimitiveDescriptor) -> List[BoxPart]:
     return parts
 
 
-def _dormer_parts(desc: PrimitiveDescriptor) -> List[BoxPart]:
+def _dormer_parts(desc: PrimitiveDescriptor, *, steep: bool = False) -> List[BoxPart]:
     """Cheeks, front wall with a light, and a stepped gable roof."""
     d, w, h = desc.size_cm
     cheek_t = WALL_T_CM * 0.4
-    body_h = h * 0.62
+    body_h = h * (0.58 if steep else 0.62)
     parts: List[BoxPart] = [
         ((0.0, 0.0, 0.0), (d, cheek_t, body_h)),
         ((0.0, w - cheek_t, 0.0), (d, cheek_t, body_h)),
@@ -313,8 +369,8 @@ def _dormer_parts(desc: PrimitiveDescriptor) -> List[BoxPart]:
     parts.append(((0.0, op0 + op_w, 0.0), (front_t, w - cheek_t - op0 - op_w, body_h)))
     parts.append(((0.0, op0, 0.0), (front_t, op_w, sill)))
     parts.append(((0.0, op0, sill + op_h), (front_t, op_w, body_h - sill - op_h)))
-    # Stepped gable roof.
-    steps = 6
+    # Stepped gable roof — more steps + sharper peak on steep variant.
+    steps = 8 if steep else 6
     for i in range(steps):
         t0, t1 = i / steps, (i + 1) / steps
         half = (w * 0.5) * (1.0 - t1)
@@ -348,6 +404,8 @@ def build_spire_mesh(desc: PrimitiveDescriptor, *, name: Optional[str] = None):
         return _spire_mesh(obj_name, desc, segments=8, broach=True)
     if desc.id == "spire_needle":
         return _spire_mesh(obj_name, desc, segments=_SPIRE_SEGMENTS, broach=False)
+    if desc.id == "spire_conical":
+        return _conical_spire_mesh(obj_name, desc)
     if desc.id == "finial":
         w = desc.size_cm[0]
         verts, faces = _tapered_prism_verts(
@@ -359,8 +417,8 @@ def build_spire_mesh(desc: PrimitiveDescriptor, *, name: Optional[str] = None):
 
     if desc.id == "chimney_stack":
         parts = _chimney_parts(desc)
-    elif desc.id == "dormer_gabled":
-        parts = _dormer_parts(desc)
+    elif desc.id in ("dormer_gabled", "dormer_steep"):
+        parts = _dormer_parts(desc, steep="steep" in desc.tags)
     else:  # gablet
         parts = _gablet_parts(desc)
 

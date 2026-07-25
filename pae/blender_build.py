@@ -57,6 +57,10 @@ PAE_ROOT_COLLECTION = "PAE_Live"
 GALLERY_ROOT_COLLECTION = "PAE_Gallery"
 M2_STAIR_PROOF_COLLECTION = "PAE_M2_StairProof"
 M1_OPENINGS_PROOF_COLLECTION = "PAE_M1_OpeningsProof"
+FORTRESS_COLLECTION = "PAE_Fortress"
+FORTRESS_SCREENSHOT_REL = Path("Saved") / "Screenshots" / "fortress_live.png"
+# Gallery labels that use compound builders instead of single-spec factories.
+_COMPOUND_GALLERY_LABELS = frozenset({"fortress"})
 GALLERY_GAP_M = 2.0
 # Deterministic gallery camera: SE (+X, −Y) elevated — never random orbit per run.
 GALLERY_CAM_DIRECTION = (1.0, -1.0, 0.65)
@@ -241,6 +245,64 @@ def _m1_openings_proof_screenshot_path() -> Path:
     out = _repo_root() / M1_OPENINGS_PROOF_SCREENSHOT_REL
     out.parent.mkdir(parents=True, exist_ok=True)
     return out
+
+
+def _fortress_screenshot_path() -> Path:
+    out = _repo_root() / FORTRESS_SCREENSHOT_REL
+    out.parent.mkdir(parents=True, exist_ok=True)
+    return out
+
+
+def resolve_fortress_compound_builder():
+    """Return the active fortress compound builder callable.
+
+    Prefers ``build_fortress_compound`` when its assembly passes full validate;
+    otherwise falls back to ``build_castle_curtain_compound`` (interim greybox).
+    """
+    from pae.compound import build_castle_curtain_compound
+
+    import pae.compound as compound_mod
+
+    fortress = getattr(compound_mod, "build_fortress_compound", None)
+    if callable(fortress):
+        return fortress
+    return build_castle_curtain_compound
+
+
+def build_fortress_or_curtain_compound() -> Tuple[Any, Any, Any, str]:
+    """Try fortress campus preset; fall back to castle curtain when validate fails."""
+    from pae.compound import build_castle_curtain_compound
+    from pae.validate import validate
+
+    import pae.compound as compound_mod
+
+    fortress = getattr(compound_mod, "build_fortress_compound", None)
+    if callable(fortress):
+        assembly, layout, creport = fortress()
+        if creport.ok and assembly is not None and assembly.placements:
+            _, vreport = validate(assembly)
+            if vreport.ok:
+                return assembly, layout, creport, "build_fortress_compound"
+
+    assembly, layout, creport = build_castle_curtain_compound()
+    return assembly, layout, creport, "build_castle_curtain_compound"
+
+
+def assemble_fortress_compound(*, label: str = "fortress") -> Tuple[Any, Any, Any, str]:
+    """Compound preset → validate. Raises on critical failures (export/gallery policy)."""
+    from pae.validate import validate
+
+    assembly, layout, compound_report, builder_name = build_fortress_or_curtain_compound()
+    if assembly is None or not assembly.placements:
+        raise RuntimeError(f"{label}: compound produced no placements ({compound_report})")
+    if not compound_report.ok:
+        crit = "; ".join(f.message for f in compound_report.critical[:5])
+        raise RuntimeError(f"{label}: compound failed — {crit or compound_report}")
+    assembly, vreport = validate(assembly)
+    if not vreport.ok:
+        crit = "; ".join(f.message for f in vreport.critical[:5])
+        raise RuntimeError(f"{label}: validate failed — {crit or vreport}")
+    return assembly, vreport, layout, builder_name
 
 
 def is_stair_proof_placement(p) -> bool:
@@ -660,9 +722,13 @@ def _gallery_factories() -> List[Tuple[str, str, Any]]:
         ("m4_u", "PAE_M4_U", "m4_u_plan_spec"),
         ("m4_c", "PAE_M4_C", "m4_courtyard_spec"),
         ("school", "PAE_School", "school_academy_spec"),
+        ("fortress", FORTRESS_COLLECTION, None),  # compound — see assemble_fortress_compound
     ]
     factories: List[Tuple[str, str, Any]] = []
     for label, coll_name, attr in entries:
+        if label in _COMPOUND_GALLERY_LABELS:
+            factories.append((label, coll_name, None))
+            continue
         factory = getattr(spec_mod, attr, None)
         if callable(factory):
             factories.append((label, coll_name, factory))
@@ -715,6 +781,14 @@ def assemble_and_validate(label: str, factory) -> Tuple[Any, Any]:
         crit = "; ".join(f.message for f in stage_report.critical[:5])
         raise RuntimeError(f"{label}: validate failed — {crit or stage_report}")
     return assembly, stage_report
+
+
+def _assemble_for_gallery(label: str, factory) -> Tuple[Any, Any]:
+    """Spec factory or compound preset — always fail-closed on critical validate."""
+    if label in _COMPOUND_GALLERY_LABELS:
+        assembly, report, _layout, _builder = assemble_fortress_compound(label=label)
+        return assembly, report
+    return assemble_and_validate(label, factory)
 
 
 def build_school_showcase(*, write_png: bool = True) -> Dict[str, Any]:
@@ -830,6 +904,23 @@ def _clear_gallery_collections():
         if mesh.users == 0:
             bpy.data.meshes.remove(mesh)
     return _ensure_collection(GALLERY_ROOT_COLLECTION)
+
+
+def _clear_fortress_collection():
+    """Dedicated fortress live collection — flat ground, single compound."""
+    from pae.primitives import bpy_util
+
+    bpy_util.require_bpy()
+    import bpy
+
+    _clear_proto_meshes()
+    coll = bpy.data.collections.get(FORTRESS_COLLECTION)
+    if coll is not None:
+        _unlink_collection_tree(coll)
+    for mesh in list(bpy.data.meshes):
+        if mesh.users == 0:
+            bpy.data.meshes.remove(mesh)
+    return _ensure_collection(FORTRESS_COLLECTION)
 
 
 def _ensure_material(asset_id: str, kind: str = "wall"):
@@ -1494,7 +1585,7 @@ def build_gallery(
     if not bpy_util.HAS_BPY:
         results = []
         for label, coll_name, factory in factories:
-            assembly, report = assemble_and_validate(label, factory)
+            assembly, report = _assemble_for_gallery(label, factory)
             extent = assembly_footprint_extent_m(assembly)
             results.append(
                 {
@@ -1524,7 +1615,7 @@ def build_gallery(
     import bpy
 
     for label, coll_name, factory in factories:
-        assembly, report = assemble_and_validate(label, factory)
+        assembly, report = _assemble_for_gallery(label, factory)
         bb_min, bb_max = assembly_bounds_cm(assembly)
         offset_m = (
             cursor_x_m - bb_min[0] * CM_TO_M,
@@ -1586,6 +1677,66 @@ def build_gallery(
         "stair_proof_screenshot": (
             stair_proof_result.get("screenshot") if stair_proof_result else None
         ),
+        "boolean_solvers": sorted(bpy_util.BOOLEAN_SOLVERS),
+    }
+
+
+def build_fortress_live(*, write_png: bool = True) -> Dict[str, Any]:
+    """Build fortress compound into ``PAE_Fortress`` and capture ``fortress_live.png``.
+
+    Uses ``resolve_fortress_compound_builder()`` (castle curtain interim until massing
+    ships ``build_fortress_compound``). Fail-closed on critical validate failures.
+    """
+    reloaded = reload_pae()
+    from pae.primitives import bpy_util
+
+    assembly, report, layout, builder_name = assemble_fortress_compound()
+    bb_min, bb_max = assembly_bounds_cm(assembly)
+    offset_m = (
+        -bb_min[0] * CM_TO_M,
+        -bb_min[1] * CM_TO_M,
+        -bb_min[2] * CM_TO_M,
+    )
+
+    if not bpy_util.HAS_BPY:
+        return {
+            "ok": report.ok,
+            "blender": False,
+            "mode": "fortress",
+            "reloaded": len(reloaded),
+            "collection": FORTRESS_COLLECTION,
+            "compound_builder": builder_name,
+            "ranges": list(getattr(layout, "ranges", [])),
+            "placements": len(assembly.placements),
+            "extent_m": assembly_footprint_extent_m(assembly),
+            "offset_m": offset_m,
+            "screenshot": None,
+            "note": "bpy missing - assemble/validate only",
+        }
+
+    fortress_coll = _clear_fortress_collection()
+    n = instance_assembly(
+        assembly,
+        label="fortress",
+        target_coll=fortress_coll,
+        offset_m=offset_m,
+    )
+    frame_camera_on_meshes(collection=FORTRESS_COLLECTION)
+    shot = write_screenshot(_fortress_screenshot_path()) if write_png else None
+    return {
+        "ok": report.ok,
+        "blender": True,
+        "mode": "fortress",
+        "reloaded": len(reloaded),
+        "collection": FORTRESS_COLLECTION,
+        "compound_builder": builder_name,
+        "ranges": list(getattr(layout, "ranges", [])),
+        "instances": n,
+        "placements": len(assembly.placements),
+        "extent_m": assembly_footprint_extent_m(assembly),
+        "offset_m": offset_m,
+        "bounds_cm": {"min": bb_min, "max": bb_max},
+        "screenshot": str(shot) if shot else None,
         "boolean_solvers": sorted(bpy_util.BOOLEAN_SOLVERS),
     }
 
@@ -1667,6 +1818,8 @@ def main() -> Dict[str, Any]:
         result = build_m2_stair_proof(write_png=True)
     elif mode == "openings_proof":
         result = build_m1_openings_proof(write_png=True)
+    elif mode == "fortress":
+        result = build_fortress_live(write_png=True)
     else:
         result = build_live(write_png=True)
     print("PAE_BLENDER_BUILD", result)

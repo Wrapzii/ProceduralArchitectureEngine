@@ -57,6 +57,7 @@ if HAS_BPY:
             layout.prop(props, "pipeline_stage")
             layout.operator("pae.run_pipeline_stage", icon="PLAY")
             layout.operator("pae.run_full_generate", icon="MOD_BUILD")
+            layout.operator("pae.build_fortress", icon="HOME")
             if props.last_pipeline_message:
                 layout.label(text=props.last_pipeline_message, icon="TIME")
 

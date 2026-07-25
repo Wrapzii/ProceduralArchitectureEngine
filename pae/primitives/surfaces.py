@@ -28,7 +28,9 @@ _LAWN_T_FRAC = 0.30
 _KERB_T_FRAC = 1.10  # kerb stands proud of the path it edges
 _KERB_W_FRAC = 0.10  # of MODULE
 _STEP_RISERS = 3
+_STEP_GRAND_RISERS = 5
 _STEP_H_FRAC = 0.06  # of STOREY, per riser
+_STEP_GRAND_H_FRAC = 0.10  # of STOREY, per riser — monumental approach
 _JOINT_FRAC = 0.012  # of MODULE — visible joint between flags
 _FLAGS_PER_BAY = 2
 
@@ -147,6 +149,18 @@ def steps_external() -> PrimitiveDescriptor:
     )
 
 
+def steps_grand() -> PrimitiveDescriptor:
+    """Monumental fortress entrance flight — five wide risers (S-052)."""
+    h = STOREY_CM * _STEP_GRAND_H_FRAC * _STEP_GRAND_RISERS
+    return _surface(
+        "steps_grand",
+        thickness_frac=1.0,
+        tags=frozenset({"steps", "path", "circulation", "grand", "fortress"}),
+        notes="Five-riser grand exterior steps for gatehouse / hall entrances.",
+        size_cm=(MODULE_CM, MODULE_CM, h),
+    )
+
+
 def all_surfaces() -> tuple:
     return (
         paving_flagstone(),
@@ -155,6 +169,7 @@ def all_surfaces() -> tuple:
         kerb_edge(),
         lawn_patch(),
         steps_external(),
+        steps_grand(),
     )
 
 
@@ -178,12 +193,15 @@ def _flagged_parts(size_cm: Tuple[float, float, float], per_bay: int) -> List[Bo
     return parts
 
 
-def _step_parts(size_cm: Tuple[float, float, float]) -> List[BoxPart]:
+def _step_parts(
+    size_cm: Tuple[float, float, float],
+    risers: int,
+) -> List[BoxPart]:
     sx, sy, sz = size_cm
-    riser = sz / _STEP_RISERS
-    tread = sy / _STEP_RISERS
+    riser = sz / risers
+    tread = sy / risers
     parts: List[BoxPart] = []
-    for i in range(_STEP_RISERS):
+    for i in range(risers):
         # Each step spans the full width and the remaining depth behind it.
         parts.append(((0.0, i * tread, 0.0), (sx, sy - i * tread, riser * (i + 1))))
     return parts
@@ -201,7 +219,9 @@ def build_surface_mesh(desc: PrimitiveDescriptor, *, name: Optional[str] = None)
     elif desc.id == "sidewalk_slab":
         parts = _flagged_parts(desc.size_cm, _FLAGS_PER_BAY)
     elif desc.id == "steps_external":
-        parts = _step_parts(desc.size_cm)
+        parts = _step_parts(desc.size_cm, _STEP_RISERS)
+    elif desc.id == "steps_grand":
+        parts = _step_parts(desc.size_cm, _STEP_GRAND_RISERS)
     else:  # kerb, lawn — plain slabs
         parts = [((0.0, 0.0, 0.0), desc.size_cm)]
 
