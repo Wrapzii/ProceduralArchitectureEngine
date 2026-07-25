@@ -1,0 +1,21 @@
+{
+  "building_id": "m1_box_house",
+  "seed": 1,
+  "asset_db_version": "0",
+  "n_placements": 38,
+  "placement_hash": "ae1b5057d558ebf611268a7e614dbc12d718e8d552af527ba0a107f924528f7b",
+  "stub_png": {
+    "path": "pae/tests/golden/baselines/box_house_m1_Cam_Front.png",
+    "width": 64,
+    "height": 64,
+    "sha256": "c185ddd266c90ac625e01e53faf36475c85c64c821a2eca84f51306dd8216d49",
+    "note": "Tiny CI stub matching render_or_stub defaults; full matplotlib render via tools/render_m1_box_house.py (not committed)"
+  },
+  "matplotlib_render": {
+    "tool": "tools/render_m1_box_house.py",
+    "source_placements": "Saved/m1_placements.json",
+    "output_png": "Saved/Screenshots/m1_box_house.png",
+    "sha256": "1e2ccb91b6d52d7368f69bcda0ac714d7c307721bb22ec56268d744110dd7817",
+    "note": "Large PNG kept under Saved/ (gitignored); CI pins placement_hash + tiny stub"
+  }
+}

@@ -1,4 +1,4 @@
-"""Property tests over random specs (§10.2) — scaffolding until WP-4/WP-5 land."""
+"""Property tests over random specs (§10.2) — M1 green; multi-wing still xfail."""
 
 from __future__ import annotations
 
@@ -63,26 +63,57 @@ def test_random_spec_factory_stays_in_bay_space():
         assert not hasattr(spec, "world_xyz")
 
 
+def _pipeline_validate(spec):
+    from pae.assemble import assemble
+    from pae.plan import plan as plan_floor
+    from pae.solver import solve
+    from pae.spec import load_style
+    from pae.validate import validate
+
+    massing, _ = solve(spec)
+    assert massing is not None, "solver returned no massing"
+    floor_plan, _ = plan_floor(massing)
+    style, _ = load_style(spec.style)
+    assembly, _ = assemble(floor_plan, asset_db=None, style=style)
+    _, report = validate(assembly)
+    return assembly, report
+
+
+def test_m1_box_house_validate_ok():
+    """M1 box house — assemble + validate must pass (no longer xfail)."""
+    from pae.spec import m1_box_house_spec
+
+    _, report = _pipeline_validate(m1_box_house_spec())
+    assert report.ok, report.critical
+
+
+def test_m1_assembly_hash_stable_across_two_runs():
+    """Same M1 spec → identical placement hash across two full pipeline runs."""
+    from pae.spec import m1_box_house_spec
+
+    spec = m1_box_house_spec()
+    a1, r1 = _pipeline_validate(spec)
+    a2, r2 = _pipeline_validate(spec)
+    assert r1.ok and r2.ok
+    h1 = hash_assembly(a1.placements, asset_db_version="0", seed=spec.seed)
+    h2 = hash_assembly(a2.placements, asset_db_version="0", seed=spec.seed)
+    assert h1 == h2
+    assert len(h1) == 64
+
+
 @pytest.mark.xfail(
-    reason="WP-5: M1 passes; non-rect footprints / multi-wing validation still open",
+    reason="WP-5+: multi-wing / multi-storey random specs still fail validate "
+    "(floating floors, enclosure leaks, solve_none) — M1 rect is covered separately",
     strict=False,
 )
 def test_random_specs_validate_ok():
     """For random specs within sane bounds, validator must pass (§10.2).
 
-    Any failing assembly is a solver bug, not a bad spec.
+    Any failing assembly is a solver/assemble bug, not a bad spec.
+    Kept xfail while non-rect / multi-storey paths remain broken.
     """
-    from pae.assemble import assemble
-    from pae.plan import plan as plan_floor
-    from pae.solver import solve
-    from pae.validate import validate
-
     rng = random.Random(99)
-    for _ in range(5):
+    for _ in range(20):
         spec = random_building_spec(rng)
-        # Pipeline stubs until WP-4/WP-5 — raise NotImplementedError → xfail
-        massing, _ = solve(spec)
-        floor_plan, _ = plan_floor(massing)
-        assembly, _ = assemble(floor_plan, asset_db=None, style=None)
-        _, report = validate(assembly)
+        _, report = _pipeline_validate(spec)
         assert report.ok, report.critical

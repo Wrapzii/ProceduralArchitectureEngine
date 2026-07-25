@@ -1,7 +1,9 @@
-"""Golden-image scaffolding tests (§10.2) — placeholders OK until demo renders exist."""
+"""Golden-image scaffolding tests (§10.2) — M1 baseline = placement hash + tiny stub PNG."""
 
 from __future__ import annotations
 
+import hashlib
+import json
 from pathlib import Path
 
 import pytest
@@ -17,8 +19,10 @@ from pae.tests.golden.compare import (
     solid_rgba,
     write_stub_png,
 )
+from pae.tests.property.determinism import hash_assembly
 
 BASELINES = Path(__file__).resolve().parent / "baselines"
+M1_META = BASELINES / "m1_box_house.meta.json"
 
 
 def test_threshold_is_two_percent():
@@ -74,23 +78,51 @@ def test_render_or_stub_without_blender(tmp_path: Path):
 
 
 def test_baseline_placeholder_dir_exists():
-    """Scaffolding: baselines/ is present for future approved renders."""
+    """Scaffolding: baselines/ holds approved meta + tiny stub PNG."""
     assert BASELINES.is_dir()
+    assert M1_META.is_file()
     keep = BASELINES / ".gitkeep"
     assert keep.is_file() or any(BASELINES.iterdir())
 
 
-@pytest.mark.xfail(
-    reason="Approved golden PNGs not yet committed — demo buildings pending WP-5",
-    strict=False,
-)
+def test_m1_placement_hash_matches_baseline():
+    """Pin M1 assembly by placement-list hash (prefer hash over large PNG binaries)."""
+    from pae.assemble import assemble
+    from pae.plan import plan
+    from pae.solver import solve
+    from pae.spec import load_style, m1_box_house_spec
+    from pae.validate import validate
+
+    meta = json.loads(M1_META.read_text(encoding="utf-8"))
+    spec = m1_box_house_spec(seed=int(meta["seed"]))
+    massing, _ = solve(spec)
+    floor_plan, _ = plan(massing)
+    style, _ = load_style(spec.style)
+    assembly, _ = assemble(floor_plan, None, style)
+    _, report = validate(assembly)
+    assert report.ok, report.critical
+
+    digest = hash_assembly(
+        assembly.placements,
+        asset_db_version=str(meta["asset_db_version"]),
+        seed=spec.seed,
+    )
+    assert len(assembly.placements) == int(meta["n_placements"])
+    assert digest == meta["placement_hash"]
+
+
 def test_box_house_front_matches_baseline(tmp_path: Path):
+    """Tiny stub PNG baseline (CI-safe); full matplotlib shot lives under Saved/."""
     baseline = BASELINES / "box_house_m1_Cam_Front.png"
-    if not baseline.is_file():
-        pytest.fail("missing approved baseline PNG")
+    assert baseline.is_file(), "missing approved tiny stub baseline PNG"
+    meta = json.loads(M1_META.read_text(encoding="utf-8"))
+    stub = meta["stub_png"]
+    assert hashlib.sha256(baseline.read_bytes()).hexdigest() == stub["sha256"]
+
     actual = render_or_stub(
         building_id="box_house_m1",
         camera_name="Cam_Front",
         out_path=tmp_path / "actual.png",
+        stub_size=(int(stub["width"]), int(stub["height"])),
     )
     compare_png_files(actual, baseline)
