@@ -1623,6 +1623,11 @@ def _check_stair_flight_stack(assembly: Assembly) -> List[Failure]:
     flight (even with a 180 yaw flip) blocks the walking path — the upper solid
     sits on the lower treads. Successive flights must shift by one stair width.
     Spiral quarters are exempt (helix co-occupancy by design).
+
+    Fail-closed on *either* signal:
+    1. ``covered_cells`` overlap (grid contract, Rule 5.1)
+    2. World AABB XY overlap beyond ``TOL_CM`` (catches pose bugs where cell
+       sets look fine but solids still collide in plan)
     """
     from pae.trim import covered_cells
 
@@ -1634,27 +1639,40 @@ def _check_stair_flight_stack(assembly: Assembly) -> List[Failure]:
         by_level.setdefault(piece.level, []).append(piece)
 
     failures: List[Failure] = []
+    seen: Set[Tuple[str, str]] = set()
     for level, lower_stairs in sorted(by_level.items()):
         upper_stairs = by_level.get(level + 1)
         if not upper_stairs:
             continue
         for lo in lower_stairs:
             lo_cells = covered_cells(lo)
+            lo_min, lo_max = _placement_aabb(lo)
             for hi in upper_stairs:
-                overlap = lo_cells & covered_cells(hi)
-                if not overlap:
+                key = (lo.piece_id, hi.piece_id)
+                if key in seen:
                     continue
-                bb_min, bb_max = _placement_aabb(hi)
+                overlap = lo_cells & covered_cells(hi)
+                hi_min, hi_max = _placement_aabb(hi)
+                ox = min(lo_max[0], hi_max[0]) - max(lo_min[0], hi_min[0])
+                oy = min(lo_max[1], hi_max[1]) - max(lo_min[1], hi_min[1])
+                aabb_overlap = ox > TOL_CM and oy > TOL_CM
+                if not overlap and not aabb_overlap:
+                    continue
+                seen.add(key)
+                reason = (
+                    f"cells {sorted(overlap)}"
+                    if overlap
+                    else f"AABB XY overlap {ox:.1f}x{oy:.1f} cm"
+                )
                 failures.append(
                     Failure(
                         check="stair_flight_stack",
                         message=(
                             f"monumental stair {hi.piece_id} on level {hi.level} "
-                            f"overlaps lower flight {lo.piece_id} in cells "
-                            f"{sorted(overlap)} — shift by stair width so flights "
-                            "do not stack"
+                            f"overlaps lower flight {lo.piece_id} ({reason}) — "
+                            "shift by stair width so flights do not stack"
                         ),
-                        world_xyz=_centre(bb_min, bb_max),
+                        world_xyz=_centre(hi_min, hi_max),
                         piece_id=hi.piece_id,
                         critical=True,
                     )

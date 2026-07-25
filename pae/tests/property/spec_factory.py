@@ -107,11 +107,11 @@ def _circulation_for_footprint(
     kinds = sorted(SUPPORTED_STAIR_KINDS - {"spiral"})
     preferred = rng.choice(kinds)
     volumes = _place_footprint(footprint, storeys)
-    stair_cells = _default_stair_cells(volumes, preferred)
+    stair_cells = _default_stair_cells(volumes, preferred, storeys=storeys)
     stair_kind = preferred
     if not stair_cells:
         stair_kind = "straight"
-        stair_cells = _default_stair_cells(volumes, stair_kind)
+        stair_cells = _default_stair_cells(volumes, stair_kind, storeys=storeys)
     return CirculationSpec(stair_kind=stair_kind, stair_cells=stair_cells)
 
 

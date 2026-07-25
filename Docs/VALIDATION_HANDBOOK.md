@@ -44,7 +44,7 @@ list and ask which of these it can now violate. That is your check list.
 | 6 | **Coherence** | Is it part of one building, or its own island? | `freestanding` |
 | 7 | **Exclusion** | Does it avoid what it must avoid? | `interpenetration`, `roof_penetration` |
 | 8 | **Containment** | Is the envelope sealed, floored, covered? | `enclosure`, `floor_coverage`, `roof_covers_enclosed`, `spiral_drum_enclosure` |
-| 9 | **Use** | Can a person reach it, enter it, walk it, leave it? | `stair_reachability`, `stair_exit_clearance`, `stair_typology_match`, `classroom_corridor`, `aperture_sanity` |
+| 9 | **Use** | Can a person reach it, enter it, walk it, leave it? | `stair_reachability`, `stair_exit_clearance`, `stair_flight_stack`, `stair_typology_match`, `classroom_corridor`, `aperture_sanity` |
 
 A tenth class — **proportion** ("does it look right") — is *not* mechanically checkable and
 must not be faked. See §9.
@@ -195,6 +195,12 @@ cell bounds.
 
 **5.5 All dimensions come from `pae/contract.py`.** CI greps for `400.0`, `350.0`, `60.0`,
 `30.0`. Fractions of the contract are fine; literals are not.
+
+**5.6 Never stack monumental stair flights in the same XY.** A `stair_switchback` or
+`stair_wide` on level N+1 must be shifted by one stair width from level N. A 180° yaw
+flip in the same 2×2 well is **not** a stair — it is a solid on the previous treads.
+Multi-storey wells are 4×2 / 2×4; `stair_flight_stack` is **critical** (cells or AABB).
+See Defect Ledger D-23.
 
 ---
 

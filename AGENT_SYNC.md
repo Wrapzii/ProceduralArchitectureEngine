@@ -411,3 +411,7 @@ New critical/warn checks: spiral_newel_exists, spiral_drum_enclosure, tower_entr
 >>> TRIGGER @VAL_STAIR_OFFSET — Shift multi-storey switchback/wide flights by stair width (4×2 well).
 
 >>> DONE @VAL_STAIR_OFFSET — Multi-storey switchback/wide flights shift by stair width (4x2 well). L0 pad (1,1)-(2,2), L1 pad (3,1)-(4,2). Critical stair_flight_stack. Tests: test_stair_flight_offset + school. Ledger D-23. Commit pending.
+
+>>> TRIGGER @VAL_STAIR_OFFSET_VERIFY — Harden stair_flight_stack so stacked monumental stairs never regress: property random, wide fixture, assemble undersized-well fail-closed, handbook. Owns: test_stair_flight_offset.py, property test, validate check hardening, VALIDATION_HANDBOOK.
+
+>>> DONE @VAL_STAIR_OFFSET_VERIFY — Dual-signal stair_flight_stack (cells+AABB); undersized-well assemble fail-closed; industrial wide offset; property random lock; spec_factory passes storeys=; Handbook 5.6. Tests 8 pass.

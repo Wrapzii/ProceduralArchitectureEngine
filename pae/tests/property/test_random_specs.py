@@ -111,3 +111,23 @@ def test_random_specs_validate_ok():
         spec = random_building_spec(rng)
         _, report = _pipeline_validate(spec)
         assert report.ok, report.critical
+
+
+def test_random_specs_never_stack_monumental_stair_flights():
+    """Regression lock for Handbook §5.6 / D-23 — no same-XY monumental stacks."""
+    from pae.validate import _check_stair_flight_stack
+
+    rng = random.Random(4242)
+    for _ in range(30):
+        spec = random_building_spec(rng)
+        assembly, report = _pipeline_validate(spec)
+        stack = [
+            f
+            for f in report.failures + report.critical
+            if f.check == "stair_flight_stack"
+        ]
+        direct = _check_stair_flight_stack(assembly)
+        assert not stack and not direct, (
+            f"seed={spec.seed} storeys={spec.storeys} "
+            f"stair={spec.circulation.stair_kind}: {stack or direct}"
+        )
