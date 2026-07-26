@@ -25,15 +25,6 @@ from pae.facade_grammar import (
     resolve_stair_id,
     resolve_wealth,
 )
-from pae.primitives.roofs import (
-    DEFAULT_ROOF_PITCH,
-    roof_eave_offset_cm,
-    roof_eave_overhang_per_side,
-    roof_flat_span_size_cm,
-    roof_gable_end_offset_cm,
-    roof_gable_end_size_cm,
-    roof_rise_cm,
-)
 from pae.report import Report
 from pae.shared_ids import resolve_shared
 from pae.spec import BuildingSpec
@@ -42,7 +33,8 @@ from pae.spec import BuildingSpec
 SHELL_WALL_ASSET = "shell_wall_solid"
 SHELL_OPENING_CUTTER_ASSET = "shell_opening_cutter"
 SHELL_FLOOR_ASSET = "shell_floor_slab"
-SHELL_ROOF_ASSET = "shell_roof_slope"
+SHELL_ROOF_ASSET = "shell_roof_slab"
+SHELL_ROOF_THICK_CM = FLOOR_T_CM
 SHELL_INTERIOR_WALL_ASSET = "shell_wall_interior"
 
 # Opening cutter padding — pierces both wall skins for boolean / panel punch.
@@ -106,6 +98,43 @@ def _wall_offset_cm(face: str, yaw: int, size_cm: Tuple[float, float, float]) ->
     return (ox, oy, 0.0)
 
 
+def _inverse_rotate_local_xy(wx: float, wy: float, yaw: int) -> Tuple[float, float]:
+    """Inverse of :func:`pae.contract.rotate_local_xy` (yaw about min-corner)."""
+    if yaw == 0:
+        return (wx, wy)
+    if yaw == 90:
+        return (wy, -wx)
+    if yaw == 180:
+        return (-wx, -wy)
+    if yaw == 270:
+        return (-wy, wx)
+    raise ValueError(f"yaw must be 0/90/180/270, got {yaw}")
+
+
+def _shell_world_offset_cm(
+    face: str,
+    yaw: int,
+    panel_size_cm: Tuple[float, float, float],
+    local_extra: Tuple[float, float, float],
+) -> Tuple[float, float, float]:
+    """Map shell-local (thickness, along-face, up) → world ``offset_cm`` on a face panel."""
+    from pae.contract import rotate_local_xy
+
+    panel_base = _wall_offset_cm(face, yaw, panel_size_cm)
+    wx, wy = rotate_local_xy(
+        local_extra[0],
+        local_extra[1],
+        yaw,
+        panel_size_cm[0],
+        panel_size_cm[1],
+    )
+    return (
+        panel_base[0] + wx,
+        panel_base[1] + wy,
+        panel_base[2] + local_extra[2],
+    )
+
+
 def _footprint_cm(bays_x: int, bays_y: int) -> Tuple[float, float]:
     return bays_x * MODULE_CM, bays_y * MODULE_CM
 
@@ -149,14 +178,11 @@ def _place_shell_box(
     counters: Dict[str, int],
     tags: FrozenSet[str],
     kind: str = "wall",
+    panel_size_cm: Optional[Tuple[float, float, float]] = None,
 ) -> None:
     yaw = _FACE_YAW[face]
-    base = _wall_offset_cm(face, yaw, size_cm)
-    offset = (
-        base[0] + offset_extra[0],
-        base[1] + offset_extra[1],
-        base[2] + offset_extra[2],
-    )
+    panel = panel_size_cm or size_cm
+    offset = _shell_world_offset_cm(face, yaw, panel, offset_extra)
     placements.append(
         SolidPlacement(
             piece_id=_next_id(counters, piece_prefix),
@@ -208,14 +234,17 @@ def _face_offset_extra(
     face: str,
     yaw: int,
     size_cm: Tuple[float, float, float],
+    *,
+    panel_size_cm: Optional[Tuple[float, float, float]] = None,
 ) -> Tuple[float, float, float]:
-    """Placement offset along the face beyond the standard wall tuck."""
-    base = _wall_offset_cm(face, yaw, size_cm)
-    return (
-        offset_cm[0] - base[0],
-        offset_cm[1] - base[1],
-        offset_cm[2] - base[2],
-    )
+    """Shell-local offset (thickness, along-face, up) from a world ``offset_cm``."""
+    panel = panel_size_cm or size_cm
+    base = _wall_offset_cm(face, yaw, panel)
+    dx = offset_cm[0] - base[0]
+    dy = offset_cm[1] - base[1]
+    dz = offset_cm[2] - base[2]
+    lx, ly = _inverse_rotate_local_xy(dx, dy, yaw)
+    return (lx, ly, dz)
 
 
 def shell_cutter_hole_yz_cm(
@@ -225,7 +254,7 @@ def shell_cutter_hole_yz_cm(
     """Opening rectangle ``(y0, y1, z0, z1)`` in wall-local mesh coordinates."""
     face = next(t[5:] for t in wall.tags if t.startswith("face_"))
     cut_extra = _face_offset_extra(
-        cutter.offset_cm, face, cutter.yaw, cutter.size_cm
+        cutter.offset_cm, face, cutter.yaw, cutter.size_cm, panel_size_cm=wall.size_cm
     )
     y0 = cut_extra[1]
     z0 = cut_extra[2]
@@ -246,6 +275,7 @@ def _place_opening_cutter(
     placements: List[SolidPlacement],
     counters: Dict[str, int],
     tags: FrozenSet[str],
+    panel_size_cm: Tuple[float, float, float],
 ) -> None:
     pad_x = WALL_T_CM * _CUTTER_PAD_X_FRAC
     pad_yz = _CUTTER_PAD_YZ_CM
@@ -272,6 +302,7 @@ def _place_opening_cutter(
             }
         ),
         kind="hole",
+        panel_size_cm=panel_size_cm,
     )
 
 
@@ -344,6 +375,7 @@ def _place_glazed_face(
     )
     tags = _EXTERIOR_TAG | frozenset({f"face_{face}"})
     frame_t = max(4.0, WALL_T_CM * _FRAME_T_FRAC)
+    panel_size_cm = (WALL_T_CM, run_cm, STOREY_CM)
 
     _place_shell_box(
         piece_prefix=f"shell_wall_{face}_L{level}",
@@ -351,11 +383,12 @@ def _place_glazed_face(
         face=face,
         level=level,
         cell=origin,
-        size_cm=(WALL_T_CM, run_cm, STOREY_CM),
+        size_cm=panel_size_cm,
         offset_extra=(0.0, 0.0, 0.0),
         placements=placements,
         counters=counters,
         tags=tags | frozenset({"boolean_parent", "shell_wall_panel"}),
+        panel_size_cm=panel_size_cm,
     )
 
     for bay in range(bay_count):
@@ -386,6 +419,7 @@ def _place_glazed_face(
             placements=placements,
             counters=counters,
             tags=tags,
+            panel_size_cm=panel_size_cm,
         )
 
         if kind == "window":
@@ -405,6 +439,7 @@ def _place_glazed_face(
                 counters=counters,
                 tags=tags | frozenset({"window", "opening"}),
                 kind="prop",
+                panel_size_cm=panel_size_cm,
             )
             # Thin sash frame only — no muntin bars (they read as interior half-walls).
         else:
@@ -425,6 +460,7 @@ def _place_glazed_face(
                 counters=counters,
                 tags=tags | frozenset({"door", "opening"}),
                 kind="prop",
+                panel_size_cm=panel_size_cm,
             )
 
 
@@ -595,8 +631,6 @@ def _place_stair_shaft_walls(
     min_x, min_y, max_x, max_y = _stair_well_bbox_cells(stair_cells)
     well_w = (max_x - min_x + 1) * MODULE_CM
     well_d = (max_y - min_y + 1) * MODULE_CM
-    ox = min_x * MODULE_CM
-    oy = min_y * MODULE_CM
     tags = _INTERIOR_TAG | frozenset({"stair_shaft", "partition"})
 
     placements.append(
@@ -607,7 +641,7 @@ def _place_stair_shaft_walls(
             cell=(min_x, max_y),
             level=level,
             yaw=0,
-            offset_cm=(ox, oy + well_d - WALL_T_CM, 0.0),
+            offset_cm=(0.0, MODULE_CM - WALL_T_CM, 0.0),
             size_cm=(well_w, WALL_T_CM, STOREY_CM),
             tags=tags | frozenset({"face_north"}),
         )
@@ -620,7 +654,7 @@ def _place_stair_shaft_walls(
             cell=(min_x, min_y),
             level=level,
             yaw=0,
-            offset_cm=(ox, oy, 0.0),
+            offset_cm=(0.0, 0.0, 0.0),
             size_cm=(WALL_T_CM, well_d, STOREY_CM),
             tags=tags | frozenset({"face_west"}),
         )
@@ -633,7 +667,7 @@ def _place_stair_shaft_walls(
             cell=(max_x, min_y),
             level=level,
             yaw=0,
-            offset_cm=(ox + well_w - WALL_T_CM, oy, 0.0),
+            offset_cm=(MODULE_CM - WALL_T_CM, 0.0, 0.0),
             size_cm=(WALL_T_CM, well_d, STOREY_CM),
             tags=tags | frozenset({"face_east"}),
         )
@@ -669,109 +703,28 @@ def _place_interior_corridor_wall(
     )
 
 
-def _place_pitched_roof(
+def _place_flat_roof(
     *,
     level: int,
-    bays_x: int,
-    bays_y: int,
-    pitch: float,
+    width_cm: float,
+    depth_cm: float,
     placements: List[SolidPlacement],
     counters: Dict[str, int],
 ) -> None:
-    rx0, ry0, rx1, ry1 = 0, 0, bays_x - 1, bays_y - 1
-    roof_spans = [(rx0, ry0, rx1, ry1)]
-    west, east, south, north = roof_eave_overhang_per_side(
-        rx0, ry0, rx1, ry1, roof_spans
+    """Simple flat shell roof slab — reliable demo read (no catalog pitched slope)."""
+    placements.append(
+        SolidPlacement(
+            piece_id=_next_id(counters, "shell_roof_slab"),
+            asset_id=SHELL_ROOF_ASSET,
+            kind="roof",
+            cell=(0, 0),
+            level=level,
+            yaw=0,
+            offset_cm=(0.0, 0.0, STOREY_CM),
+            size_cm=(width_cm, depth_cm, SHELL_ROOF_THICK_CM),
+            tags=_SHELL_TAG | frozenset({"roof_slab"}),
+        )
     )
-    eave_ox, eave_oy, _ = roof_eave_offset_cm(overhang_west=west, overhang_south=south)
-    modules_x = bays_x
-    modules_y = bays_y
-    ridge_along_x = modules_x >= modules_y
-    span_x = modules_x * MODULE_CM
-    span_y = modules_y * MODULE_CM
-    ridge_modules = max(1, min(modules_x, modules_y))
-    full_rise = roof_rise_cm(pitch, ridge_modules * MODULE_CM)
-    gable_height = full_rise + FLOOR_T_CM
-    deck_x = span_x + west + east
-    deck_y = span_y + south + north
-    roof_z = STOREY_CM
-
-    if ridge_along_x:
-        for x in (rx0, rx1):
-            placements.append(
-                SolidPlacement(
-                    piece_id=_next_id(counters, "shell_roof_gable"),
-                    asset_id="roof_gable_infill",
-                    kind="roof",
-                    cell=(x, ry0),
-                    level=level,
-                    yaw=0,
-                    offset_cm=(
-                        *roof_gable_end_offset_cm(
-                            ridge_along_x=True, is_low_end=(x == rx0)
-                        )[:2],
-                        roof_z,
-                    ),
-                    size_cm=roof_gable_end_size_cm(
-                        ridge_along_x=True,
-                        span_x_cm=span_x,
-                        span_y_cm=span_y,
-                        gable_height=gable_height,
-                    ),
-                    tags=_SHELL_TAG,
-                )
-            )
-        placements.append(
-            SolidPlacement(
-                piece_id=_next_id(counters, "shell_roof_slope"),
-                asset_id="roof_pitched_slope",
-                kind="roof",
-                cell=(rx0, ry0),
-                level=level,
-                yaw=0,
-                offset_cm=(eave_ox, eave_oy, roof_z),
-                size_cm=(deck_x, deck_y, gable_height),
-                tags=_SHELL_TAG,
-            )
-        )
-    else:
-        for y in (ry0, ry1):
-            placements.append(
-                SolidPlacement(
-                    piece_id=_next_id(counters, "shell_roof_gable"),
-                    asset_id="roof_gable_infill",
-                    kind="roof",
-                    cell=(rx0, y),
-                    level=level,
-                    yaw=0,
-                    offset_cm=(
-                        *roof_gable_end_offset_cm(
-                            ridge_along_x=False, is_low_end=(y == ry0)
-                        )[:2],
-                        roof_z,
-                    ),
-                    size_cm=roof_gable_end_size_cm(
-                        ridge_along_x=False,
-                        span_x_cm=span_x,
-                        span_y_cm=span_y,
-                        gable_height=gable_height,
-                    ),
-                    tags=_SHELL_TAG,
-                )
-            )
-        placements.append(
-            SolidPlacement(
-                piece_id=_next_id(counters, "shell_roof_slope"),
-                asset_id="roof_pitched_slope",
-                kind="roof",
-                cell=(rx0, ry0),
-                level=level,
-                yaw=0,
-                offset_cm=(eave_ox, eave_oy, roof_z),
-                size_cm=(deck_x, deck_y, gable_height),
-                tags=_SHELL_TAG,
-            )
-        )
 
 
 def _place_chimney_stubs(
@@ -838,7 +791,6 @@ def build_shell_assembly(
     wealth = resolve_wealth(params.wealth)
     blind = party_wall_faces(params.row_context)
     style_overrides = params_to_style_overrides(params)
-    pitch = float(getattr(spec.roof, "pitch", DEFAULT_ROOF_PITCH) or DEFAULT_ROOF_PITCH)
 
     width_cm, depth_cm = _footprint_cm(bays_x, bays_y)
     stair_id = resolve_stair_id(wealth, bays_x, bays_y, storeys=storeys)
@@ -927,11 +879,10 @@ def build_shell_assembly(
             counters=counters,
         )
 
-    _place_pitched_roof(
+    _place_flat_roof(
         level=storeys - 1,
-        bays_x=bays_x,
-        bays_y=bays_y,
-        pitch=pitch,
+        width_cm=width_cm,
+        depth_cm=depth_cm,
         placements=placements,
         counters=counters,
     )

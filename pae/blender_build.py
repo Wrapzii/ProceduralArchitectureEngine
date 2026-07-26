@@ -135,6 +135,7 @@ ASSET_MATERIAL_COLORS: Dict[str, Tuple[float, float, float, float]] = {
     "shell_window_muntin": (0.10, 0.10, 0.12, 1.0),  # darker muntin cross
     "shell_door": (0.18, 0.12, 0.10, 1.0),  # dark Georgian door panel
     "shell_chimney_stub": (0.55, 0.50, 0.46, 1.0),  # brick chimney stack
+    "shell_roof_slab": (0.58, 0.55, 0.50, 1.0),  # slate/cream flat roof
 }
 _TINTED_ASSET_PREFIXES = ("roof_", "tower_", "stair_", "spire_", "dormer_")
 _TINTED_ASSET_EXACT = frozenset(ASSET_MATERIAL_COLORS.keys())
@@ -1320,7 +1321,11 @@ def _mesh_for_shell_wall_punched(
             face = next(t[5:] for t in wall_p.tags if t.startswith("face_"))
             for idx, cut in enumerate(cutters):
                 cut_extra = _face_offset_extra(
-                    cut.offset_cm, face, cut.yaw, cut.size_cm
+                    cut.offset_cm,
+                    face,
+                    cut.yaw,
+                    cut.size_cm,
+                    panel_size_cm=wall_p.size_cm,
                 )
                 cutter = bpy_util.box_mesh(
                     f"{proto_name}_cut_{idx}",

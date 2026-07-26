@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from pae.contract import MODULE_CM, STOREY_CM, placement_world_aabb
+from pae.contract import MODULE_CM, STOREY_CM, WALL_T_CM, placement_world_aabb
+from pae.export.manifest import placement_loc_cm
 from pae.facade_grammar import FacadeParams, build_from_params
 from pae.facade_shell import (
     SHELL_DOOR_ASSET,
@@ -239,3 +240,74 @@ def test_window_muntins_removed_from_shell():
     params = _default_params(storeys=2)
     assembly, _ = build_shell_assembly(params)
     assert count_muntin_placements(assembly) == 0
+
+
+def _demo_user_params() -> FacadeParams:
+    return _default_params(
+        storeys=4,
+        wealth=4,
+        frontage_m=22.0,
+        depth_m=12.0,
+        row_context="end_left",
+    )
+
+
+def _shell_placement_bounds_targets(assembly):
+    """Placements that must sit inside the footprint AABB (plus wall skin)."""
+    for p in assembly.placements:
+        aid = p.asset_id
+        if aid in (SHELL_WALL_ASSET, SHELL_INTERIOR_WALL_ASSET, "shell_window_frame"):
+            yield p
+        elif aid == SHELL_DOOR_ASSET:
+            yield p
+        elif "stair_shaft" in p.tags:
+            yield p
+
+
+def test_user_demo_placements_inside_footprint():
+    """Regression: south sash Y=2100 and shaft x=3200+ when footprint is 2400×1200."""
+    params = _demo_user_params()
+    assembly, _ = build_shell_assembly(params)
+    spec_bays_x = int(round(22.0 / (MODULE_CM / 100.0)))
+    spec_bays_y = int(round(12.0 / (MODULE_CM / 100.0)))
+    width = spec_bays_x * MODULE_CM
+    depth = spec_bays_y * MODULE_CM
+    outliers = []
+    for p in _shell_placement_bounds_targets(assembly):
+        loc = placement_loc_cm(p)
+        if not (
+            -WALL_T_CM <= loc[0] <= width + WALL_T_CM
+            and -WALL_T_CM <= loc[1] <= depth + WALL_T_CM
+        ):
+            outliers.append((p.piece_id, loc))
+    assert outliers == [], f"out-of-footprint placements: {outliers[:8]}"
+
+
+def test_south_sash_along_frontage_not_depth():
+    params = _demo_user_params()
+    assembly, _ = build_shell_assembly(params)
+    width = int(round(22.0 / (MODULE_CM / 100.0))) * MODULE_CM
+    sashes = [
+        p
+        for p in assembly.placements
+        if p.asset_id == "shell_window_frame" and "face_south" in p.tags
+    ]
+    assert sashes
+    for sash in sashes:
+        loc = placement_loc_cm(sash)
+        assert 0.0 <= loc[0] <= width + 1.0, sash.piece_id
+        assert loc[1] <= WALL_T_CM + 5.0, sash.piece_id
+
+
+def test_shell_roof_is_flat_slab_not_catalog_slope():
+    params = _demo_user_params()
+    assembly, _ = build_shell_assembly(params)
+    roofs = [p for p in assembly.placements if p.kind == "roof"]
+    assert roofs
+    assert all(p.asset_id == "shell_roof_slab" for p in roofs)
+    assert not any(p.asset_id == "roof_pitched_slope" for p in assembly.placements)
+    slab = roofs[0]
+    width = int(round(22.0 / (MODULE_CM / 100.0))) * MODULE_CM
+    depth = int(round(12.0 / (MODULE_CM / 100.0))) * MODULE_CM
+    assert slab.size_cm[0] == width
+    assert slab.size_cm[1] == depth
