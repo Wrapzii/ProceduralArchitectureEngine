@@ -228,8 +228,7 @@ def test_generate_facade_operator_uses_shell_mode_only():
     src = Path(__file__).resolve().parents[2] / "addon" / "operators" / "generate_ops.py"
     text = src.read_text(encoding="utf-8")
     facade_block = text.split("PAE_OT_generate_facade")[1].split("classes")[0]
-    assert "build_from_params(" in facade_block
-    assert 'mode="shell"' in facade_block
+    assert "build_building" in facade_block
     assert "instance_facade_shell" in facade_block
     assert "sync_assembly_preview(assembly)" not in facade_block
     assert "assemble_with_style_shell_and_detail" not in facade_block

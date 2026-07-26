@@ -1086,6 +1086,21 @@ def apply_arch_details(
     """Place K2 details from pack.shell flags. Idempotent via ARCH_DETAIL_TAG."""
     if not enabled:
         return assembly, Report.from_failures([])
+    from pae.facade_shell import is_facade_shell_assembly
+
+    if is_facade_shell_assembly(assembly):
+        return assembly, Report.from_failures(
+            [
+                Failure(
+                    check="arch_detail_shell_skip",
+                    message=(
+                        "facade_shell assembly — patio/balcony/jetty dress skipped "
+                        "(shell ignores style-pack shell.balcony)"
+                    ),
+                    critical=False,
+                )
+            ]
+        )
     if any(ARCH_DETAIL_TAG in p.tags for p in assembly.placements):
         return assembly, Report.from_failures(
             [

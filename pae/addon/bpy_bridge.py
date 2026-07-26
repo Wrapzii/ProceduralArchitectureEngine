@@ -61,6 +61,13 @@ def sync_assembly_preview(assembly: Assembly) -> int:
     coll = _ensure_collection()
     count = 0
     for placement in assembly.placements:
+        # Match instance_assembly: void cutters and aperture proxies are logical only.
+        if placement.asset_id in (
+            "floor_hole",
+            "roof_hole",
+            "shell_opening_cutter",
+        ) or "non_rendering_aperture_proxy" in placement.tags:
+            continue
         name = piece_id_to_object_name(placement.piece_id)
         sx, sy, sz = placement.size_cm
         size_m = (sx / 100.0, sy / 100.0, max(sz, 1.0) / 100.0)

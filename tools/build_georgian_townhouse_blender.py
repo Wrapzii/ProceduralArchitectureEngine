@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Build a Georgian merchant townhouse in Blender from slider-like CLI params.
 
-Uses ``pae.facade_grammar.build_from_params`` and ``pae.blender_build`` for
-walkable floors/stairs with shared door/stair ids from ``pae.shared_ids``.
+Uses ``pae.building_builder.build_building`` (Procedural Building entry) and
+``pae.blender_build`` for walkable floors/stairs with shared door/stair ids
+from ``pae.shared_ids``.
 
 Usage::
 
@@ -86,9 +87,9 @@ def summarize_assembly(assembly, report, params) -> Dict[str, Any]:
 
 
 def run_grammar(params, *, validate_assembly: bool = False):
-    from pae.facade_grammar import build_from_params
+    from pae.building_builder import build_building
 
-    return build_from_params(params, mode="shell", validate_assembly=validate_assembly)
+    return build_building(params, validate_assembly=validate_assembly)
 
 
 def preview_rgba_for_placement(asset_id: str, kind: str, wealth: int) -> Tuple[float, float, float, float]:

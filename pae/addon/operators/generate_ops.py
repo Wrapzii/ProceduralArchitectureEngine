@@ -338,10 +338,8 @@ if HAS_BPY:
                     row_context=str(props.facade_row_context),
                 )
                 props.facade_params_json = export_params_json(params)
-                _massing, _plan, assembly, report, _out = build_from_params(
-                    params,
-                    mode="shell",
-                    validate_assembly=False,
+                _massing, _plan, assembly, report, _out = build_building(
+                    params, validate_assembly=False
                 )
                 if assembly is not None and assembly.placements:
                     import bpy
