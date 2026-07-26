@@ -8,6 +8,7 @@ from pae.facade_shell import (
     SHELL_WALL_ASSET,
     build_shell_assembly,
     count_exterior_shell_walls,
+    count_modular_window_kits,
     count_window_placements,
 )
 
@@ -25,29 +26,29 @@ def _default_params(**kwargs) -> FacadeParams:
     return FacadeParams(**base)
 
 
-def test_shell_exterior_wall_count_bounded():
-    params = _default_params(storeys=4)
+def test_shell_has_no_modular_window_kits():
+    """Regression: kit wall_window_* modules made the cell-farm exterior."""
+    params = _default_params(storeys=4, wealth=4, frontage_m=22.0, depth_m=12.0)
     assembly, _ = build_shell_assembly(params)
-    bays_x = 3  # 10 m → 3 bays
-    storeys = 4
-    shell_walls = count_exterior_shell_walls(assembly)
-    modular_upper_bound = bays_x * storeys * 4
-    assert shell_walls == 4 * storeys
-    assert shell_walls < modular_upper_bound // 2
+    assert count_modular_window_kits(assembly) == 0
 
 
-def test_no_partition_grid_on_exterior():
-    params = _default_params()
+def test_shell_exterior_is_not_per_bay_cell_farm():
+    params = _default_params(storeys=4, frontage_m=22.0, depth_m=12.0)
     assembly, _ = build_shell_assembly(params)
-    exterior_shell = [
+    assert count_modular_window_kits(assembly) == 0
+    # No exterior placement may be a full-bay modular wall kit standing in for skin.
+    kit_skin = [
         p
         for p in assembly.placements
-        if p.asset_id == SHELL_WALL_ASSET and "exterior" in p.tags
+        if "exterior" in p.tags
+        and p.asset_id.startswith("wall_")
+        and "door" not in p.asset_id
     ]
-    assert len(exterior_shell) == 4 * 3  # 3 storeys × 4 faces
-    south = [p for p in exterior_shell if "face_south" in p.tags]
-    assert len(south) == 3
-    assert all(p.size_cm[1] >= 3 * MODULE_CM for p in south)
+    assert kit_skin == []
+    # Blind / continuous panels exist; openings are shell frames.
+    assert count_exterior_shell_walls(assembly) > 0
+    assert count_window_placements(assembly, "south") > 0
 
 
 def test_party_wall_face_has_no_windows():
@@ -55,10 +56,15 @@ def test_party_wall_face_has_no_windows():
     assembly, _ = build_shell_assembly(params)
     assert count_window_placements(assembly, "west") == 0
     west_walls = [
-        p for p in assembly.placements if p.asset_id == SHELL_WALL_ASSET and "face_west" in p.tags
+        p
+        for p in assembly.placements
+        if p.asset_id == SHELL_WALL_ASSET and "face_west" in p.tags
     ]
     assert west_walls
     assert all("party_wall" in p.tags or "blind" in p.tags for p in west_walls)
+    # Blind party wall is ONE continuous panel per storey (not pier grid).
+    assert len(west_walls) == 3
+    assert all(p.size_cm[1] >= 2 * MODULE_CM - 1.0 for p in west_walls)
 
 
 def test_stair_inside_footprint():
@@ -99,6 +105,19 @@ def test_floor_count_matches_storeys():
     assert len(floors) == 3
 
 
+def test_south_has_punched_openings_not_solid_overlay():
+    params = _default_params(storeys=2)
+    assembly, _ = build_shell_assembly(params)
+    assert count_window_placements(assembly, "south") >= 2
+    south_piers = [
+        p
+        for p in assembly.placements
+        if "face_south" in p.tags and "pier" in p.tags
+    ]
+    assert south_piers, "glazed south face should use pier grammar, not one solid slab"
+    assert count_modular_window_kits(assembly) == 0
+
+
 def test_build_from_params_defaults_to_shell_mode():
     params = _default_params()
     _m, _p, assembly, report, _out = build_from_params(
@@ -106,4 +125,5 @@ def test_build_from_params_defaults_to_shell_mode():
     )
     assert assembly is not None
     assert count_exterior_shell_walls(assembly) > 0
+    assert count_modular_window_kits(assembly) == 0
     assert not report.critical

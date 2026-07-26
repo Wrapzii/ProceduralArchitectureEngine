@@ -50,11 +50,18 @@ _INTERIOR_TAG = frozenset({"facade_shell", "interior"})
 
 _FACE_YAW = {"west": 0, "east": 180, "south": 270, "north": 90}
 
-# Style tag → kit asset (matches georgian_merchant substitutions).
+# Georgian aperture fractions of a bay / storey (not full modular wall kits).
+_WINDOW_W_FRAC = 0.55
+_WINDOW_H_FRAC = 0.58
+_WINDOW_SILL_FRAC = 0.22  # of STOREY — sill height above floor
+_DOOR_W_FRAC = 0.42
+_DOOR_H_FRAC = 0.78
+_PLINTH_FRAC = 0.16
+_CORNICE_FRAC = 0.10
+_FRAME_T_FRAC = 0.08  # of WALL_T — thin sash/door leaf in the opening
+
+# Style tag → kit asset (door leaf only — windows are shell frames, not wall kits).
 _TAG_TO_ASSET = {
-    "window_sash_6over6": "wall_window_mullioned",
-    "window_sash_ground": "wall_window",
-    "window_cross": "wall_window_cross",
     "door_georgian": "wall_door_double",
     "door_plain": "wall_door",
     "door_service": "wall_door_plain",
@@ -110,12 +117,267 @@ def _opening_asset(style_overrides: dict, *, kind: str, level: int) -> str:
     if kind == "door":
         tag = style_overrides.get("door", {}).get("tag", "door_plain")
         return _TAG_TO_ASSET.get(tag, "wall_door")
-    win = style_overrides.get("window", {})
-    tag = win.get("tag", "window_cross")
-    if level == 0:
-        ground_tag = resolve_shared("window", resolve_wealth(0), "ground")
-        tag = win.get("ground_tag", ground_tag) if "ground_tag" in win else tag
-    return _TAG_TO_ASSET.get(tag, "wall_window")
+    # Windows are shell frames — no modular wall kit.
+    return "shell_window_frame"
+
+
+def _place_shell_box(
+    *,
+    piece_prefix: str,
+    asset_id: str,
+    face: str,
+    level: int,
+    cell: Tuple[int, int],
+    size_cm: Tuple[float, float, float],
+    offset_extra: Tuple[float, float, float],
+    placements: List[SolidPlacement],
+    counters: Dict[str, int],
+    tags: FrozenSet[str],
+    kind: str = "wall",
+) -> None:
+    yaw = _FACE_YAW[face]
+    base = _wall_offset_cm(face, yaw, size_cm)
+    offset = (
+        base[0] + offset_extra[0],
+        base[1] + offset_extra[1],
+        base[2] + offset_extra[2],
+    )
+    placements.append(
+        SolidPlacement(
+            piece_id=_next_id(counters, piece_prefix),
+            asset_id=asset_id,
+            kind=kind,
+            cell=cell,
+            level=level,
+            yaw=yaw,
+            offset_cm=offset,
+            size_cm=size_cm,
+            tags=tags,
+        )
+    )
+
+
+def _face_run_and_origin(
+    face: str, bays_x: int, bays_y: int, width_cm: float, depth_cm: float
+) -> Tuple[float, int, Tuple[int, int]]:
+    """Return (run_cm, bay_count, origin_cell) for a facade face."""
+    if face in ("west", "east"):
+        return depth_cm, bays_y, ((0, 0) if face == "west" else (bays_x, 0))
+    return width_cm, bays_x, ((0, 0) if face == "south" else (0, bays_y))
+
+
+def _opening_spec(
+    *,
+    face: str,
+    bay: int,
+    level: int,
+    door_bay: int,
+    bay_count: int,
+) -> Optional[Tuple[str, float, float, float]]:
+    """Return (kind, width_cm, height_cm, sill_z_cm) or None if solid pier bay."""
+    if face == "south" and level == 0 and bay == door_bay:
+        w = MODULE_CM * _DOOR_W_FRAC
+        h = STOREY_CM * _DOOR_H_FRAC
+        return ("door", w, h, 0.0)
+    # Skip a second opening in the door bay on ground south.
+    if face == "south" and level == 0 and bay == door_bay:
+        return None
+    w = MODULE_CM * _WINDOW_W_FRAC
+    h = STOREY_CM * _WINDOW_H_FRAC
+    sill = STOREY_CM * _WINDOW_SILL_FRAC
+    return ("window", w, h, sill)
+
+
+def _place_glazed_face(
+    *,
+    face: str,
+    level: int,
+    bays_x: int,
+    bays_y: int,
+    width_cm: float,
+    depth_cm: float,
+    door_bay: int,
+    door_asset: str,
+    placements: List[SolidPlacement],
+    counters: Dict[str, int],
+) -> None:
+    """Continuous cream facade with real opening gaps (no modular wall-window kits)."""
+    run_cm, bay_count, origin = _face_run_and_origin(
+        face, bays_x, bays_y, width_cm, depth_cm
+    )
+    tags = _EXTERIOR_TAG | frozenset({f"face_{face}"})
+    plinth_h = STOREY_CM * _PLINTH_FRAC
+    cornice_h = STOREY_CM * _CORNICE_FRAC
+    frame_t = max(4.0, WALL_T_CM * _FRAME_T_FRAC)
+
+    # Continuous plinth + cornice bands (reads as one building, not cells).
+    _place_shell_box(
+        piece_prefix=f"shell_plinth_{face}_L{level}",
+        asset_id=SHELL_WALL_ASSET,
+        face=face,
+        level=level,
+        cell=origin,
+        size_cm=(WALL_T_CM, run_cm, plinth_h),
+        offset_extra=(0.0, 0.0, 0.0),
+        placements=placements,
+        counters=counters,
+        tags=tags | frozenset({"plinth"}),
+    )
+    _place_shell_box(
+        piece_prefix=f"shell_cornice_{face}_L{level}",
+        asset_id=SHELL_WALL_ASSET,
+        face=face,
+        level=level,
+        cell=origin,
+        size_cm=(WALL_T_CM, run_cm, cornice_h),
+        offset_extra=(0.0, 0.0, STOREY_CM - cornice_h),
+        placements=placements,
+        counters=counters,
+        tags=tags | frozenset({"cornice"}),
+    )
+
+    # Walk the run in bay modules; solid piers + punched openings.
+    cursor = 0.0
+    for bay in range(bay_count):
+        bay_start = bay * MODULE_CM
+        bay_end = bay_start + MODULE_CM
+        opening = _opening_spec(
+            face=face, bay=bay, level=level, door_bay=door_bay, bay_count=bay_count
+        )
+        # Along-face axis is local +Y after yaw (size.y = run).
+        # offset_extra.y shifts the piece along the face from the face origin.
+        if opening is None:
+            # Should not happen; treat as solid bay fill between plinth/cornice.
+            mid_h = STOREY_CM - plinth_h - cornice_h
+            _place_shell_box(
+                piece_prefix=f"shell_fill_{face}_L{level}_B{bay}",
+                asset_id=SHELL_WALL_ASSET,
+                face=face,
+                level=level,
+                cell=origin,
+                size_cm=(WALL_T_CM, MODULE_CM, mid_h),
+                offset_extra=(0.0, bay_start, plinth_h),
+                placements=placements,
+                counters=counters,
+                tags=tags,
+            )
+            cursor = bay_end
+            continue
+
+        kind, open_w, open_h, sill_z = opening
+        # Keep opening inside the mid band.
+        sill_z = max(plinth_h, sill_z)
+        head_z = min(STOREY_CM - cornice_h, sill_z + open_h)
+        open_h = max(40.0, head_z - sill_z)
+        open_center = bay_start + MODULE_CM * 0.5
+        open_y0 = open_center - open_w * 0.5
+        open_y1 = open_center + open_w * 0.5
+
+        # Left pier (from previous cursor / bay start to opening).
+        left_w = open_y0 - bay_start
+        if left_w > 2.0:
+            mid_h = STOREY_CM - plinth_h - cornice_h
+            _place_shell_box(
+                piece_prefix=f"shell_pier_L_{face}_L{level}_B{bay}",
+                asset_id=SHELL_WALL_ASSET,
+                face=face,
+                level=level,
+                cell=origin,
+                size_cm=(WALL_T_CM, left_w, mid_h),
+                offset_extra=(0.0, bay_start, plinth_h),
+                placements=placements,
+                counters=counters,
+                tags=tags | frozenset({"pier"}),
+            )
+        # Right pier
+        right_w = bay_end - open_y1
+        if right_w > 2.0:
+            mid_h = STOREY_CM - plinth_h - cornice_h
+            _place_shell_box(
+                piece_prefix=f"shell_pier_R_{face}_L{level}_B{bay}",
+                asset_id=SHELL_WALL_ASSET,
+                face=face,
+                level=level,
+                cell=origin,
+                size_cm=(WALL_T_CM, right_w, mid_h),
+                offset_extra=(0.0, open_y1, plinth_h),
+                placements=placements,
+                counters=counters,
+                tags=tags | frozenset({"pier"}),
+            )
+        # Spandrel under opening (if sill above plinth)
+        under_h = sill_z - plinth_h
+        if under_h > 2.0:
+            _place_shell_box(
+                piece_prefix=f"shell_spandrel_{face}_L{level}_B{bay}",
+                asset_id=SHELL_WALL_ASSET,
+                face=face,
+                level=level,
+                cell=origin,
+                size_cm=(WALL_T_CM, open_w, under_h),
+                offset_extra=(0.0, open_y0, plinth_h),
+                placements=placements,
+                counters=counters,
+                tags=tags | frozenset({"spandrel"}),
+            )
+        # Lintel over opening (if head below cornice)
+        over_h = (STOREY_CM - cornice_h) - (sill_z + open_h)
+        if over_h > 2.0:
+            _place_shell_box(
+                piece_prefix=f"shell_lintel_{face}_L{level}_B{bay}",
+                asset_id=SHELL_WALL_ASSET,
+                face=face,
+                level=level,
+                cell=origin,
+                size_cm=(WALL_T_CM, open_w, over_h),
+                offset_extra=(0.0, open_y0, sill_z + open_h),
+                placements=placements,
+                counters=counters,
+                tags=tags | frozenset({"lintel"}),
+            )
+
+        # Thin opening fill: cream is NOT used — dark sash frame box (visual glass hole).
+        if kind == "window":
+            _place_shell_box(
+                piece_prefix=f"shell_sash_{face}_L{level}_B{bay}",
+                asset_id="shell_window_frame",
+                face=face,
+                level=level,
+                cell=origin,
+                size_cm=(frame_t, open_w * 0.92, open_h * 0.92),
+                offset_extra=(
+                    (WALL_T_CM - frame_t) * 0.5,
+                    open_y0 + open_w * 0.04,
+                    sill_z + open_h * 0.04,
+                ),
+                placements=placements,
+                counters=counters,
+                tags=tags | frozenset({"window", "opening"}),
+                kind="prop",
+            )
+        else:
+            # Door: prefer kit door leaf if available, else shell slab.
+            door_size = (WALL_T_CM * 0.55, open_w * 0.9, open_h)
+            yaw = _FACE_YAW[face]
+            base = _wall_offset_cm(face, yaw, door_size)
+            placements.append(
+                SolidPlacement(
+                    piece_id=_next_id(counters, f"shell_door_{face}_L{level}"),
+                    asset_id=door_asset,
+                    kind="wall",
+                    cell=origin,
+                    level=level,
+                    yaw=yaw,
+                    offset_cm=(
+                        base[0] + (WALL_T_CM - door_size[0]) * 0.5,
+                        base[1] + open_y0 + open_w * 0.05,
+                        0.0,
+                    ),
+                    size_cm=door_size,
+                    tags=tags | frozenset({"door", "opening"}),
+                )
+            )
+        cursor = bay_end
 
 
 def _place_continuous_wall(
@@ -230,45 +492,6 @@ def _place_spanning_floor_deck(
             offset_cm=(0.0, 0.0, -FLOOR_T_CM),
             size_cm=(width_cm, depth_cm, FLOOR_T_CM),
             tags=_SHELL_TAG | frozenset({"spanning_floor"}),
-        )
-    )
-
-
-def _place_opening_on_face(
-    *,
-    face: str,
-    bay: int,
-    level: int,
-    asset_id: str,
-    kind: str,
-    placements: List[SolidPlacement],
-    counters: Dict[str, int],
-    bays_x: int,
-    bays_y: int,
-) -> None:
-    yaw = _FACE_YAW[face]
-    size_cm = (WALL_T_CM, MODULE_CM, STOREY_CM)
-    if face == "west":
-        cell = (0, bay)
-    elif face == "east":
-        cell = (bays_x, bay)
-    elif face == "south":
-        cell = (bay, 0)
-    else:
-        cell = (bay, bays_y)
-    offset = _wall_offset_cm(face, yaw, size_cm)
-    tags = _EXTERIOR_TAG | frozenset({f"face_{face}", kind})
-    placements.append(
-        SolidPlacement(
-            piece_id=_next_id(counters, f"shell_{kind}_{face}_L{level}_B{bay}"),
-            asset_id=asset_id,
-            kind="wall",
-            cell=cell,
-            level=level,
-            yaw=yaw,
-            offset_cm=offset,
-            size_cm=size_cm,
-            tags=tags,
         )
     )
 
@@ -440,11 +663,9 @@ def _place_pitched_roof(
         )
 
 
-def _street_faces(row_context: str, blind: FrozenSet[str]) -> Tuple[str, ...]:
-    faces: List[str] = ["south"]
-    if "north" not in blind and row_context == "freestanding":
-        faces.append("north")
-    return tuple(faces)
+def _glazed_faces(blind: FrozenSet[str]) -> Tuple[str, ...]:
+    """Every non-party face gets punched openings (terrace end walls included)."""
+    return tuple(f for f in ("south", "north", "east", "west") if f not in blind)
 
 
 def build_shell_assembly(
@@ -459,14 +680,17 @@ def build_shell_assembly(
     wealth = resolve_wealth(params.wealth)
     blind = party_wall_faces(params.row_context)
     style_overrides = params_to_style_overrides(params)
-    windows_per_bay = style_overrides.get("window", {}).get("per_bay", 1)
     pitch = float(getattr(spec.roof, "pitch", DEFAULT_ROOF_PITCH) or DEFAULT_ROOF_PITCH)
 
     width_cm, depth_cm = _footprint_cm(bays_x, bays_y)
     stair_id = resolve_shared("stair", wealth, "main")
+    # Prefer straight stair inside shell unless footprint is large enough.
+    if stair_id == "stair_switchback" and min(bays_x, bays_y) < 3:
+        stair_id = "stair_straight"
     anchor, stair_yaw, stair_cells = _stair_anchor_and_cells(stair_id, bays_x, bays_y)
     door_bay = max(0, min(bays_x - 1, bays_x // 2))
-    street_faces = _street_faces(params.row_context, blind)
+    glazed = _glazed_faces(blind)
+    door_asset = _opening_asset(style_overrides, kind="door", level=0)
 
     placements: List[SolidPlacement] = []
     counters: Dict[str, int] = {}
@@ -497,62 +721,53 @@ def build_shell_assembly(
 
         for face in ("west", "east", "south", "north"):
             run_cm = depth_cm if face in ("west", "east") else width_cm
-            _place_continuous_wall(
-                face=face,
-                level=level,
-                run_cm=run_cm,
-                placements=placements,
-                counters=counters,
-                bays_x=bays_x,
-                bays_y=bays_y,
-                blind=face in blind,
-            )
-
-        # Ground door on south street face.
-        if level == 0:
-            door_asset = _opening_asset(style_overrides, kind="door", level=0)
-            _place_opening_on_face(
-                face="south",
-                bay=door_bay,
-                level=level,
-                asset_id=door_asset,
-                kind="door",
-                placements=placements,
-                counters=counters,
-                bays_x=bays_x,
-                bays_y=bays_y,
-            )
-
-        # Windows on street faces only — never on party walls.
-        win_asset = _opening_asset(style_overrides, kind="window", level=level)
-        for face in street_faces:
             if face in blind:
-                continue
-            for bay in range(bays_x):
-                for _w in range(max(1, int(windows_per_bay))):
-                    _place_opening_on_face(
-                        face=face,
-                        bay=bay,
-                        level=level,
-                        asset_id=win_asset,
-                        kind="window",
-                        placements=placements,
-                        counters=counters,
-                        bays_x=bays_x,
-                        bays_y=bays_y,
-                    )
+                _place_continuous_wall(
+                    face=face,
+                    level=level,
+                    run_cm=run_cm,
+                    placements=placements,
+                    counters=counters,
+                    bays_x=bays_x,
+                    bays_y=bays_y,
+                    blind=True,
+                )
+            elif face in glazed:
+                _place_glazed_face(
+                    face=face,
+                    level=level,
+                    bays_x=bays_x,
+                    bays_y=bays_y,
+                    width_cm=width_cm,
+                    depth_cm=depth_cm,
+                    door_bay=door_bay,
+                    door_asset=door_asset,
+                    placements=placements,
+                    counters=counters,
+                )
+            else:
+                _place_continuous_wall(
+                    face=face,
+                    level=level,
+                    run_cm=run_cm,
+                    placements=placements,
+                    counters=counters,
+                    bays_x=bays_x,
+                    bays_y=bays_y,
+                    blind=False,
+                )
 
-        # Interior corridor partition (inset from west unless west is street).
-        inset_x = 1 if "west" not in blind else min(2, max(1, bays_x - 2))
-        _place_interior_corridor_wall(
-            level=level,
-            inset_cell_x=inset_x,
-            depth_cm=depth_cm,
-            placements=placements,
-            counters=counters,
-        )
+        # One inset interior partition only (never an exterior cell grid).
+        if bays_x >= 3 and level == 0:
+            inset_x = 1 if "west" in blind else min(2, max(1, bays_x - 2))
+            _place_interior_corridor_wall(
+                level=level,
+                inset_cell_x=inset_x,
+                depth_cm=depth_cm,
+                placements=placements,
+                counters=counters,
+            )
 
-    # Stairs between storeys.
     for level in range(storeys - 1):
         _place_stair(
             stair_id=stair_id,
@@ -582,12 +797,23 @@ def build_shell_assembly(
 
 
 def count_exterior_shell_walls(assembly: Assembly) -> int:
-    """Count continuous exterior shell wall panels (not per-bay kit walls)."""
+    """Count continuous exterior shell wall panels (cream shell boxes on faces)."""
     return sum(
         1
         for p in assembly.placements
         if p.asset_id == SHELL_WALL_ASSET and "exterior" in p.tags
     )
+
+
+def count_modular_window_kits(assembly: Assembly) -> int:
+    """Legacy modular wall-window kits must not appear on the shell facade."""
+    kit_ids = {
+        "wall_window",
+        "wall_window_cross",
+        "wall_window_mullioned",
+        "wall_window_plain",
+    }
+    return sum(1 for p in assembly.placements if p.asset_id in kit_ids)
 
 
 def count_window_placements(assembly: Assembly, face: str) -> int:

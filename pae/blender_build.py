@@ -131,6 +131,7 @@ ASSET_MATERIAL_COLORS: Dict[str, Tuple[float, float, float, float]] = {
     "shell_wall_solid": (0.92, 0.88, 0.78, 1.0),  # cream render exterior
     "shell_wall_interior": (0.86, 0.84, 0.80, 1.0),  # plaster interior
     "shell_floor_slab": (0.62, 0.52, 0.40, 1.0),  # floor boards
+    "shell_window_frame": (0.12, 0.12, 0.14, 1.0),  # dark sash
 }
 _TINTED_ASSET_PREFIXES = ("roof_", "tower_", "stair_", "spire_", "dormer_")
 _TINTED_ASSET_EXACT = frozenset(ASSET_MATERIAL_COLORS.keys())
