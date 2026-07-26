@@ -266,13 +266,26 @@ def test_house_scale_stair_is_one_bay_and_not_sealed():
         for p in assembly.placements
         if "stair_shaft" in p.tags
         and ("face_south" in p.tags or "face_north" in p.tags)
-        and p.asset_id != "shell_stair_rail"
     ]
     assert not sealed, [p.piece_id for p in sealed]
     _anchor, yaw, cells = _stair_anchor_and_cells(plan, 3, 2)
     assert yaw == 90
     assert len(cells) == 1
 
+
+def test_shell_emits_no_shaft_rails():
+    """Shaft rails sat across the hall opening and blocked stair access."""
+    for kwargs in (
+        dict(storeys=2, frontage_m=10.0, depth_m=8.0, wealth=2),
+        dict(storeys=4, frontage_m=22.0, depth_m=12.0, wealth=4),
+    ):
+        assembly, _ = build_shell_assembly(_default_params(**kwargs))
+        rails = [
+            p
+            for p in assembly.placements
+            if p.asset_id == "shell_stair_rail" or "stair_rail" in p.tags
+        ]
+        assert not rails, [p.piece_id for p in rails]
 
 def test_stair_shaft_pieces_inside_footprint():
     from pae.facade_grammar import metres_to_bays

@@ -80,7 +80,6 @@ _FRAME_BAR_CM = 10.0  # jamb / sill / head stick thickness (~8–12 cm)
 _GLASS_DEPTH_CM = 1.5  # thin glazing plane — must not fill the opening
 _MUNTIN_T_FRAC = 0.045  # of WALL_T — thin Georgian cross bars
 _SHAFT_WALL_HEIGHT_FRAC = 0.82  # shaft partitions — leave headroom into the well
-_SHAFT_RAIL_HEIGHT_CM = 100.0  # handrail Z above floor (south hall opening)
 _CHIMNEY_W_FRAC = 0.18  # of MODULE — roof stub footprint
 _CHIMNEY_H_FRAC = 0.42  # of STOREY — short stack above ridge
 _SHOP_WINDOW_SCALE = 1.22  # ground-floor shop window widen at wealth ≥ 3
@@ -1120,43 +1119,6 @@ def _place_stair_shaft_walls(
         )
 
 
-def _place_stair_shaft_rail(
-    *,
-    level: int,
-    stair_cells: Sequence[Tuple[int, int]],
-    placements: List[SolidPlacement],
-    counters: Dict[str, int],
-    open_faces: FrozenSet[str] = frozenset({"south"}),
-) -> None:
-    """Low handrail on the open south hall side — skipped when south is the climb entry."""
-    if not stair_cells:
-        return
-    # Compact straight (yaw 90) uses the south edge as the walk-on; a rail there
-    # would wall off the bottom the same way the old W/E partitions did.
-    if "south" in {f.lower() for f in open_faces} and "north" in {
-        f.lower() for f in open_faces
-    }:
-        return
-    min_x, min_y, max_x, _max_y = _stair_well_bbox_cells(stair_cells)
-    well_w = (max_x - min_x + 1) * MODULE_CM
-    rail_h = 4.0
-    rail_d = 3.0
-    rail_z = _SHAFT_RAIL_HEIGHT_CM
-    placements.append(
-        SolidPlacement(
-            piece_id=_next_id(counters, f"shell_shaft_rail_L{level}"),
-            asset_id=SHELL_STAIR_RAIL_ASSET,
-            kind="prop",
-            cell=(min_x, min_y),
-            level=level,
-            yaw=0,
-            offset_cm=(0.0, 0.0, rail_z),
-            size_cm=(well_w, rail_d, rail_h),
-            tags=_INTERIOR_TAG | frozenset({"stair_shaft", "stair_rail", "partition"}),
-        )
-    )
-
-
 def _place_interior_corridor_wall(
     *,
     level: int,
@@ -1525,13 +1487,6 @@ def build_shell_assembly(
                 )
 
         _place_stair_shaft_walls(
-            level=level,
-            stair_cells=stair_cells,
-            placements=placements,
-            counters=counters,
-            open_faces=stair_open_faces,
-        )
-        _place_stair_shaft_rail(
             level=level,
             stair_cells=stair_cells,
             placements=placements,
