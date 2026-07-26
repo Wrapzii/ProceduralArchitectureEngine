@@ -81,25 +81,48 @@ if HAS_BPY:
 
     class PAE_OT_generate_from_structure(bpy.types.Operator):
         bl_idname = "pae.generate_from_structure"
-        bl_label = "Generate Structure"
+        bl_label = "Generate Structure (Legacy)"
         bl_description = (
-            "Build from Structure panel: StructureSpec → solve → plan → assemble → validate"
+            "LEGACY modular path — StructureSpec → assemble. "
+            "NOT Procedural Building. Use Procedural Building panel instead."
         )
         bl_options = {"REGISTER"}
 
         def execute(self, context):
             props = scene_props(context)
+            _LEGACY_STRUCTURE_NOTE = (
+                "This is legacy modular; use Procedural Building → Generate Building"
+            )
             try:
                 if len(props.structure_levels) == 0:
                     bpy.ops.pae.structure_add_level()
                 maybe_clear_pae_scene(props)
                 structure = structure_from_context(context)
                 _, _, assembly, report = run_full_pipeline(structure)
+                from pae.report import Failure, Report
+
+                report = Report.from_failures(
+                    list(report.failures)
+                    + [
+                        Failure(
+                            check="structure_legacy_modular",
+                            message=_LEGACY_STRUCTURE_NOTE,
+                            critical=False,
+                        )
+                    ]
+                )
                 if assembly is not None and assembly.placements:
                     sync_assembly_preview(assembly)
                 ok, _msg = report_validation_result(
                     self, props, report, prefix="Structure"
                 )
+                props.last_pipeline_message = (
+                    f"{props.last_pipeline_message} — {_LEGACY_STRUCTURE_NOTE}"
+                    if ok
+                    else props.last_pipeline_message
+                )
+                if ok:
+                    self.report({"INFO"}, props.last_pipeline_message)
                 return {"FINISHED"} if ok else {"CANCELLED"}
             except (RuntimeError, ValueError) as exc:
                 report_operator_exception(self, props, exc)

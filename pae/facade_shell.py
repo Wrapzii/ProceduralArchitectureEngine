@@ -1,9 +1,8 @@
 """Continuous facade shell — solid exterior panels with grammar-cut openings.
 
 Builds a CITY&BEYOND-style box shell from :class:`pae.facade_grammar.FacadeParams`
-without per-cell modular exterior wall kits. Interior partition grids are never
-emitted as outer skin; only a stair well and optional inset corridor wall live
-inside the footprint.
+without per-cell modular exterior wall kits. Interior partition grids and
+balcony/patio/jetty dress are never emitted on this path.
 """
 
 from __future__ import annotations
@@ -81,6 +80,14 @@ def is_shell_placement(p: SolidPlacement) -> bool:
     return "facade_shell" in getattr(p, "tags", frozenset())
 
 
+def is_facade_shell_assembly(assembly: Assembly) -> bool:
+    """True when *assembly* was built by :func:`build_shell_assembly` (shell-only path)."""
+    placements = getattr(assembly, "placements", None) or ()
+    if not placements:
+        return False
+    return any(is_shell_placement(p) for p in placements)
+
+
 def _next_id(counters: Dict[str, int], prefix: str) -> str:
     counters[prefix] = counters.get(prefix, 0) + 1
     n = counters[prefix]
@@ -103,18 +110,29 @@ def _footprint_cm(bays_x: int, bays_y: int) -> Tuple[float, float]:
     return bays_x * MODULE_CM, bays_y * MODULE_CM
 
 
+def _stair_well_size(stair_id: str, bays_x: int, bays_y: int) -> Tuple[int, int]:
+    """Footprint of the stair shaft in cells (width along X, depth along Y)."""
+    if stair_id == "stair_switchback":
+        return (2, 2)
+    if bays_x >= 5 or bays_y >= 4 or bays_x * bays_y >= 12:
+        return (2, 2)
+    return (2, 1)
+
+
 def _stair_anchor_and_cells(
     stair_id: str, bays_x: int, bays_y: int
 ) -> Tuple[Tuple[int, int], int, List[Tuple[int, int]]]:
     """Pick an interior stair anchor and occupied cells (inside footprint)."""
-    if stair_id == "stair_switchback" and bays_x >= 4 and bays_y >= 3:
-        ax, ay = max(1, bays_x - 3), 1
-        cells = [(ax + i, ay + j) for i in range(2) for j in range(2)]
-        return (ax, ay), 0, cells
-    # stair_straight — 2×1 run along +X, tucked against north interior.
-    ax = max(0, min(1, bays_x - 2))
-    ay = max(1, bays_y - 2)
-    cells = [(ax, ay), (ax + 1, ay)]
+    well_w, well_d = _stair_well_size(stair_id, bays_x, bays_y)
+    # Prefer the eastmost fit along X so the well clears the west exterior skin.
+    ax = max(0, bays_x - well_w)
+    # Tuck against the north interior; hall opens to the south.
+    ay = max(0, bays_y - well_d)
+    if bays_y > well_d:
+        ay = bays_y - well_d
+    cells = [
+        (ax + i, ay + j) for i in range(well_w) for j in range(well_d)
+    ]
     return (ax, ay), 0, cells
 
 
@@ -388,20 +406,7 @@ def _place_glazed_face(
                 tags=tags | frozenset({"window", "opening"}),
                 kind="prop",
             )
-            _place_window_muntins(
-                face=face,
-                level=level,
-                origin=origin,
-                open_center=open_center,
-                open_y0=open_y0,
-                open_w=open_w,
-                open_h=open_h,
-                sill_z=sill_z,
-                frame_t=frame_t,
-                placements=placements,
-                counters=counters,
-                tags=tags,
-            )
+            # Thin sash frame only — no muntin bars (they read as interior half-walls).
         else:
             door_t = max(4.0, frame_t)
             _place_shell_box(
@@ -565,6 +570,72 @@ def _place_stair(
             size_cm=desc.size_cm,
             rotates_about_center=desc.rotates_about_center,
             tags=_INTERIOR_TAG | frozenset({"stair"}),
+        )
+    )
+
+
+def _stair_well_bbox_cells(
+    cells: Sequence[Tuple[int, int]],
+) -> Tuple[int, int, int, int]:
+    xs = [c[0] for c in cells]
+    ys = [c[1] for c in cells]
+    return min(xs), min(ys), max(xs), max(ys)
+
+
+def _place_stair_shaft_walls(
+    *,
+    level: int,
+    stair_cells: Sequence[Tuple[int, int]],
+    placements: List[SolidPlacement],
+    counters: Dict[str, int],
+) -> None:
+    """Three-sided shaft enclosure inside the shell — open on the south (hall) side."""
+    if not stair_cells:
+        return
+    min_x, min_y, max_x, max_y = _stair_well_bbox_cells(stair_cells)
+    well_w = (max_x - min_x + 1) * MODULE_CM
+    well_d = (max_y - min_y + 1) * MODULE_CM
+    ox = min_x * MODULE_CM
+    oy = min_y * MODULE_CM
+    tags = _INTERIOR_TAG | frozenset({"stair_shaft", "partition"})
+
+    placements.append(
+        SolidPlacement(
+            piece_id=_next_id(counters, f"shell_shaft_n_L{level}"),
+            asset_id=SHELL_INTERIOR_WALL_ASSET,
+            kind="wall",
+            cell=(min_x, max_y),
+            level=level,
+            yaw=0,
+            offset_cm=(ox, oy + well_d - WALL_T_CM, 0.0),
+            size_cm=(well_w, WALL_T_CM, STOREY_CM),
+            tags=tags | frozenset({"face_north"}),
+        )
+    )
+    placements.append(
+        SolidPlacement(
+            piece_id=_next_id(counters, f"shell_shaft_w_L{level}"),
+            asset_id=SHELL_INTERIOR_WALL_ASSET,
+            kind="wall",
+            cell=(min_x, min_y),
+            level=level,
+            yaw=0,
+            offset_cm=(ox, oy, 0.0),
+            size_cm=(WALL_T_CM, well_d, STOREY_CM),
+            tags=tags | frozenset({"face_west"}),
+        )
+    )
+    placements.append(
+        SolidPlacement(
+            piece_id=_next_id(counters, f"shell_shaft_e_L{level}"),
+            asset_id=SHELL_INTERIOR_WALL_ASSET,
+            kind="wall",
+            cell=(max_x, min_y),
+            level=level,
+            yaw=0,
+            offset_cm=(ox + well_w - WALL_T_CM, oy, 0.0),
+            size_cm=(WALL_T_CM, well_d, STOREY_CM),
+            tags=tags | frozenset({"face_east"}),
         )
     )
 
@@ -770,7 +841,7 @@ def build_shell_assembly(
     pitch = float(getattr(spec.roof, "pitch", DEFAULT_ROOF_PITCH) or DEFAULT_ROOF_PITCH)
 
     width_cm, depth_cm = _footprint_cm(bays_x, bays_y)
-    stair_id = resolve_stair_id(wealth, bays_x, bays_y)
+    stair_id = resolve_stair_id(wealth, bays_x, bays_y, storeys=storeys)
     anchor, stair_yaw, stair_cells = _stair_anchor_and_cells(stair_id, bays_x, bays_y)
     door_bay = max(0, min(bays_x - 1, bays_x // 2))
     glazed = _glazed_faces(blind)
@@ -839,16 +910,12 @@ def build_shell_assembly(
                     blind=False,
                 )
 
-        # One inset interior partition only (never an exterior cell grid).
-        if bays_x >= 3 and level == 0:
-            inset_x = 1 if "west" in blind else min(2, max(1, bays_x - 2))
-            _place_interior_corridor_wall(
-                level=level,
-                inset_cell_x=inset_x,
-                depth_cm=depth_cm,
-                placements=placements,
-                counters=counters,
-            )
+        _place_stair_shaft_walls(
+            level=level,
+            stair_cells=stair_cells,
+            placements=placements,
+            counters=counters,
+        )
 
     for level in range(storeys - 1):
         _place_stair(
@@ -954,6 +1021,47 @@ def count_chimney_stubs(assembly: Assembly) -> int:
     return sum(1 for p in assembly.placements if p.asset_id == SHELL_CHIMNEY_ASSET)
 
 
+def count_stair_placements(assembly: Assembly) -> int:
+    return sum(1 for p in assembly.placements if p.kind == "stair")
+
+
+def count_floor_holes(assembly: Assembly) -> int:
+    return sum(
+        1
+        for p in assembly.placements
+        if p.asset_id == "floor_hole" and p.kind == "hole"
+    )
+
+
+def count_interior_corridor_walls(assembly: Assembly) -> int:
+    """Legacy inset corridor partitions — must not appear in shell mode."""
+    return sum(
+        1
+        for p in assembly.placements
+        if p.asset_id == SHELL_INTERIOR_WALL_ASSET
+        and "stair_shaft" not in p.tags
+        and str(p.piece_id).startswith("shell_corridor")
+    )
+
+
+def count_style_shell_props(assembly: Assembly) -> int:
+    """Balcony/patio/jetty/forecourt style-pack props must not appear in shell mode."""
+    forbidden = (
+        "balcony",
+        "patio",
+        "jetty",
+        "forecourt",
+        "balcony_deck",
+        "porch_slab",
+    )
+    return sum(
+        1
+        for p in assembly.placements
+        if p.asset_id in forbidden
+        or any(t in p.tags for t in ("balcony", "patio", "jetty", "forecourt"))
+    )
+
+
 def count_muntin_placements(assembly: Assembly) -> int:
     return sum(
         1 for p in assembly.placements if p.asset_id == SHELL_WINDOW_MUNTIN_ASSET
@@ -981,12 +1089,17 @@ __all__ = [
     "count_chimney_stubs",
     "count_exterior_shell_walls",
     "count_face_shell_wall_panels",
+    "count_floor_holes",
+    "count_interior_corridor_walls",
     "count_modular_window_kits",
     "count_muntin_placements",
     "count_opening_cutters",
     "count_pier_pieces",
     "count_shell_doors",
+    "count_stair_placements",
+    "count_style_shell_props",
     "count_window_placements",
+    "is_facade_shell_assembly",
     "is_shell_placement",
     "shell_cutter_hole_yz_cm",
 ]

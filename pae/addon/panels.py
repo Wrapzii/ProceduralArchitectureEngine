@@ -21,6 +21,13 @@ if HAS_BPY:
         def draw(self, context):
             props = context.scene.pae
             layout = self.layout
+
+            warn = layout.box()
+            warn.alert = True
+            warn.label(text="Legacy modular — NOT Procedural Building", icon="ERROR")
+            warn.label(text="Use Procedural Building panel above.")
+            warn.label(text="Structure stair/style/seed are ignored there.")
+
             layout.prop(props, "building_name", text="Name")
             layout.prop(props, "style")
             layout.prop(props, "seed")
@@ -40,7 +47,11 @@ if HAS_BPY:
             row.operator("pae.export_structure_yaml", icon="EXPORT")
             row = layout.row(align=True)
             row.operator("pae.load_gatehouse_preset", icon="PRESET")
-            row.operator("pae.generate_from_structure", icon="MOD_BUILD")
+            row.operator(
+                "pae.generate_from_structure",
+                text="Generate Structure (Legacy)",
+                icon="MOD_BUILD",
+            )
             layout.operator("pae.run_validate", icon="CHECKMARK")
 
     class PAE_PT_levels(bpy.types.Panel):
@@ -106,7 +117,10 @@ if HAS_BPY:
             col.separator()
             col.prop(props, "facade_frontage_m")
             col.prop(props, "facade_depth_m")
-            col.prop(props, "facade_storeys")
+            storey_label = (
+                "Storeys (Auto→3)" if int(props.facade_storeys) == 0 else "Storeys"
+            )
+            col.prop(props, "facade_storeys", text=storey_label)
             col.prop(props, "facade_wealth")
             col.prop(props, "facade_weathering")
             col.prop(props, "facade_lit_windows")

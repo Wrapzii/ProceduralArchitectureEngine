@@ -105,18 +105,32 @@ def footprint_allows_switchback(bays_x: int, bays_y: int) -> bool:
     return bays_x >= 4 and bays_y >= 3
 
 
-def resolve_stair_id(wealth: int, bays_x: int, bays_y: int) -> str:
-    """Pick stair piece id; downgrade switchback when the plot is too small."""
+def resolve_stair_id(
+    wealth: int,
+    bays_x: int,
+    bays_y: int,
+    *,
+    storeys: int = 1,
+) -> str:
+    """Pick stair piece id — straight on small/low plots, switchback when tall/wide."""
+    resolved_storeys = resolve_storeys(storeys) if storeys <= 0 else max(1, int(storeys))
+    wants_switchback = resolved_storeys >= 3 or (
+        bays_x >= 4 and bays_y >= 3
+    )
+    if wants_switchback and footprint_allows_switchback(bays_x, bays_y):
+        return "stair_switchback"
     stair_id = resolve_shared("stair", resolve_wealth(wealth), "main")
     if stair_id == "stair_switchback" and not footprint_allows_switchback(
         bays_x, bays_y
     ):
         return "stair_straight"
+    if not wants_switchback:
+        return "stair_straight"
     return stair_id
 
 
-def _stair_kind(wealth: int, bays_x: int, bays_y: int) -> str:
-    stair_id = resolve_stair_id(wealth, bays_x, bays_y)
+def _stair_kind(wealth: int, bays_x: int, bays_y: int, *, storeys: int = 1) -> str:
+    stair_id = resolve_stair_id(wealth, bays_x, bays_y, storeys=storeys)
     return "switchback" if stair_id == "stair_switchback" else "straight"
 
 
@@ -127,7 +141,7 @@ def params_to_spec(params: FacadeParams) -> BuildingSpec:
     bays_x = metres_to_bays(params.frontage_m) or _DEFAULT_FRONTAGE_BAYS
     bays_y = metres_to_bays(params.depth_m) or _DEFAULT_DEPTH_BAYS
     windows_per_bay = _windows_per_bay(wealth)
-    stair_kind = _stair_kind(wealth, bays_x, bays_y)
+    stair_kind = _stair_kind(wealth, bays_x, bays_y, storeys=storeys)
 
     # Party-wall faces are west/east in a south-facing row; entrances stay on south.
     blind = party_wall_faces(params.row_context)
@@ -178,7 +192,10 @@ def params_to_style_overrides(params: FacadeParams) -> Dict[str, Any]:
         "chimney_stub": wealth >= 3,
         "window_sills": True,
         "pilasters": wealth >= 3,
-        "forecourt": params.row_context != "mid",
+        "forecourt": False,
+        "balcony": False,
+        "patio": False,
+        "jetty": False,
     }
 
     return {
@@ -240,9 +257,10 @@ def build_from_params(
 ) -> Tuple[Any, Any, Any, Report, FacadeParams]:
     """Build facade assembly from slider params.
 
-    ``mode="shell"`` (default) emits a continuous exterior shell via
-    :mod:`pae.facade_shell`. ``mode="modular"`` keeps the legacy per-cell
-    assemble → style shell → detail pipeline for debugging.
+    ``mode="shell"`` (default) delegates to
+    :func:`pae.building_builder.build_building` — the public Procedural
+    Building entry. ``mode="modular"`` is **legacy debug only** (per-cell
+    ``assemble.py`` wall farm); not for demos or user-facing builds.
 
     Returns ``(massing, floor_plan, assembly, report, params)``.
     """
@@ -260,16 +278,13 @@ def build_from_params(
         )
         return massing, floor_plan, assembly, report, params
 
-    from pae.facade_shell import build_shell_assembly
+    from pae.building_builder import build_building
 
-    spec = params_to_spec(params)
-    assembly, report = build_shell_assembly(params, spec)
-    if validate_assembly:
-        from pae.validate import validate
-
-        _validated_asm, vreport = validate(assembly)
-        report = Report.from_failures(list(report.failures) + list(vreport.failures))
-    return None, None, assembly, report, params
+    return build_building(
+        params,
+        validate_assembly=validate_assembly,
+        **kwargs,
+    )
 
 
 __all__ = [

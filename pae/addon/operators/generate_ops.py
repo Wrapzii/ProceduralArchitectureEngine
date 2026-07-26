@@ -307,8 +307,8 @@ if HAS_BPY:
         bl_idname = "pae.generate_facade"
         bl_label = "Generate Building"
         bl_description = (
-            "Build from Procedural Building sliders "
-            "(facade grammar + shared door/stair ids)"
+            "Build from Procedural Building sliders only (shell mode). "
+            "Ignores Structure panel stair/style/seed."
         )
         bl_options = {"REGISTER"}
 
@@ -322,11 +322,8 @@ if HAS_BPY:
                     clear_pae_scene,
                     instance_facade_shell,
                 )
-                from pae.facade_grammar import (
-                    FacadeParams,
-                    build_from_params,
-                    export_params_json,
-                )
+                from pae.building_builder import build_building
+                from pae.facade_grammar import FacadeParams, export_params_json
 
                 params = FacadeParams(
                     seed=int(props.facade_seed),
@@ -342,7 +339,9 @@ if HAS_BPY:
                 )
                 props.facade_params_json = export_params_json(params)
                 _massing, _plan, assembly, report, _out = build_from_params(
-                    params, mode="shell", validate_assembly=False
+                    params,
+                    mode="shell",
+                    validate_assembly=False,
                 )
                 if assembly is not None and assembly.placements:
                     import bpy
@@ -365,7 +364,8 @@ if HAS_BPY:
                         target_coll=coll,
                         offset_m=offset_m,
                     )
-                    sync_assembly_preview(assembly)
+                    # Shell is fully instanced above — skip sync_assembly_preview
+                    # (it would duplicate floor_hole / partition cubes as grey slabs).
                 store_validation_report(props, report)
                 n = len(assembly.placements) if assembly else 0
                 ok, _msg = report_validation_result(
