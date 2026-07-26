@@ -471,10 +471,16 @@ def test_mid_terrace_party_walls_blind():
 
 
 def test_archetype_civic_loads_distinct_window_frac():
+    from pae.facade_grammar import load_archetype_shell_config
+
     civic = load_archetype_shell_config("civic")
     manor = load_archetype_shell_config("manor")
     assert civic.roof_kind == "flat"
     assert civic.window_w_frac != manor.window_w_frac
+    civic_asm, _ = build_shell_assembly(_default_params(archetype="civic", wealth=3))
+    assert any(p.asset_id == "shell_roof_slab" for p in civic_asm.placements)
+    assert count_shell_roof_slopes(civic_asm) == 0
+
 
 def test_shell_roof_aabb_within_footprint_overhang():
     params = _demo_user_params()
