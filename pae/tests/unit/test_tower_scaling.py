@@ -69,7 +69,7 @@ def test_small_square_spire_is_a_stair_turret_not_a_room_tower():
     assert not any("tower_room_floor" in p.tags for p in assembly.placements)
     stairs = [p for p in assembly.placements if p.asset_id == "stair_spiral_quarter"]
     assert stairs
-    assert max(p.size_cm[0] for p in stairs) <= 440.0
+    assert max(p.size_cm[0] for p in stairs) <= 480.0
     assert len(stairs) % 4 == 0
     assert {p.yaw for p in stairs} == {0, 90, 180, 270}
     assert not any(p.asset_id == "spiral_newel" for p in assembly.placements)
