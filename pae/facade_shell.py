@@ -350,6 +350,32 @@ def stairwell_blocked_bays(
     return {face: frozenset(bays) for face, bays in blocked.items()}
 
 
+def stair_well_exterior_faces(
+    stair_cells: Sequence[Tuple[int, int]],
+    *,
+    bays_x: int,
+    bays_y: int,
+) -> FrozenSet[str]:
+    """Shell faces where the stair well already sits on the exterior skin.
+
+    Interior shaft partitions on those faces duplicate the facade and plug
+    window openings from the inside.
+    """
+    faces: Set[str] = set()
+    if bays_x < 1 or bays_y < 1:
+        return frozenset()
+    for cx, cy in stair_cells:
+        if cy <= 0:
+            faces.add("south")
+        if cy >= bays_y - 1:
+            faces.add("north")
+        if cx <= 0:
+            faces.add("west")
+        if cx >= bays_x - 1:
+            faces.add("east")
+    return frozenset(faces)
+
+
 def _door_bay_clear_of_stair(
     preferred: int,
     *,
@@ -422,17 +448,11 @@ def _opening_spec(
 ) -> Optional[Tuple[str, float, float, float]]:
     """Return (kind, width_cm, height_cm, sill_z_cm) or None if solid pier bay.
 
-    Stairwell-adjacent bays never get a normal sash/door. Wealth ≥ 3 may get a
-    high small ``stair_light`` so the shaft has daylight without looking like a
-    room window into the stairs.
+    Stairwell facade bays stay solid — no room sash into the shaft, and no
+    small ``stair_light`` either (those read as the wrong window next to a
+    full sash and still fight stair / shaft geometry).
     """
     if bay in stair_blocked:
-        if wealth >= 3:
-            # High stair light — clears switchback treads / rail height.
-            w = MODULE_CM * 0.32
-            h = STOREY_CM * 0.28
-            sill = STOREY_CM * 0.58
-            return ("stair_light", w, h, sill)
         return None
     if (face, level, bay) in variation.window_skip:
         return None
@@ -1060,11 +1080,14 @@ def _place_stair_shaft_walls(
     placements: List[SolidPlacement],
     counters: Dict[str, int],
     open_faces: FrozenSet[str] = frozenset({"south"}),
+    bays_x: int = 1,
+    bays_y: int = 1,
 ) -> None:
-    """Shaft enclosure — omit faces needed for stair approach / exit.
+    """Interior shaft partitions only — never on exterior skins or approach faces.
 
-    Default switchback keeps N/W/E and opens south to the hall. Straight runs
-    also leave the bottom and top faces open so the flight is not walled off.
+    When the well sits on the north/east/west facade, that face already has the
+    shell wall (+ openings). A second shaft slab there doubles the skin and
+    blocks windows from inside.
     """
     if not stair_cells:
         return
@@ -1073,9 +1096,14 @@ def _place_stair_shaft_walls(
     well_d = (max_y - min_y + 1) * MODULE_CM
     shaft_h = STOREY_CM * _SHAFT_WALL_HEIGHT_FRAC
     tags = _INTERIOR_TAG | frozenset({"stair_shaft", "partition", "plaster"})
-    open_l = {f.lower() for f in open_faces}
+    skip = {f.lower() for f in open_faces} | {
+        f.lower()
+        for f in stair_well_exterior_faces(
+            stair_cells, bays_x=bays_x, bays_y=bays_y
+        )
+    }
 
-    if "north" not in open_l:
+    if "north" not in skip:
         placements.append(
             SolidPlacement(
                 piece_id=_next_id(counters, f"shell_shaft_n_L{level}"),
@@ -1089,7 +1117,7 @@ def _place_stair_shaft_walls(
                 tags=tags | frozenset({"face_north"}),
             )
         )
-    if "west" not in open_l:
+    if "west" not in skip:
         placements.append(
             SolidPlacement(
                 piece_id=_next_id(counters, f"shell_shaft_w_L{level}"),
@@ -1103,7 +1131,7 @@ def _place_stair_shaft_walls(
                 tags=tags | frozenset({"face_west"}),
             )
         )
-    if "east" not in open_l:
+    if "east" not in skip:
         placements.append(
             SolidPlacement(
                 piece_id=_next_id(counters, f"shell_shaft_e_L{level}"),
@@ -1492,6 +1520,8 @@ def build_shell_assembly(
             placements=placements,
             counters=counters,
             open_faces=stair_open_faces,
+            bays_x=bays_x,
+            bays_y=bays_y,
         )
 
     for level in range(storeys - 1):
@@ -1748,4 +1778,5 @@ __all__ = [
     "shell_cutter_hole_yz_cm",
     "shell_roof_placements",
     "stairwell_blocked_bays",
+    "stair_well_exterior_faces",
 ]

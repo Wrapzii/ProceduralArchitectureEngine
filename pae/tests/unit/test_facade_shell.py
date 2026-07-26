@@ -237,8 +237,8 @@ def test_stair_and_floor_hole_counts_match_storeys():
         assembly, _ = build_shell_assembly(params)
         assert count_stair_placements(assembly) == storeys - 1
         assert count_floor_holes(assembly) == storeys - 1
-        # Switchback keeps three shaft faces (+ optional rail) per storey.
-        assert count_stair_shaft_pieces(assembly) >= 3 * storeys
+        # Interior-only shaft faces remain (exterior-coincident faces are omitted).
+        assert count_stair_shaft_pieces(assembly) >= storeys
 
 
 def test_house_scale_stair_is_one_bay_and_not_sealed():
@@ -576,25 +576,53 @@ def test_stairwell_bays_have_no_room_windows():
         cells, bays_x=spec.footprint.bays_x, bays_y=spec.footprint.bays_y
     )
     assert blocked["north"], "user-demo well should touch the north wall"
-    # Room windows: cutters tagged window but NOT stair_light.
+    # Stairwell facade bays: solid skin only — no room sash and no stair_light.
     for p in assembly.placements:
         if p.asset_id != "shell_opening_cutter":
             continue
-        if "stair_light" in p.tags:
-            assert "stairwell" in p.tags or "stair_light" in p.tags
-            continue
-        if "window" not in p.tags and "door" not in p.tags:
+        if "window" not in p.tags and "door" not in p.tags and "stair_light" not in p.tags:
             continue
         face = next(t[5:] for t in p.tags if t.startswith("face_"))
-        # Bay index is encoded in piece_id ..._B{n}
         bay = int(p.piece_id.rsplit("_B", 1)[-1].split("_")[0])
         assert bay not in blocked.get(face, frozenset()), (
-            f"room {p.tags} opening on stairwell bay {face} B{bay}: {p.piece_id}"
+            f"opening on stairwell bay {face} B{bay}: {p.piece_id} tags={p.tags}"
         )
-    # Wealth 4 → high stair lights allowed on blocked faces (not full sashes).
     lights = [p for p in assembly.placements if "stair_light" in p.tags]
-    assert lights, "wealthy builds should get high stair lights on the shaft face"
+    assert not lights, "stairwell bays stay solid — no stair_light cutters"
 
+
+def test_no_shaft_walls_on_exterior_faces():
+    """Shaft partitions must not duplicate exterior skins / plug facade openings."""
+    from pae.facade_grammar import resolve_stair_plan, resolve_wealth
+    from pae.facade_shell import (
+        _stair_anchor_and_cells,
+        stair_well_exterior_faces,
+    )
+
+    params = _demo_user_params()
+    assembly, _ = build_shell_assembly(params)
+    spec = params_to_spec(params)
+    plan = resolve_stair_plan(
+        resolve_wealth(params.wealth),
+        spec.footprint.bays_x,
+        spec.footprint.bays_y,
+        storeys=spec.storeys,
+    )
+    _a, _y, cells = _stair_anchor_and_cells(
+        plan, spec.footprint.bays_x, spec.footprint.bays_y
+    )
+    exterior = stair_well_exterior_faces(
+        cells, bays_x=spec.footprint.bays_x, bays_y=spec.footprint.bays_y
+    )
+    assert exterior, "demo well should touch at least one exterior face"
+    for p in assembly.placements:
+        if "stair_shaft" not in p.tags:
+            continue
+        for face in ("north", "south", "east", "west"):
+            if f"face_{face}" in p.tags:
+                assert face not in exterior, (
+                    f"shaft {p.piece_id} must not sit on exterior face_{face}"
+                )
 
 def test_shell_upper_floors_get_stair_void_punch_rects():
     """Regression: shell decks must still compute walkable floor holes."""
