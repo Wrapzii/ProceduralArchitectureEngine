@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pae.addon.bpy_bridge import HAS_BPY, sync_assembly_preview
 from pae.addon.operator_utils import (
+    apply_facade_preset_to_props,
     apply_spec_to_props,
     maybe_clear_pae_scene,
     report_operator_exception,
@@ -241,6 +242,34 @@ if HAS_BPY:
                 report_operator_exception(self, props, exc)
                 return {"CANCELLED"}
 
+    class PAE_OT_load_facade_quick_preset(bpy.types.Operator):
+        bl_idname = "pae.load_facade_quick_preset"
+        bl_label = "Quick Test (10×8)"
+        bl_description = (
+            "10 m × 8 m, 2 storeys, wealth 2, freestanding — safe one-click defaults"
+        )
+        bl_options = {"REGISTER"}
+
+        def execute(self, context):
+            props = scene_props(context)
+            apply_facade_preset_to_props(props, "quick")
+            self.report({"INFO"}, "Facade quick-test preset loaded (10×8, 2/2)")
+            return {"FINISHED"}
+
+    class PAE_OT_load_facade_demo_preset(bpy.types.Operator):
+        bl_idname = "pae.load_facade_demo_preset"
+        bl_label = "User Demo (22×12)"
+        bl_description = (
+            "22 m × 12 m, 4 storeys, wealth 4, end_left — screenshot / showcase preset"
+        )
+        bl_options = {"REGISTER"}
+
+        def execute(self, context):
+            props = scene_props(context)
+            apply_facade_preset_to_props(props, "demo")
+            self.report({"INFO"}, "Facade user-demo preset loaded (22×12, 4/4)")
+            return {"FINISHED"}
+
     class PAE_OT_copy_facade_params_json(bpy.types.Operator):
         bl_idname = "pae.copy_facade_params_json"
         bl_label = "Copy Parameters JSON"
@@ -313,7 +342,7 @@ if HAS_BPY:
                 )
                 props.facade_params_json = export_params_json(params)
                 _massing, _plan, assembly, report, _out = build_from_params(
-                    params, validate_assembly=False
+                    params, mode="shell", validate_assembly=False
                 )
                 if assembly is not None and assembly.placements:
                     import bpy
@@ -362,6 +391,8 @@ if HAS_BPY:
         PAE_OT_build_school,
         PAE_OT_build_gallery,
         PAE_OT_reload_pae,
+        PAE_OT_load_facade_quick_preset,
+        PAE_OT_load_facade_demo_preset,
         PAE_OT_copy_facade_params_json,
         PAE_OT_generate_facade,
     )

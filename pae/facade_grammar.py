@@ -40,11 +40,11 @@ class FacadeParams:
     palette_family: str = "cream_render"
     frontage_m: float = 10.0  # 0 = auto
     depth_m: float = 8.0  # 0 = auto
-    storeys: int = 4  # 0 = auto → 3
-    wealth: int = 3  # -1 = auto → 2
+    storeys: int = 2  # 0 = auto → 3; 2 fits default 10×8 m plot
+    wealth: int = 2  # -1 = auto → 2
     weathering: float = -1.0  # -1 = auto
     lit_windows: float = 0.4
-    row_context: str = "end_left"  # freestanding|end_left|end_right|mid
+    row_context: str = "freestanding"  # freestanding|end_left|end_right|mid
 
 
 def resolve_wealth(wealth: int) -> int:
@@ -100,12 +100,24 @@ def _windows_per_bay(wealth: int) -> int:
     return 1
 
 
+def footprint_allows_switchback(bays_x: int, bays_y: int) -> bool:
+    """Switchback needs a 2×2 well plus margin — at least 4×3 bays."""
+    return bays_x >= 4 and bays_y >= 3
+
+
+def resolve_stair_id(wealth: int, bays_x: int, bays_y: int) -> str:
+    """Pick stair piece id; downgrade switchback when the plot is too small."""
+    stair_id = resolve_shared("stair", resolve_wealth(wealth), "main")
+    if stair_id == "stair_switchback" and not footprint_allows_switchback(
+        bays_x, bays_y
+    ):
+        return "stair_straight"
+    return stair_id
+
+
 def _stair_kind(wealth: int, bays_x: int, bays_y: int) -> str:
-    tier = resolve_wealth(wealth)
-    stair_id = resolve_shared("stair", tier, "main")
-    if stair_id == "stair_switchback" and min(bays_x, bays_y) >= 2:
-        return "switchback"
-    return "straight"
+    stair_id = resolve_stair_id(wealth, bays_x, bays_y)
+    return "switchback" if stair_id == "stair_switchback" else "straight"
 
 
 def params_to_spec(params: FacadeParams) -> BuildingSpec:
@@ -255,7 +267,7 @@ def build_from_params(
     if validate_assembly:
         from pae.validate import validate
 
-        vreport = validate(assembly)
+        _validated_asm, vreport = validate(assembly)
         report = Report.from_failures(list(report.failures) + list(vreport.failures))
     return None, None, assembly, report, params
 
@@ -264,11 +276,13 @@ __all__ = [
     "FacadeParams",
     "build_from_params",
     "export_params_json",
+    "footprint_allows_switchback",
     "metres_to_bays",
     "params_from_json",
     "params_to_spec",
     "params_to_style_overrides",
     "party_wall_faces",
+    "resolve_stair_id",
     "resolve_storeys",
     "resolve_weathering",
     "resolve_wealth",

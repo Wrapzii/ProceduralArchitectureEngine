@@ -198,15 +198,15 @@ if HAS_BPY:
         )
         facade_storeys: IntProperty(  # type: ignore
             name="Storeys (0=Auto)",
-            description="Storey count; 0 = auto → 3",
-            default=4,
+            description="Storey count; 0 = auto → 3. Default 2 fits 10×8 m quick test",
+            default=2,
             min=0,
             max=12,
         )
         facade_wealth: IntProperty(  # type: ignore
             name="Wealth (-1=Auto)",
-            description="Tier 1–5 richness; -1 = auto → 2",
-            default=3,
+            description="Tier 1–5 richness; -1 = auto → 2. Wealth ≥3 needs wider plots for switchback stairs",
+            default=2,
             min=-1,
             max=5,
         )
@@ -233,7 +233,7 @@ if HAS_BPY:
                 ("end_right", "End-Right", "Blind east party wall"),
                 ("mid", "Mid", "Blind east + west party walls"),
             ),
-            default=1,
+            default=0,
         )
         facade_grit_district: EnumProperty(  # type: ignore
             name="Grit District (NF)",

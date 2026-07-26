@@ -46,6 +46,8 @@ def test_expected_operator_ids_registered_in_source():
         "pae.run_pipeline_stage",
         "pae.load_m1_preset",
         "pae.load_school_preset",
+        "pae.load_facade_quick_preset",
+        "pae.load_facade_demo_preset",
         "pae.generate_facade",
         "pae.copy_facade_params_json",
     }

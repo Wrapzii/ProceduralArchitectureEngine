@@ -115,6 +115,19 @@ if HAS_BPY:
 
             layout.separator()
             row = layout.row(align=True)
+            row.operator(
+                "pae.load_facade_quick_preset",
+                text="Quick Test",
+                icon="PRESET",
+            )
+            row.operator(
+                "pae.load_facade_demo_preset",
+                text="User Demo",
+                icon="PRESET",
+            )
+
+            layout.separator()
+            row = layout.row(align=True)
             row.scale_y = 1.4
             row.operator("pae.generate_facade", text="Generate Building", icon="MOD_BUILD")
             layout.operator("pae.copy_facade_params_json", text="Copy Parameters JSON", icon="COPYDOWN")

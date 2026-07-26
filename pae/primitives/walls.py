@@ -6,7 +6,7 @@ Arcade arch is cut **into** the module so the outer footprint still fills one ba
 
 from __future__ import annotations
 
-from typing import List, Optional, Tuple
+from typing import List, Optional, Sequence, Tuple
 
 from pae.contract import MODULE_CM, STOREY_CM, TOL_CM, WALL_T_CM
 from pae.primitives.apertures import ApertureProfile, PROFILES, get_profile
@@ -133,6 +133,95 @@ def wall_aperture_frame_parts_cm(
         parts.append(((0.0, run0, z1), (wx, run_span, wz - z1)))
 
     return parts
+
+
+def _wall_box_verts_faces(
+    ox: float, oy: float, oz: float, sx: float, sy: float, sz: float
+) -> Tuple[List[Tuple[float, float, float]], List[Tuple[int, ...]]]:
+    verts = [
+        (ox, oy, oz),
+        (ox + sx, oy, oz),
+        (ox + sx, oy + sy, oz),
+        (ox, oy + sy, oz),
+        (ox, oy, oz + sz),
+        (ox + sx, oy, oz + sz),
+        (ox + sx, oy + sy, oz + sz),
+        (ox, oy + sy, oz + sz),
+    ]
+    faces = [
+        (0, 1, 2, 3),
+        (4, 7, 6, 5),
+        (0, 4, 5, 1),
+        (1, 5, 6, 2),
+        (2, 6, 7, 3),
+        (3, 7, 4, 0),
+    ]
+    return verts, faces
+
+
+def _wall_merge_verts_faces(
+    parts: Sequence[Tuple[List[Tuple[float, float, float]], List[Tuple[int, ...]]]],
+) -> Tuple[List[Tuple[float, float, float]], List[Tuple[int, ...]]]:
+    verts: List[Tuple[float, float, float]] = []
+    faces: List[Tuple[int, ...]] = []
+    for part_verts, part_faces in parts:
+        base = len(verts)
+        verts.extend(part_verts)
+        faces.extend(tuple(i + base for i in f) for f in part_faces)
+    return verts, faces
+
+
+def wall_solid_with_yz_holes_verts_faces(
+    wx: float,
+    wy: float,
+    wz: float,
+    holes: Sequence[Tuple[float, float, float, float]],
+) -> Tuple[List[Tuple[float, float, float]], List[Tuple[int, ...]]]:
+    """Solid wall (thin X, run Y, height Z) with axis-aligned YZ rectangular voids.
+
+    Each hole is ``(y0, z0, y1, z1)`` in local cm.  Deterministic alternative to
+    runtime Blender booleans for shell facade panels.
+    """
+    if not holes:
+        return _wall_box_verts_faces(0.0, 0.0, 0.0, wx, wy, wz)
+
+    ys: List[float] = [0.0, wy]
+    zs: List[float] = [0.0, wz]
+    cleaned: List[Tuple[float, float, float, float]] = []
+    for y0, z0, y1, z1 in holes:
+        ya, yb = (y0, y1) if y0 <= y1 else (y1, y0)
+        za, zb = (z0, z1) if z0 <= z1 else (z1, z0)
+        ya = max(0.0, min(wy, ya))
+        yb = max(0.0, min(wy, yb))
+        za = max(0.0, min(wz, za))
+        zb = max(0.0, min(wz, zb))
+        if yb - ya < 1e-6 or zb - za < 1e-6:
+            continue
+        cleaned.append((ya, za, yb, zb))
+        ys.extend((ya, yb))
+        zs.extend((za, zb))
+    if not cleaned:
+        return _wall_box_verts_faces(0.0, 0.0, 0.0, wx, wy, wz)
+
+    ys = sorted(set(ys))
+    zs = sorted(set(zs))
+
+    def _inside_hole(cy: float, cz: float) -> bool:
+        for y0, z0, y1, z1 in cleaned:
+            if y0 < cy < y1 and z0 < cz < z1:
+                return True
+        return False
+
+    parts: List[Tuple[List[Tuple[float, float, float]], List[Tuple[int, ...]]]] = []
+    for ya, yb in zip(ys, ys[1:]):
+        for za, zb in zip(zs, zs[1:]):
+            cy, cz = (ya + yb) * 0.5, (za + zb) * 0.5
+            if _inside_hole(cy, cz):
+                continue
+            parts.append(_wall_box_verts_faces(0.0, ya, za, wx, yb - ya, zb - za))
+    if not parts:
+        raise ValueError("wall_solid_with_yz_holes: holes consumed the entire wall")
+    return _wall_merge_verts_faces(parts)
 
 
 def wall_aperture_is_solid_at(

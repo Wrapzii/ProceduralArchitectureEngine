@@ -82,7 +82,7 @@ def test_parse_args_defaults():
     args = parse_args([])
     assert args.archetype == "georgian_merchant"
     assert args.dry_run is False
-    assert args.row_context == "end_left"
+    assert args.row_context == "freestanding"
 
 
 def test_have_bpy_false_without_blender():

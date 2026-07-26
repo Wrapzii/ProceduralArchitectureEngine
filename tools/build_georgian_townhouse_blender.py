@@ -282,7 +282,7 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser.add_argument(
         "--row-context",
         choices=("freestanding", "end_left", "end_right", "mid"),
-        default="end_left",
+        default="freestanding",
     )
     parser.add_argument(
         "--out",

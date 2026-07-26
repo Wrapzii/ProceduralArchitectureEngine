@@ -1273,6 +1273,79 @@ def _mesh_for_shell_box(p, *, cache: Dict[str, Any]) -> Any:
     return obj
 
 
+def _shell_opening_cutters_by_face_level(assembly) -> Dict[Tuple[str, int], list]:
+    """Index declarative opening cutters for glazed shell wall panels."""
+    out: Dict[Tuple[str, int], list] = {}
+    for p in assembly.placements:
+        if getattr(p, "asset_id", None) != "shell_opening_cutter":
+            continue
+        face = next((t[5:] for t in p.tags if t.startswith("face_")), None)
+        if face is None:
+            continue
+        out.setdefault((face, int(p.level)), []).append(p)
+    return out
+
+
+def _mesh_for_shell_wall_punched(
+    wall_p,
+    cutters: Sequence[Any],
+    *,
+    cache: Dict[str, Any],
+) -> Any:
+    """One cream wall mesh per face/storey — boolean cut, panelize on failure."""
+    from pae.facade_shell import _face_offset_extra, shell_cutter_hole_yz_cm
+    from pae.primitives import bpy_util
+    from pae.primitives.walls import wall_solid_with_yz_holes_verts_faces
+
+    bpy_util.require_bpy()
+    key = f"shell_punch::{wall_p.piece_id}::{len(cutters)}"
+    if key in cache:
+        return cache[key]
+
+    wx, wy, wz = (float(v) for v in wall_p.size_cm)
+    proto_name = f"PAE_Proto_{wall_p.piece_id}"
+    holes = [
+        (y0, z0, y1, z1)
+        for y0, y1, z0, z1 in (
+            shell_cutter_hole_yz_cm(wall_p, cut) for cut in cutters
+        )
+    ]
+
+    obj = None
+    if cutters:
+        try:
+            core = bpy_util.box_mesh(
+                proto_name, (wx, wy, wz), origin_at_min_corner=True
+            )
+            face = next(t[5:] for t in wall_p.tags if t.startswith("face_"))
+            for idx, cut in enumerate(cutters):
+                cut_extra = _face_offset_extra(
+                    cut.offset_cm, face, cut.yaw, cut.size_cm
+                )
+                cutter = bpy_util.box_mesh(
+                    f"{proto_name}_cut_{idx}",
+                    tuple(cut.size_cm),
+                    origin_at_min_corner=True,
+                    location=cut_extra,
+                )
+                bpy_util.apply_boolean_difference(core, cutter, solver="EXACT")
+            obj = core
+        except Exception:
+            obj = None
+
+    if obj is None:
+        if holes:
+            verts, faces = wall_solid_with_yz_holes_verts_faces(wx, wy, wz, holes)
+            obj = bpy_util.mesh_from_verts_faces(proto_name, verts, faces)
+        else:
+            obj = bpy_util.box_mesh(proto_name, (wx, wy, wz), origin_at_min_corner=True)
+
+    obj.hide_set(True)
+    obj.hide_render = True
+    cache[key] = obj
+    return obj
+
+
 def instance_facade_shell(
     assembly,
     *,
@@ -1328,20 +1401,34 @@ def instance_assembly(
         for hp in assembly.placements
         if getattr(hp, "asset_id", None) == "roof_hole"
     ]
+    shell_cutters = _shell_opening_cutters_by_face_level(assembly)
     for p in assembly.placements:
         # ``floor_hole`` is a declarative void/cutter used above to punch the
         # surrounding floor deck. Instancing its legacy blue frame puts solid
         # geometry back into the opening and blocks the stair.
         # Drum-window wall leaves are likewise logical aperture proxies; the
         # windowed curved arc owns the visible geometry.
-        if p.asset_id in ("floor_hole", "roof_hole") or (
+        if p.asset_id in ("floor_hole", "roof_hole", "shell_opening_cutter") or (
             "non_rendering_aperture_proxy" in p.tags
         ):
             continue
         from pae.facade_shell import is_shell_placement
 
         if is_shell_placement(p):
-            proto = _mesh_for_shell_box(p, cache=cache)
+            if "boolean_parent" in p.tags:
+                face = next(
+                    (t[5:] for t in p.tags if t.startswith("face_")), None
+                )
+                cutters = (
+                    shell_cutters.get((face, int(p.level)), [])
+                    if face is not None
+                    else []
+                )
+                proto = _mesh_for_shell_wall_punched(
+                    p, cutters, cache=cache
+                )
+            else:
+                proto = _mesh_for_shell_box(p, cache=cache)
             sx = sy = sz = 1.0
         else:
             notched_roof = (

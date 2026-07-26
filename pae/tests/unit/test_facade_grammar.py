@@ -38,7 +38,7 @@ def test_params_to_spec_defaults_and_seed():
     assert spec.style == "georgian_merchant"
     assert spec.footprint.bays_x == 3
     assert spec.footprint.bays_y == 2
-    assert spec.storeys == 4
+    assert spec.storeys == 2
     assert spec.openings.windows_per_bay >= 1
 
 
@@ -111,6 +111,30 @@ def test_params_to_style_overrides_wealth_shell():
     rich = params_to_style_overrides(FacadeParams(wealth=5))
     assert rich["shell"]["pilasters"] is True
     assert rich["door"]["tag"] == "door_georgian"
+
+
+def test_resolve_stair_id_downgrades_switchback_on_small_plot():
+    from pae.facade_grammar import resolve_stair_id
+
+    assert resolve_stair_id(4, 6, 3) == "stair_switchback"
+    assert resolve_stair_id(4, 3, 2) == "stair_straight"
+
+
+def test_build_from_params_validate_assembly_unpacks_report():
+    params = FacadeParams(
+        seed=1812,
+        frontage_m=22.0,
+        depth_m=12.0,
+        storeys=4,
+        wealth=4,
+        row_context="end_left",
+    )
+    _m, _p, assembly, report, _out = build_from_params(
+        params, validate_assembly=True
+    )
+    assert assembly is not None
+    assert hasattr(report, "ok")
+    assert isinstance(report.failures, list)
 
 
 def test_build_from_params_returns_assembly():

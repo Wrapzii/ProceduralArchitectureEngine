@@ -23,6 +23,7 @@ from pae.facade_grammar import (
     params_to_spec,
     params_to_style_overrides,
     party_wall_faces,
+    resolve_stair_id,
     resolve_wealth,
 )
 from pae.primitives.roofs import (
@@ -184,6 +185,78 @@ def _opening_spec(
     return ("window", w, h, sill)
 
 
+def _face_offset_extra(
+    offset_cm: Tuple[float, float, float],
+    face: str,
+    yaw: int,
+    size_cm: Tuple[float, float, float],
+) -> Tuple[float, float, float]:
+    """Placement offset along the face beyond the standard wall tuck."""
+    base = _wall_offset_cm(face, yaw, size_cm)
+    return (
+        offset_cm[0] - base[0],
+        offset_cm[1] - base[1],
+        offset_cm[2] - base[2],
+    )
+
+
+def shell_cutter_hole_yz_cm(
+    wall: SolidPlacement,
+    cutter: SolidPlacement,
+) -> Tuple[float, float, float, float]:
+    """Opening rectangle ``(y0, y1, z0, z1)`` in wall-local mesh coordinates."""
+    face = next(t[5:] for t in wall.tags if t.startswith("face_"))
+    cut_extra = _face_offset_extra(
+        cutter.offset_cm, face, cutter.yaw, cutter.size_cm
+    )
+    y0 = cut_extra[1]
+    z0 = cut_extra[2]
+    return (y0, y0 + cutter.size_cm[1], z0, z0 + cutter.size_cm[2])
+
+
+def _place_opening_cutter(
+    *,
+    piece_prefix: str,
+    face: str,
+    level: int,
+    cell: Tuple[int, int],
+    open_y0: float,
+    open_w: float,
+    sill_z: float,
+    open_h: float,
+    kind: str,
+    placements: List[SolidPlacement],
+    counters: Dict[str, int],
+    tags: FrozenSet[str],
+) -> None:
+    pad_x = WALL_T_CM * _CUTTER_PAD_X_FRAC
+    pad_yz = _CUTTER_PAD_YZ_CM
+    _place_shell_box(
+        piece_prefix=piece_prefix,
+        asset_id=SHELL_OPENING_CUTTER_ASSET,
+        face=face,
+        level=level,
+        cell=cell,
+        size_cm=(
+            WALL_T_CM + 2.0 * pad_x,
+            open_w + 2.0 * pad_yz,
+            open_h + 2.0 * pad_yz,
+        ),
+        offset_extra=(-pad_x, open_y0 - pad_yz, sill_z - pad_yz),
+        placements=placements,
+        counters=counters,
+        tags=tags
+        | frozenset(
+            {
+                "opening_cutter",
+                "non_rendering_aperture_proxy",
+                kind,
+            }
+        ),
+        kind="hole",
+    )
+
+
 def _place_window_muntins(
     *,
     face: str,
@@ -247,142 +320,56 @@ def _place_glazed_face(
     placements: List[SolidPlacement],
     counters: Dict[str, int],
 ) -> None:
-    """Continuous cream facade with real opening gaps (no modular wall-window kits)."""
+    """One solid shell wall per face/storey; cutters punch openings in Blender."""
     run_cm, bay_count, origin = _face_run_and_origin(
         face, bays_x, bays_y, width_cm, depth_cm
     )
     tags = _EXTERIOR_TAG | frozenset({f"face_{face}"})
-    plinth_h = STOREY_CM * _PLINTH_FRAC
-    cornice_h = STOREY_CM * _CORNICE_FRAC
     frame_t = max(4.0, WALL_T_CM * _FRAME_T_FRAC)
 
-    # Continuous plinth + cornice bands (reads as one building, not cells).
     _place_shell_box(
-        piece_prefix=f"shell_plinth_{face}_L{level}",
+        piece_prefix=f"shell_wall_{face}_L{level}",
         asset_id=SHELL_WALL_ASSET,
         face=face,
         level=level,
         cell=origin,
-        size_cm=(WALL_T_CM, run_cm, plinth_h),
+        size_cm=(WALL_T_CM, run_cm, STOREY_CM),
         offset_extra=(0.0, 0.0, 0.0),
         placements=placements,
         counters=counters,
-        tags=tags | frozenset({"plinth"}),
-    )
-    _place_shell_box(
-        piece_prefix=f"shell_cornice_{face}_L{level}",
-        asset_id=SHELL_WALL_ASSET,
-        face=face,
-        level=level,
-        cell=origin,
-        size_cm=(WALL_T_CM, run_cm, cornice_h),
-        offset_extra=(0.0, 0.0, STOREY_CM - cornice_h),
-        placements=placements,
-        counters=counters,
-        tags=tags | frozenset({"cornice"}),
+        tags=tags | frozenset({"boolean_parent", "shell_wall_panel"}),
     )
 
-    # Walk the run in bay modules; solid piers + punched openings.
-    cursor = 0.0
     for bay in range(bay_count):
         bay_start = bay * MODULE_CM
-        bay_end = bay_start + MODULE_CM
         opening = _opening_spec(
             face=face, bay=bay, level=level, door_bay=door_bay, bay_count=bay_count
         )
-        # Along-face axis is local +Y after yaw (size.y = run).
-        # offset_extra.y shifts the piece along the face from the face origin.
         if opening is None:
-            # Should not happen; treat as solid bay fill between plinth/cornice.
-            mid_h = STOREY_CM - plinth_h - cornice_h
-            _place_shell_box(
-                piece_prefix=f"shell_fill_{face}_L{level}_B{bay}",
-                asset_id=SHELL_WALL_ASSET,
-                face=face,
-                level=level,
-                cell=origin,
-                size_cm=(WALL_T_CM, MODULE_CM, mid_h),
-                offset_extra=(0.0, bay_start, plinth_h),
-                placements=placements,
-                counters=counters,
-                tags=tags,
-            )
-            cursor = bay_end
             continue
 
         kind, open_w, open_h, sill_z = opening
-        # Keep opening inside the mid band.
-        sill_z = max(plinth_h, sill_z)
-        head_z = min(STOREY_CM - cornice_h, sill_z + open_h)
+        sill_z = max(0.0, sill_z)
+        head_z = min(STOREY_CM, sill_z + open_h)
         open_h = max(40.0, head_z - sill_z)
         open_center = bay_start + MODULE_CM * 0.5
         open_y0 = open_center - open_w * 0.5
-        open_y1 = open_center + open_w * 0.5
 
-        # Left pier (from previous cursor / bay start to opening).
-        left_w = open_y0 - bay_start
-        if left_w > 2.0:
-            mid_h = STOREY_CM - plinth_h - cornice_h
-            _place_shell_box(
-                piece_prefix=f"shell_pier_L_{face}_L{level}_B{bay}",
-                asset_id=SHELL_WALL_ASSET,
-                face=face,
-                level=level,
-                cell=origin,
-                size_cm=(WALL_T_CM, left_w, mid_h),
-                offset_extra=(0.0, bay_start, plinth_h),
-                placements=placements,
-                counters=counters,
-                tags=tags | frozenset({"pier"}),
-            )
-        # Right pier
-        right_w = bay_end - open_y1
-        if right_w > 2.0:
-            mid_h = STOREY_CM - plinth_h - cornice_h
-            _place_shell_box(
-                piece_prefix=f"shell_pier_R_{face}_L{level}_B{bay}",
-                asset_id=SHELL_WALL_ASSET,
-                face=face,
-                level=level,
-                cell=origin,
-                size_cm=(WALL_T_CM, right_w, mid_h),
-                offset_extra=(0.0, open_y1, plinth_h),
-                placements=placements,
-                counters=counters,
-                tags=tags | frozenset({"pier"}),
-            )
-        # Spandrel under opening (if sill above plinth)
-        under_h = sill_z - plinth_h
-        if under_h > 2.0:
-            _place_shell_box(
-                piece_prefix=f"shell_spandrel_{face}_L{level}_B{bay}",
-                asset_id=SHELL_WALL_ASSET,
-                face=face,
-                level=level,
-                cell=origin,
-                size_cm=(WALL_T_CM, open_w, under_h),
-                offset_extra=(0.0, open_y0, plinth_h),
-                placements=placements,
-                counters=counters,
-                tags=tags | frozenset({"spandrel"}),
-            )
-        # Lintel over opening (if head below cornice)
-        over_h = (STOREY_CM - cornice_h) - (sill_z + open_h)
-        if over_h > 2.0:
-            _place_shell_box(
-                piece_prefix=f"shell_lintel_{face}_L{level}_B{bay}",
-                asset_id=SHELL_WALL_ASSET,
-                face=face,
-                level=level,
-                cell=origin,
-                size_cm=(WALL_T_CM, open_w, over_h),
-                offset_extra=(0.0, open_y0, sill_z + open_h),
-                placements=placements,
-                counters=counters,
-                tags=tags | frozenset({"lintel"}),
-            )
+        _place_opening_cutter(
+            piece_prefix=f"shell_cut_{face}_L{level}_B{bay}",
+            face=face,
+            level=level,
+            cell=origin,
+            open_y0=open_y0,
+            open_w=open_w,
+            sill_z=sill_z,
+            open_h=open_h,
+            kind=kind,
+            placements=placements,
+            counters=counters,
+            tags=tags,
+        )
 
-        # Thin opening fill: cream is NOT used — dark sash frame box (visual glass hole).
         if kind == "window":
             _place_shell_box(
                 piece_prefix=f"shell_sash_{face}_L{level}_B{bay}",
@@ -416,7 +403,6 @@ def _place_glazed_face(
                 tags=tags,
             )
         else:
-            # Door: thin shell slab inset in the opening (no modular kit z-fight).
             door_t = max(4.0, frame_t)
             _place_shell_box(
                 piece_prefix=f"shell_door_{face}_L{level}",
@@ -435,7 +421,6 @@ def _place_glazed_face(
                 tags=tags | frozenset({"door", "opening"}),
                 kind="prop",
             )
-        cursor = bay_end
 
 
 def _place_continuous_wall(
@@ -449,7 +434,7 @@ def _place_continuous_wall(
     bays_y: int,
     blind: bool,
 ) -> None:
-    """Party / blind face — plinth + cornice bands match glazed faces for one cream read."""
+    """Party / blind face — one continuous cream panel per storey."""
     if face == "west":
         cell = (0, 0)
     elif face == "east":
@@ -461,44 +446,17 @@ def _place_continuous_wall(
     tags = _EXTERIOR_TAG | frozenset({f"face_{face}"})
     if blind:
         tags = tags | frozenset({"party_wall", "blind"})
-    plinth_h = STOREY_CM * _PLINTH_FRAC
-    cornice_h = STOREY_CM * _CORNICE_FRAC
-    mid_h = STOREY_CM - plinth_h - cornice_h
-    _place_shell_box(
-        piece_prefix=f"shell_plinth_{face}_L{level}",
-        asset_id=SHELL_WALL_ASSET,
-        face=face,
-        level=level,
-        cell=cell,
-        size_cm=(WALL_T_CM, run_cm, plinth_h),
-        offset_extra=(0.0, 0.0, 0.0),
-        placements=placements,
-        counters=counters,
-        tags=tags | frozenset({"plinth"}),
-    )
-    _place_shell_box(
-        piece_prefix=f"shell_cornice_{face}_L{level}",
-        asset_id=SHELL_WALL_ASSET,
-        face=face,
-        level=level,
-        cell=cell,
-        size_cm=(WALL_T_CM, run_cm, cornice_h),
-        offset_extra=(0.0, 0.0, STOREY_CM - cornice_h),
-        placements=placements,
-        counters=counters,
-        tags=tags | frozenset({"cornice"}),
-    )
     _place_shell_box(
         piece_prefix=f"shell_wall_{face}_L{level}",
         asset_id=SHELL_WALL_ASSET,
         face=face,
         level=level,
         cell=cell,
-        size_cm=(WALL_T_CM, run_cm, mid_h),
-        offset_extra=(0.0, 0.0, plinth_h),
+        size_cm=(WALL_T_CM, run_cm, STOREY_CM),
+        offset_extra=(0.0, 0.0, 0.0),
         placements=placements,
         counters=counters,
-        tags=tags,
+        tags=tags | frozenset({"shell_wall_panel"}),
     )
 
 
@@ -812,10 +770,7 @@ def build_shell_assembly(
     pitch = float(getattr(spec.roof, "pitch", DEFAULT_ROOF_PITCH) or DEFAULT_ROOF_PITCH)
 
     width_cm, depth_cm = _footprint_cm(bays_x, bays_y)
-    stair_id = resolve_shared("stair", wealth, "main")
-    # Prefer straight stair inside shell unless footprint is large enough.
-    if stair_id == "stair_switchback" and min(bays_x, bays_y) < 3:
-        stair_id = "stair_straight"
+    stair_id = resolve_stair_id(wealth, bays_x, bays_y)
     anchor, stair_yaw, stair_cells = _stair_anchor_and_cells(stair_id, bays_x, bays_y)
     door_bay = max(0, min(bays_x - 1, bays_x // 2))
     glazed = _glazed_faces(blind)
@@ -934,11 +889,41 @@ def build_shell_assembly(
 
 
 def count_exterior_shell_walls(assembly: Assembly) -> int:
-    """Count continuous exterior shell wall panels (cream shell boxes on faces)."""
+    """Count exterior shell wall panels (one cream panel per face per storey)."""
     return sum(
         1
         for p in assembly.placements
-        if p.asset_id == SHELL_WALL_ASSET and "exterior" in p.tags
+        if p.asset_id == SHELL_WALL_ASSET
+        and "exterior" in p.tags
+        and "shell_wall_panel" in p.tags
+    )
+
+
+def count_face_shell_wall_panels(assembly: Assembly, face: str) -> int:
+    """Shell wall panels on one facade face (boolean_parent on glazed faces)."""
+    return sum(
+        1
+        for p in assembly.placements
+        if p.asset_id == SHELL_WALL_ASSET
+        and f"face_{face}" in p.tags
+        and "shell_wall_panel" in p.tags
+    )
+
+
+def count_pier_pieces(assembly: Assembly, face: Optional[str] = None) -> int:
+    """Pier/spandrel grammar pieces — zero when using single-panel shell."""
+    pieces = [p for p in assembly.placements if "pier" in p.tags]
+    if face is not None:
+        pieces = [p for p in pieces if f"face_{face}" in p.tags]
+    return len(pieces)
+
+
+def count_opening_cutters(assembly: Assembly, face: Optional[str] = None) -> int:
+    return sum(
+        1
+        for p in assembly.placements
+        if p.asset_id == SHELL_OPENING_CUTTER_ASSET
+        and (face is None or f"face_{face}" in p.tags)
     )
 
 
@@ -988,15 +973,20 @@ __all__ = [
     "SHELL_DOOR_ASSET",
     "SHELL_FLOOR_ASSET",
     "SHELL_INTERIOR_WALL_ASSET",
+    "SHELL_OPENING_CUTTER_ASSET",
     "SHELL_ROOF_ASSET",
     "SHELL_WALL_ASSET",
     "SHELL_WINDOW_MUNTIN_ASSET",
     "build_shell_assembly",
     "count_chimney_stubs",
     "count_exterior_shell_walls",
+    "count_face_shell_wall_panels",
     "count_modular_window_kits",
     "count_muntin_placements",
+    "count_opening_cutters",
+    "count_pier_pieces",
     "count_shell_doors",
     "count_window_placements",
     "is_shell_placement",
+    "shell_cutter_hole_yz_cm",
 ]

@@ -115,6 +115,15 @@ Sliders match the CITY&BEYOND control surface:
 
 Then **Generate Building** (`pae.generate_facade`) or **Copy Parameters JSON**.
 
+**Presets** (Procedural Building panel):
+
+| Button | Frontage | Depth | Storeys | Wealth | Row |
+|--------|----------|-------|---------|--------|-----|
+| Quick Test | 10 m | 8 m | 2 | 2 | freestanding |
+| User Demo | 22 m | 12 m | 4 | 4 | end_left |
+
+Operators: `pae.load_facade_quick_preset`, `pae.load_facade_demo_preset`.
+
 ### Reload PAE (after a code pull)
 
 Blender caches `pae.*` in `sys.modules`. After pulling shell/grammar changes you
@@ -132,7 +141,7 @@ scripts call `pae.blender_build.reload_pae()` automatically at entry.
 ```python
 from pae.facade_grammar import FacadeParams, build_from_params
 
-params = FacadeParams(seed=42, frontage_m=10, depth_m=8, storeys=4, wealth=3)
+params = FacadeParams(seed=42, frontage_m=10, depth_m=8, storeys=2, wealth=2)
 massing, plan, assembly, report, params = build_from_params(params)  # mode="shell"
 ```
 

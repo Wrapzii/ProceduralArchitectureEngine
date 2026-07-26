@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pae.contract import MODULE_CM, placement_world_aabb
+from pae.contract import MODULE_CM, STOREY_CM, placement_world_aabb
 from pae.facade_grammar import FacadeParams, build_from_params
 from pae.facade_shell import (
     SHELL_DOOR_ASSET,
@@ -10,8 +10,11 @@ from pae.facade_shell import (
     build_shell_assembly,
     count_chimney_stubs,
     count_exterior_shell_walls,
+    count_face_shell_wall_panels,
     count_modular_window_kits,
     count_muntin_placements,
+    count_opening_cutters,
+    count_pier_pieces,
     count_shell_doors,
     count_window_placements,
 )
@@ -66,14 +69,9 @@ def test_party_wall_face_has_no_windows():
     ]
     assert west_walls
     assert all("party_wall" in p.tags or "blind" in p.tags for p in west_walls)
-    # Blind party wall: plinth + mid + cornice per storey (no pier grid).
-    mid_panels = [
-        p
-        for p in west_walls
-        if "plinth" not in p.tags and "cornice" not in p.tags
-    ]
-    assert len(mid_panels) == 3
-    assert all(p.size_cm[1] >= 2 * MODULE_CM - 1.0 for p in mid_panels)
+    # Blind party wall: ONE continuous panel per storey (not pier grid).
+    assert count_face_shell_wall_panels(assembly, "west") == 3
+    assert all(p.size_cm[2] >= STOREY_CM - 1.0 for p in west_walls)
 
 
 def test_stair_inside_footprint():
@@ -114,17 +112,24 @@ def test_floor_count_matches_storeys():
     assert len(floors) == 3
 
 
-def test_south_has_punched_openings_not_solid_overlay():
+def test_south_one_shell_wall_per_storey_with_cutters():
+    """Glazed south: one shell_wall_solid per storey, cutters not pier farm."""
     params = _default_params(storeys=2)
     assembly, _ = build_shell_assembly(params)
     assert count_window_placements(assembly, "south") >= 2
-    south_piers = [
+    assert count_face_shell_wall_panels(assembly, "south") == 2
+    assert count_pier_pieces(assembly, "south") == 0
+    assert count_opening_cutters(assembly, "south") >= 2
+    assert count_modular_window_kits(assembly) == 0
+    south_panels = [
         p
         for p in assembly.placements
-        if "face_south" in p.tags and "pier" in p.tags
+        if p.asset_id == SHELL_WALL_ASSET
+        and "face_south" in p.tags
+        and "boolean_parent" in p.tags
     ]
-    assert south_piers, "glazed south face should use pier grammar, not one solid slab"
-    assert count_modular_window_kits(assembly) == 0
+    assert len(south_panels) == 2
+    assert all(p.size_cm[1] >= 2 * MODULE_CM - 1.0 for p in south_panels)
 
 
 def test_build_from_params_defaults_to_shell_mode():
