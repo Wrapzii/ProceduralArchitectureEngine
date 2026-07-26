@@ -7,18 +7,25 @@ balcony/patio/jetty dress are never emitted on this path.
 
 from __future__ import annotations
 
-from typing import Dict, FrozenSet, List, Optional, Sequence, Tuple
+import random
+from dataclasses import dataclass
+from typing import Dict, FrozenSet, List, Optional, Sequence, Set, Tuple
 
 from pae.assembly_types import Assembly, SolidPlacement
 from pae.contract import (
+    EAVE_OVERHANG_CM,
     FLOOR_T_CM,
     MODULE_CM,
     STOREY_CM,
     WALL_T_CM,
     rotation_offset_cm,
 )
+from pae.primitives.roofs import DEFAULT_ROOF_PITCH, roof_rise_cm
 from pae.facade_grammar import (
     FacadeParams,
+    ShellStyleConfig,
+    facade_rng,
+    load_archetype_shell_config,
     params_to_spec,
     params_to_style_overrides,
     party_wall_faces,
@@ -34,15 +41,25 @@ SHELL_WALL_ASSET = "shell_wall_solid"
 SHELL_OPENING_CUTTER_ASSET = "shell_opening_cutter"
 SHELL_FLOOR_ASSET = "shell_floor_slab"
 SHELL_ROOF_ASSET = "shell_roof_slab"
+SHELL_ROOF_SLOPE_ASSET = "shell_roof_slope"
+SHELL_GABLE_ASSET = "shell_gable_end"
 SHELL_ROOF_THICK_CM = FLOOR_T_CM
+SHELL_ROOF_PITCH = DEFAULT_ROOF_PITCH
+_GABLE_THICK_CM = WALL_T_CM
 SHELL_INTERIOR_WALL_ASSET = "shell_wall_interior"
 
 # Opening cutter padding — pierces both wall skins for boolean / panel punch.
 _CUTTER_PAD_X_FRAC = 0.25
 _CUTTER_PAD_YZ_CM = 0.5
 SHELL_DOOR_ASSET = "shell_door"
+SHELL_WINDOW_FRAME_ASSET = "shell_window_frame"
+SHELL_WINDOW_GLASS_ASSET = "shell_window_glass"
 SHELL_WINDOW_MUNTIN_ASSET = "shell_window_muntin"
+SHELL_STAIR_RAIL_ASSET = "shell_stair_rail"
 SHELL_CHIMNEY_ASSET = "shell_chimney_stub"
+SHELL_TRIM_ASSET = "shell_trim_band"
+SHELL_PILASTER_ASSET = "shell_pilaster_strip"
+SHELL_DOORCASE_ASSET = "shell_doorcase_trim"
 
 _SHELL_TAG = frozenset({"facade_shell"})
 _EXTERIOR_TAG = frozenset({"facade_shell", "exterior"})
@@ -58,10 +75,132 @@ _DOOR_W_FRAC = 0.42
 _DOOR_H_FRAC = 0.78
 _PLINTH_FRAC = 0.16
 _CORNICE_FRAC = 0.10
-_FRAME_T_FRAC = 0.08  # of WALL_T — thin sash/door leaf in the opening
+_FRAME_T_FRAC = 0.08  # of WALL_T — door leaf depth in the opening
+_FRAME_BAR_CM = 10.0  # jamb / sill / head stick thickness (~8–12 cm)
+_GLASS_DEPTH_CM = 1.5  # thin glazing plane — must not fill the opening
 _MUNTIN_T_FRAC = 0.045  # of WALL_T — thin Georgian cross bars
+_SHAFT_WALL_HEIGHT_FRAC = 0.82  # shaft partitions — leave headroom into the well
+_SHAFT_RAIL_HEIGHT_CM = 100.0  # handrail Z above floor (south hall opening)
 _CHIMNEY_W_FRAC = 0.18  # of MODULE — roof stub footprint
 _CHIMNEY_H_FRAC = 0.42  # of STOREY — short stack above ridge
+_SHOP_WINDOW_SCALE = 1.22  # ground-floor shop window widen at wealth ≥ 3
+
+
+@dataclass(frozen=True)
+class ShellVariation:
+    """Seed-driven shell grammar choices (S-010 determinism)."""
+
+    door_bay: int
+    window_skip: FrozenSet[Tuple[str, int, int]]  # (face, level, bay)
+    chimney_count: int
+    chimney_anchors: Tuple[Tuple[float, float], ...]  # roof-deck XY cm
+    cornice_height_frac: float  # string course height as fraction of storey
+    shop_window_scale: float  # 1.0 or wider for merchant ground floor
+
+
+def _wealth_window_skip_rate(wealth: int, *, archetype: str = "") -> float:
+    """Higher wealth → denser glazing rhythm."""
+    tier = resolve_wealth(wealth, archetype=archetype or "georgian_merchant")
+    return {1: 0.38, 2: 0.22, 3: 0.14, 4: 0.10, 5: 0.06}.get(tier, 0.14)
+
+
+def _wealth_chimney_count(wealth: int, *, style_allows: bool, archetype: str = "") -> int:
+    tier = resolve_wealth(wealth, archetype=archetype or "georgian_merchant")
+    if not style_allows or tier < 3:
+        return 0
+    if tier >= 5:
+        return 2
+    return 1
+
+
+def derive_shell_variation(
+    params: FacadeParams,
+    *,
+    bays_x: int,
+    bays_y: int,
+    storeys: int,
+    glazed_faces: Sequence[str],
+    style_overrides: dict,
+    shell_cfg: ShellStyleConfig,
+) -> ShellVariation:
+    """Deterministic facade variation from ``params.seed`` (S-010)."""
+    rng = facade_rng(params.seed, params.archetype, "shell_variation")
+    wealth = resolve_wealth(params.wealth, archetype=shell_cfg.archetype)
+
+    if bays_x <= 1:
+        door_bay = 0
+    else:
+        center = bays_x // 2
+        spread = max(1, min(2, bays_x // 3))
+        lo = max(0, center - spread)
+        hi = min(bays_x - 1, center + spread)
+        door_bay = rng.randint(lo, hi)
+
+    skip_rate = _wealth_window_skip_rate(wealth, archetype=shell_cfg.archetype)
+    window_skip: Set[Tuple[str, int, int]] = set()
+    for face in glazed_faces:
+        bay_count = bays_y if face in ("west", "east") else bays_x
+        for level in range(storeys):
+            if face == "south" and level == 0:
+                continue
+            for bay in range(bay_count):
+                if bay == door_bay and face == "south" and level == 0:
+                    continue
+                if rng.random() < skip_rate:
+                    window_skip.add((face, level, bay))
+
+    chimney_allowed = bool(style_overrides.get("shell", {}).get("chimney_stub", False))
+    chimney_count = _wealth_chimney_count(
+        wealth, style_allows=chimney_allowed, archetype=shell_cfg.archetype
+    )
+    width_cm = bays_x * MODULE_CM
+    depth_cm = bays_y * MODULE_CM
+    anchors: List[Tuple[float, float]] = []
+    for i in range(chimney_count):
+        ax = rng.uniform(MODULE_CM * 0.8, width_cm - MODULE_CM * 1.2)
+        ay = rng.uniform(MODULE_CM * 0.6, depth_cm - MODULE_CM * 1.0)
+        if chimney_count == 2 and i == 1:
+            ax = max(ax, width_cm * 0.55)
+        anchors.append((ax, ay))
+
+    cornice_lo = 0.06 if wealth < 3 else 0.08
+    cornice_hi = 0.12 if wealth < 5 else 0.14
+    cornice_height_frac = rng.uniform(cornice_lo, cornice_hi)
+
+    shop_scale = (
+        _SHOP_WINDOW_SCALE
+        if wealth >= 3 and style_overrides.get("shell", {}).get("shop_window_wide")
+        else 1.0
+    )
+
+    return ShellVariation(
+        door_bay=door_bay,
+        window_skip=frozenset(window_skip),
+        chimney_count=chimney_count,
+        chimney_anchors=tuple(anchors),
+        cornice_height_frac=cornice_height_frac,
+        shop_window_scale=shop_scale,
+    )
+
+
+def _effective_window_fracs(
+    shell_cfg: ShellStyleConfig,
+    wealth: int,
+) -> Tuple[float, float, float]:
+    """Archetype base fractions scaled by wealth tier."""
+    tier = resolve_wealth(wealth, archetype=shell_cfg.archetype)
+    w = shell_cfg.window_w_frac
+    h = shell_cfg.window_h_frac
+    sill = shell_cfg.window_sill_frac
+    if tier <= 1:
+        w *= 0.82
+        h *= 0.88
+    elif tier >= 5:
+        w = min(0.72, w * 1.10)
+        h = min(0.66, h * 1.06)
+    elif tier >= 4:
+        w = min(0.68, w * 1.05)
+    return (w, h, sill)
 
 
 def is_shell_placement(p: SolidPlacement) -> bool:
@@ -214,18 +353,30 @@ def _opening_spec(
     level: int,
     door_bay: int,
     bay_count: int,
+    variation: ShellVariation,
+    shell_cfg: ShellStyleConfig,
+    wealth: int,
 ) -> Optional[Tuple[str, float, float, float]]:
     """Return (kind, width_cm, height_cm, sill_z_cm) or None if solid pier bay."""
+    if (face, level, bay) in variation.window_skip:
+        return None
+    w_frac, h_frac, sill_frac = _effective_window_fracs(shell_cfg, wealth)
     if face == "south" and level == 0 and bay == door_bay:
         w = MODULE_CM * _DOOR_W_FRAC
         h = STOREY_CM * _DOOR_H_FRAC
         return ("door", w, h, 0.0)
-    # Skip a second opening in the door bay on ground south.
     if face == "south" and level == 0 and bay == door_bay:
         return None
-    w = MODULE_CM * _WINDOW_W_FRAC
-    h = STOREY_CM * _WINDOW_H_FRAC
-    sill = STOREY_CM * _WINDOW_SILL_FRAC
+    w = MODULE_CM * w_frac
+    h = STOREY_CM * h_frac
+    if (
+        face == "south"
+        and level == 0
+        and variation.shop_window_scale > 1.0
+        and bay != door_bay
+    ):
+        w = min(MODULE_CM * 0.88, w * variation.shop_window_scale)
+    sill = STOREY_CM * sill_frac
     return ("window", w, h, sill)
 
 
@@ -306,6 +457,103 @@ def _place_opening_cutter(
     )
 
 
+def _place_hollow_window_frame(
+    *,
+    face: str,
+    level: int,
+    origin: Tuple[int, int],
+    open_y0: float,
+    open_w: float,
+    open_h: float,
+    sill_z: float,
+    frame_bar: float,
+    frame_depth: float,
+    placements: List[SolidPlacement],
+    counters: Dict[str, int],
+    tags: FrozenSet[str],
+    panel_size_cm: Tuple[float, float, float],
+) -> None:
+    """Four thin sticks (jambs, sill, head) — opening centre stays empty."""
+    bar = frame_bar
+    depth = frame_depth
+    base_x = (WALL_T_CM - depth) * 0.5
+    frame_tags = tags | frozenset({"window", "opening", "frame_bar"})
+    common = dict(
+        face=face,
+        level=level,
+        cell=origin,
+        placements=placements,
+        counters=counters,
+        tags=frame_tags,
+        kind="prop",
+        panel_size_cm=panel_size_cm,
+        asset_id=SHELL_WINDOW_FRAME_ASSET,
+    )
+    _place_shell_box(
+        piece_prefix=f"shell_frame_l_{face}_L{level}",
+        size_cm=(depth, bar, open_h),
+        offset_extra=(base_x, open_y0, sill_z),
+        **common,
+    )
+    _place_shell_box(
+        piece_prefix=f"shell_frame_r_{face}_L{level}",
+        size_cm=(depth, bar, open_h),
+        offset_extra=(base_x, open_y0 + open_w - bar, sill_z),
+        **common,
+    )
+    _place_shell_box(
+        piece_prefix=f"shell_frame_sill_{face}_L{level}",
+        size_cm=(depth, open_w, bar),
+        offset_extra=(base_x, open_y0, sill_z),
+        **common,
+    )
+    _place_shell_box(
+        piece_prefix=f"shell_frame_head_{face}_L{level}",
+        size_cm=(depth, open_w, bar),
+        offset_extra=(base_x, open_y0, sill_z + open_h - bar),
+        **common,
+    )
+
+
+def _place_window_glass(
+    *,
+    face: str,
+    level: int,
+    origin: Tuple[int, int],
+    open_y0: float,
+    open_w: float,
+    open_h: float,
+    sill_z: float,
+    frame_bar: float,
+    placements: List[SolidPlacement],
+    counters: Dict[str, int],
+    tags: FrozenSet[str],
+    panel_size_cm: Tuple[float, float, float],
+) -> None:
+    """Thin semi-transparent glazing plane inset inside the frame rim."""
+    inner_w = max(20.0, open_w - 2.0 * frame_bar)
+    inner_h = max(20.0, open_h - 2.0 * frame_bar)
+    glass_depth = _GLASS_DEPTH_CM
+    _place_shell_box(
+        piece_prefix=f"shell_glass_{face}_L{level}",
+        asset_id=SHELL_WINDOW_GLASS_ASSET,
+        face=face,
+        level=level,
+        cell=origin,
+        size_cm=(glass_depth, inner_w, inner_h),
+        offset_extra=(
+            (WALL_T_CM - glass_depth) * 0.5,
+            open_y0 + frame_bar,
+            sill_z + frame_bar,
+        ),
+        placements=placements,
+        counters=counters,
+        tags=tags | frozenset({"window", "opening", "glass"}),
+        kind="window",
+        panel_size_cm=panel_size_cm,
+    )
+
+
 def _place_window_muntins(
     *,
     face: str,
@@ -366,6 +614,10 @@ def _place_glazed_face(
     width_cm: float,
     depth_cm: float,
     door_bay: int,
+    variation: ShellVariation,
+    shell_cfg: ShellStyleConfig,
+    wealth: int,
+    style_overrides: dict,
     placements: List[SolidPlacement],
     counters: Dict[str, int],
 ) -> None:
@@ -391,10 +643,60 @@ def _place_glazed_face(
         panel_size_cm=panel_size_cm,
     )
 
+    shell_flags = style_overrides.get("shell", {})
+    if shell_flags.get("cornice_band") and level == 0:
+        band_h = max(8.0, STOREY_CM * variation.cornice_height_frac)
+        band_z = STOREY_CM - band_h
+        trim_depth = max(3.0, WALL_T_CM * 0.35)
+        _place_shell_box(
+            piece_prefix=f"shell_cornice_{face}_L{level}",
+            asset_id=SHELL_TRIM_ASSET,
+            face=face,
+            level=level,
+            cell=origin,
+            size_cm=(trim_depth, run_cm, band_h),
+            offset_extra=((WALL_T_CM - trim_depth) * 0.5, 0.0, band_z),
+            placements=placements,
+            counters=counters,
+            tags=tags | frozenset({"cornice", "string_course", "trim"}),
+            kind="prop",
+            panel_size_cm=panel_size_cm,
+        )
+
+    if shell_flags.get("corner_pilasters") and face in ("south", "north"):
+        pil_w = max(10.0, MODULE_CM * 0.14)
+        pil_depth = max(4.0, WALL_T_CM * 0.55)
+        for label, along in (("w", 0.0), ("e", run_cm - pil_w)):
+            _place_shell_box(
+                piece_prefix=f"shell_pilaster_{face}_L{level}_{label}",
+                asset_id=SHELL_PILASTER_ASSET,
+                face=face,
+                level=level,
+                cell=origin,
+                size_cm=(pil_depth, pil_w, STOREY_CM * 0.92),
+                offset_extra=((WALL_T_CM - pil_depth) * 0.5, along, STOREY_CM * 0.04),
+                placements=placements,
+                counters=counters,
+                tags=tags | frozenset({"pilaster", "trim", "corner"}),
+                kind="prop",
+                panel_size_cm=panel_size_cm,
+            )
+
+    door_open_y0: Optional[float] = None
+    door_open_w: Optional[float] = None
+    door_open_h: Optional[float] = None
+
     for bay in range(bay_count):
         bay_start = bay * MODULE_CM
         opening = _opening_spec(
-            face=face, bay=bay, level=level, door_bay=door_bay, bay_count=bay_count
+            face=face,
+            bay=bay,
+            level=level,
+            door_bay=door_bay,
+            bay_count=bay_count,
+            variation=variation,
+            shell_cfg=shell_cfg,
+            wealth=wealth,
         )
         if opening is None:
             continue
@@ -423,25 +725,37 @@ def _place_glazed_face(
         )
 
         if kind == "window":
-            _place_shell_box(
-                piece_prefix=f"shell_sash_{face}_L{level}_B{bay}",
-                asset_id="shell_window_frame",
+            frame_bar = max(8.0, min(12.0, _FRAME_BAR_CM))
+            frame_depth = max(4.0, WALL_T_CM * _FRAME_T_FRAC)
+            _place_hollow_window_frame(
                 face=face,
                 level=level,
-                cell=origin,
-                size_cm=(frame_t, open_w * 0.92, open_h * 0.92),
-                offset_extra=(
-                    (WALL_T_CM - frame_t) * 0.5,
-                    open_y0 + open_w * 0.04,
-                    sill_z + open_h * 0.04,
-                ),
+                origin=origin,
+                open_y0=open_y0,
+                open_w=open_w,
+                open_h=open_h,
+                sill_z=sill_z,
+                frame_bar=frame_bar,
+                frame_depth=frame_depth,
                 placements=placements,
                 counters=counters,
-                tags=tags | frozenset({"window", "opening"}),
-                kind="prop",
+                tags=tags,
                 panel_size_cm=panel_size_cm,
             )
-            # Thin sash frame only — no muntin bars (they read as interior half-walls).
+            _place_window_glass(
+                face=face,
+                level=level,
+                origin=origin,
+                open_y0=open_y0,
+                open_w=open_w,
+                open_h=open_h,
+                sill_z=sill_z,
+                frame_bar=frame_bar,
+                placements=placements,
+                counters=counters,
+                tags=tags,
+                panel_size_cm=panel_size_cm,
+            )
         else:
             door_t = max(4.0, frame_t)
             _place_shell_box(
@@ -459,6 +773,47 @@ def _place_glazed_face(
                 placements=placements,
                 counters=counters,
                 tags=tags | frozenset({"door", "opening"}),
+                kind="prop",
+                panel_size_cm=panel_size_cm,
+            )
+            door_open_y0 = open_y0
+            door_open_w = open_w
+            door_open_h = open_h
+
+    if (
+        shell_flags.get("doorcase_surround")
+        and face == "south"
+        and level == 0
+        and door_open_y0 is not None
+        and door_open_w is not None
+        and door_open_h is not None
+    ):
+        surround = max(8.0, _FRAME_BAR_CM)
+        depth = max(4.0, WALL_T_CM * 0.45)
+        base_x = (WALL_T_CM - depth) * 0.5
+        case_tags = tags | frozenset({"doorcase", "trim", "door"})
+        for suffix, sy, sw, sh, sz in (
+            ("l", door_open_y0 - surround, surround, door_open_h + 2 * surround, 0.0),
+            (
+                "r",
+                door_open_y0 + door_open_w,
+                surround,
+                door_open_h + 2 * surround,
+                0.0,
+            ),
+            ("head", door_open_y0 - surround, door_open_w + 2 * surround, surround, door_open_h),
+        ):
+            _place_shell_box(
+                piece_prefix=f"shell_doorcase_{suffix}_{face}_L{level}",
+                asset_id=SHELL_DOORCASE_ASSET,
+                face=face,
+                level=level,
+                cell=origin,
+                size_cm=(depth, sw, sh),
+                offset_extra=(base_x, sy, sz),
+                placements=placements,
+                counters=counters,
+                tags=case_tags,
                 kind="prop",
                 panel_size_cm=panel_size_cm,
             )
@@ -631,7 +986,8 @@ def _place_stair_shaft_walls(
     min_x, min_y, max_x, max_y = _stair_well_bbox_cells(stair_cells)
     well_w = (max_x - min_x + 1) * MODULE_CM
     well_d = (max_y - min_y + 1) * MODULE_CM
-    tags = _INTERIOR_TAG | frozenset({"stair_shaft", "partition"})
+    shaft_h = STOREY_CM * _SHAFT_WALL_HEIGHT_FRAC
+    tags = _INTERIOR_TAG | frozenset({"stair_shaft", "partition", "plaster"})
 
     placements.append(
         SolidPlacement(
@@ -642,7 +998,7 @@ def _place_stair_shaft_walls(
             level=level,
             yaw=0,
             offset_cm=(0.0, MODULE_CM - WALL_T_CM, 0.0),
-            size_cm=(well_w, WALL_T_CM, STOREY_CM),
+            size_cm=(well_w, WALL_T_CM, shaft_h),
             tags=tags | frozenset({"face_north"}),
         )
     )
@@ -655,7 +1011,7 @@ def _place_stair_shaft_walls(
             level=level,
             yaw=0,
             offset_cm=(0.0, 0.0, 0.0),
-            size_cm=(WALL_T_CM, well_d, STOREY_CM),
+            size_cm=(WALL_T_CM, well_d, shaft_h),
             tags=tags | frozenset({"face_west"}),
         )
     )
@@ -668,8 +1024,38 @@ def _place_stair_shaft_walls(
             level=level,
             yaw=0,
             offset_cm=(MODULE_CM - WALL_T_CM, 0.0, 0.0),
-            size_cm=(WALL_T_CM, well_d, STOREY_CM),
+            size_cm=(WALL_T_CM, well_d, shaft_h),
             tags=tags | frozenset({"face_east"}),
+        )
+    )
+
+
+def _place_stair_shaft_rail(
+    *,
+    level: int,
+    stair_cells: Sequence[Tuple[int, int]],
+    placements: List[SolidPlacement],
+    counters: Dict[str, int],
+) -> None:
+    """Low handrail on the open south hall side so the stair reads in section."""
+    if not stair_cells:
+        return
+    min_x, min_y, max_x, _max_y = _stair_well_bbox_cells(stair_cells)
+    well_w = (max_x - min_x + 1) * MODULE_CM
+    rail_h = 4.0
+    rail_d = 3.0
+    rail_z = _SHAFT_RAIL_HEIGHT_CM
+    placements.append(
+        SolidPlacement(
+            piece_id=_next_id(counters, f"shell_shaft_rail_L{level}"),
+            asset_id=SHELL_STAIR_RAIL_ASSET,
+            kind="prop",
+            cell=(min_x, min_y),
+            level=level,
+            yaw=0,
+            offset_cm=(0.0, 0.0, rail_z),
+            size_cm=(well_w, rail_d, rail_h),
+            tags=_INTERIOR_TAG | frozenset({"stair_shaft", "stair_rail", "partition"}),
         )
     )
 
@@ -703,6 +1089,152 @@ def _place_interior_corridor_wall(
     )
 
 
+def _place_pitched_roof(
+    *,
+    level: int,
+    width_cm: float,
+    depth_cm: float,
+    bays_x: int,
+    bays_y: int,
+    blind: FrozenSet[str],
+    placements: List[SolidPlacement],
+    counters: Dict[str, int],
+    pitch: float = SHELL_ROOF_PITCH,
+) -> None:
+    """Two shell slope boxes + gable end caps — no catalog ``roof_pitched_slope``."""
+    oh = EAVE_OVERHANG_CM
+    roof_z = STOREY_CM
+    ridge_along_x = bays_x >= bays_y
+    tags_roof = _SHELL_TAG | frozenset({"pitched"})
+
+    if ridge_along_x:
+        span_cm = depth_cm
+        rise = roof_rise_cm(pitch, span_cm)
+        peak_z = rise + SHELL_ROOF_THICK_CM
+        run_cm = width_cm + 2.0 * oh
+        half_span = depth_cm * 0.5
+        slope_depth = half_span + oh
+
+        placements.append(
+            SolidPlacement(
+                piece_id=_next_id(counters, "shell_roof_slope_s"),
+                asset_id=SHELL_ROOF_SLOPE_ASSET,
+                kind="roof",
+                cell=(0, 0),
+                level=level,
+                yaw=0,
+                offset_cm=(-oh, -oh, roof_z),
+                size_cm=(run_cm, slope_depth, peak_z),
+                tags=tags_roof | frozenset({"slope_south"}),
+            )
+        )
+        placements.append(
+            SolidPlacement(
+                piece_id=_next_id(counters, "shell_roof_slope_n"),
+                asset_id=SHELL_ROOF_SLOPE_ASSET,
+                kind="roof",
+                cell=(0, 0),
+                level=level,
+                yaw=0,
+                offset_cm=(-oh, half_span - oh, roof_z),
+                size_cm=(run_cm, slope_depth, peak_z),
+                tags=tags_roof | frozenset({"slope_north"}),
+            )
+        )
+        gable_run = depth_cm + 2.0 * oh
+        if "west" not in blind:
+            placements.append(
+                SolidPlacement(
+                    piece_id=_next_id(counters, "shell_gable_w"),
+                    asset_id=SHELL_GABLE_ASSET,
+                    kind="roof",
+                    cell=(0, 0),
+                    level=level,
+                    yaw=0,
+                    offset_cm=(-oh, -oh, roof_z),
+                    size_cm=(_GABLE_THICK_CM, gable_run, peak_z),
+                    tags=tags_roof | frozenset({"gable_west"}),
+                )
+            )
+        if "east" not in blind:
+            placements.append(
+                SolidPlacement(
+                    piece_id=_next_id(counters, "shell_gable_e"),
+                    asset_id=SHELL_GABLE_ASSET,
+                    kind="roof",
+                    cell=(0, 0),
+                    level=level,
+                    yaw=0,
+                    offset_cm=(width_cm + oh - _GABLE_THICK_CM, -oh, roof_z),
+                    size_cm=(_GABLE_THICK_CM, gable_run, peak_z),
+                    tags=tags_roof | frozenset({"gable_east"}),
+                )
+            )
+    else:
+        span_cm = width_cm
+        rise = roof_rise_cm(pitch, span_cm)
+        peak_z = rise + SHELL_ROOF_THICK_CM
+        run_cm = depth_cm + 2.0 * oh
+        half_span = width_cm * 0.5
+        slope_width = half_span + oh
+
+        placements.append(
+            SolidPlacement(
+                piece_id=_next_id(counters, "shell_roof_slope_w"),
+                asset_id=SHELL_ROOF_SLOPE_ASSET,
+                kind="roof",
+                cell=(0, 0),
+                level=level,
+                yaw=0,
+                offset_cm=(-oh, -oh, roof_z),
+                size_cm=(slope_width, run_cm, peak_z),
+                tags=tags_roof | frozenset({"slope_west"}),
+            )
+        )
+        placements.append(
+            SolidPlacement(
+                piece_id=_next_id(counters, "shell_roof_slope_e"),
+                asset_id=SHELL_ROOF_SLOPE_ASSET,
+                kind="roof",
+                cell=(0, 0),
+                level=level,
+                yaw=0,
+                offset_cm=(half_span - oh, -oh, roof_z),
+                size_cm=(slope_width, run_cm, peak_z),
+                tags=tags_roof | frozenset({"slope_east"}),
+            )
+        )
+        gable_run = width_cm + 2.0 * oh
+        if "south" not in blind:
+            placements.append(
+                SolidPlacement(
+                    piece_id=_next_id(counters, "shell_gable_s"),
+                    asset_id=SHELL_GABLE_ASSET,
+                    kind="roof",
+                    cell=(0, 0),
+                    level=level,
+                    yaw=0,
+                    offset_cm=(-oh, -oh, roof_z),
+                    size_cm=(gable_run, _GABLE_THICK_CM, peak_z),
+                    tags=tags_roof | frozenset({"gable_south"}),
+                )
+            )
+        if "north" not in blind:
+            placements.append(
+                SolidPlacement(
+                    piece_id=_next_id(counters, "shell_gable_n"),
+                    asset_id=SHELL_GABLE_ASSET,
+                    kind="roof",
+                    cell=(0, 0),
+                    level=level,
+                    yaw=0,
+                    offset_cm=(-oh, depth_cm + oh - _GABLE_THICK_CM, roof_z),
+                    size_cm=(gable_run, _GABLE_THICK_CM, peak_z),
+                    tags=tags_roof | frozenset({"gable_north"}),
+                )
+            )
+
+
 def _place_flat_roof(
     *,
     level: int,
@@ -711,7 +1243,7 @@ def _place_flat_roof(
     placements: List[SolidPlacement],
     counters: Dict[str, int],
 ) -> None:
-    """Simple flat shell roof slab — reliable demo read (no catalog pitched slope)."""
+    """Simple flat shell roof slab — humble / civic read."""
     placements.append(
         SolidPlacement(
             piece_id=_next_id(counters, "shell_roof_slab"),
@@ -722,7 +1254,7 @@ def _place_flat_roof(
             yaw=0,
             offset_cm=(0.0, 0.0, STOREY_CM),
             size_cm=(width_cm, depth_cm, SHELL_ROOF_THICK_CM),
-            tags=_SHELL_TAG | frozenset({"roof_slab"}),
+            tags=_SHELL_TAG | frozenset({"roof_slab", "flat"}),
         )
     )
 
@@ -735,30 +1267,27 @@ def _place_chimney_stubs(
     width_cm: float,
     depth_cm: float,
     style_overrides: dict,
+    variation: ShellVariation,
+    roof_pitch: float,
+    roof_kind: str,
     placements: List[SolidPlacement],
     counters: Dict[str, int],
 ) -> None:
-    """Short masonry stacks on the roof deck — shell boxes, not catalog trim."""
+    """Short masonry stacks on the roof deck — seed-placed shell boxes."""
+    if variation.chimney_count <= 0:
+        return
     if not style_overrides.get("shell", {}).get("chimney_stub", False):
         return
     w = MODULE_CM * _CHIMNEY_W_FRAC
     h = STOREY_CM * _CHIMNEY_H_FRAC
-    roof_z = STOREY_CM
-    tags = _SHELL_TAG | frozenset({"chimney", "roofline"})
     ridge_along_x = bays_x >= bays_y
-    if ridge_along_x:
-        anchors = [
-            (MODULE_CM * 1.1, depth_cm * 0.32),
-            (width_cm - MODULE_CM * 1.6, depth_cm * 0.38),
-        ]
+    span_cm = depth_cm if ridge_along_x else width_cm
+    if roof_kind == "flat":
+        roof_z = STOREY_CM
     else:
-        anchors = [
-            (width_cm * 0.58, MODULE_CM * 0.9),
-            (width_cm * 0.42, depth_cm - MODULE_CM * 1.4),
-        ]
-    if min(bays_x, bays_y) < 3:
-        anchors = anchors[:1]
-    for ax, ay in anchors[:2]:
+        roof_z = STOREY_CM + roof_rise_cm(roof_pitch, span_cm)
+    tags = _SHELL_TAG | frozenset({"chimney", "roofline"})
+    for ax, ay in variation.chimney_anchors[: variation.chimney_count]:
         placements.append(
             SolidPlacement(
                 piece_id=_next_id(counters, "shell_chimney"),
@@ -788,15 +1317,34 @@ def build_shell_assembly(
     bays_x = spec.footprint.bays_x
     bays_y = spec.footprint.bays_y
     storeys = spec.storeys
-    wealth = resolve_wealth(params.wealth)
+    shell_cfg = load_archetype_shell_config(
+        params.archetype,
+        wealth=params.wealth,
+        palette_family=params.palette_family,
+    )
+    wealth = resolve_wealth(params.wealth, archetype=shell_cfg.archetype)
     blind = party_wall_faces(params.row_context)
     style_overrides = params_to_style_overrides(params)
+    roof_blind = blind
 
     width_cm, depth_cm = _footprint_cm(bays_x, bays_y)
     stair_id = resolve_stair_id(wealth, bays_x, bays_y, storeys=storeys)
     anchor, stair_yaw, stair_cells = _stair_anchor_and_cells(stair_id, bays_x, bays_y)
-    door_bay = max(0, min(bays_x - 1, bays_x // 2))
     glazed = _glazed_faces(blind)
+    variation = derive_shell_variation(
+        params,
+        bays_x=bays_x,
+        bays_y=bays_y,
+        storeys=storeys,
+        glazed_faces=glazed,
+        style_overrides=style_overrides,
+        shell_cfg=shell_cfg,
+    )
+    door_bay = variation.door_bay
+    roof_kind = shell_cfg.roof_kind if wealth >= 2 else "flat"
+    if wealth <= 1:
+        roof_kind = "flat"
+    roof_pitch = shell_cfg.roof_pitch
 
     placements: List[SolidPlacement] = []
     counters: Dict[str, int] = {}
@@ -847,6 +1395,10 @@ def build_shell_assembly(
                     width_cm=width_cm,
                     depth_cm=depth_cm,
                     door_bay=door_bay,
+                    variation=variation,
+                    shell_cfg=shell_cfg,
+                    wealth=wealth,
+                    style_overrides=style_overrides,
                     placements=placements,
                     counters=counters,
                 )
@@ -868,6 +1420,12 @@ def build_shell_assembly(
             placements=placements,
             counters=counters,
         )
+        _place_stair_shaft_rail(
+            level=level,
+            stair_cells=stair_cells,
+            placements=placements,
+            counters=counters,
+        )
 
     for level in range(storeys - 1):
         _place_stair(
@@ -879,13 +1437,26 @@ def build_shell_assembly(
             counters=counters,
         )
 
-    _place_flat_roof(
-        level=storeys - 1,
-        width_cm=width_cm,
-        depth_cm=depth_cm,
-        placements=placements,
-        counters=counters,
-    )
+    if roof_kind == "flat":
+        _place_flat_roof(
+            level=storeys - 1,
+            width_cm=width_cm,
+            depth_cm=depth_cm,
+            placements=placements,
+            counters=counters,
+        )
+    else:
+        _place_pitched_roof(
+            level=storeys - 1,
+            width_cm=width_cm,
+            depth_cm=depth_cm,
+            bays_x=bays_x,
+            bays_y=bays_y,
+            blind=roof_blind,
+            placements=placements,
+            counters=counters,
+            pitch=roof_pitch,
+        )
     _place_chimney_stubs(
         level=storeys - 1,
         bays_x=bays_x,
@@ -893,6 +1464,9 @@ def build_shell_assembly(
         width_cm=width_cm,
         depth_cm=depth_cm,
         style_overrides=style_overrides,
+        variation=variation,
+        roof_pitch=roof_pitch,
+        roof_kind=roof_kind,
         placements=placements,
         counters=counters,
     )
@@ -1013,10 +1587,49 @@ def count_style_shell_props(assembly: Assembly) -> int:
     )
 
 
+def count_window_glass_placements(assembly: Assembly) -> int:
+    return sum(
+        1
+        for p in assembly.placements
+        if p.asset_id == SHELL_WINDOW_GLASS_ASSET
+    )
+
+
+def count_window_frame_bars(assembly: Assembly, face: Optional[str] = None) -> int:
+    pieces = [
+        p
+        for p in assembly.placements
+        if p.asset_id == SHELL_WINDOW_FRAME_ASSET and "frame_bar" in p.tags
+    ]
+    if face is not None:
+        pieces = [p for p in pieces if f"face_{face}" in p.tags]
+    return len(pieces)
+
+
+def count_stair_shaft_pieces(assembly: Assembly) -> int:
+    return sum(1 for p in assembly.placements if "stair_shaft" in p.tags)
+
+
 def count_muntin_placements(assembly: Assembly) -> int:
     return sum(
         1 for p in assembly.placements if p.asset_id == SHELL_WINDOW_MUNTIN_ASSET
     )
+
+
+def count_shell_roof_slopes(assembly: Assembly) -> int:
+    return sum(
+        1 for p in assembly.placements if p.asset_id == SHELL_ROOF_SLOPE_ASSET
+    )
+
+
+def count_shell_gable_ends(assembly: Assembly) -> int:
+    return sum(1 for p in assembly.placements if p.asset_id == SHELL_GABLE_ASSET)
+
+
+def shell_roof_placements(assembly: Assembly) -> List[SolidPlacement]:
+    """All shell roof pieces (slopes + gables) for bounds / silhouette tests."""
+    roof_ids = {SHELL_ROOF_SLOPE_ASSET, SHELL_GABLE_ASSET, SHELL_ROOF_ASSET}
+    return [p for p in assembly.placements if p.asset_id in roof_ids or p.kind == "roof"]
 
 
 def count_window_placements(assembly: Assembly, face: str) -> int:
@@ -1033,8 +1646,13 @@ __all__ = [
     "SHELL_FLOOR_ASSET",
     "SHELL_INTERIOR_WALL_ASSET",
     "SHELL_OPENING_CUTTER_ASSET",
+    "SHELL_GABLE_ASSET",
     "SHELL_ROOF_ASSET",
+    "SHELL_ROOF_SLOPE_ASSET",
+    "SHELL_STAIR_RAIL_ASSET",
     "SHELL_WALL_ASSET",
+    "SHELL_WINDOW_FRAME_ASSET",
+    "SHELL_WINDOW_GLASS_ASSET",
     "SHELL_WINDOW_MUNTIN_ASSET",
     "build_shell_assembly",
     "count_chimney_stubs",
@@ -1047,10 +1665,16 @@ __all__ = [
     "count_opening_cutters",
     "count_pier_pieces",
     "count_shell_doors",
+    "count_shell_gable_ends",
+    "count_shell_roof_slopes",
     "count_stair_placements",
+    "count_stair_shaft_pieces",
     "count_style_shell_props",
+    "count_window_frame_bars",
+    "count_window_glass_placements",
     "count_window_placements",
     "is_facade_shell_assembly",
     "is_shell_placement",
     "shell_cutter_hole_yz_cm",
+    "shell_roof_placements",
 ]

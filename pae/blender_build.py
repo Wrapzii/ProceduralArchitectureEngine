@@ -131,14 +131,19 @@ ASSET_MATERIAL_COLORS: Dict[str, Tuple[float, float, float, float]] = {
     "shell_wall_solid": (0.92, 0.88, 0.78, 1.0),  # cream render exterior
     "shell_wall_interior": (0.86, 0.84, 0.80, 1.0),  # plaster interior
     "shell_floor_slab": (0.62, 0.52, 0.40, 1.0),  # floor boards
-    "shell_window_frame": (0.12, 0.12, 0.14, 1.0),  # dark sash
+    "shell_window_frame": (0.12, 0.12, 0.14, 1.0),  # dark sash sticks
+    "shell_window_glass": (0.62, 0.74, 0.84, 0.28),  # pale glazing — see-through in Workbench
     "shell_window_muntin": (0.10, 0.10, 0.12, 1.0),  # darker muntin cross
+    "shell_stair_rail": (0.42, 0.36, 0.30, 1.0),  # dark wood handrail
     "shell_door": (0.18, 0.12, 0.10, 1.0),  # dark Georgian door panel
     "shell_chimney_stub": (0.55, 0.50, 0.46, 1.0),  # brick chimney stack
-    "shell_roof_slab": (0.58, 0.55, 0.50, 1.0),  # slate/cream flat roof
+    "shell_roof_slab": (0.26, 0.32, 0.44, 1.0),  # dark blue-grey slate
+    "shell_roof_slope": (0.26, 0.32, 0.44, 1.0),  # dark blue-grey slate
+    "shell_gable_end": (0.26, 0.32, 0.44, 1.0),  # dark blue-grey slate
 }
 _TINTED_ASSET_PREFIXES = ("roof_", "tower_", "stair_", "spire_", "dormer_")
 _TINTED_ASSET_EXACT = frozenset(ASSET_MATERIAL_COLORS.keys())
+_TRANSPARENT_ASSET_IDS = frozenset({"shell_window_glass"})
 
 # Workbench PNGs read ``scene.display.shading`` + material viewport color — not Cycles lights.
 WORKBENCH_SCREENSHOT_VIEW_TRANSFORM = "Standard"
@@ -193,16 +198,27 @@ def configure_workbench_screenshot_scene(scene: Any) -> None:
             shading.type = "SOLID"
         shading.light = "STUDIO"
         shading.color_type = "MATERIAL"
+        if hasattr(shading, "show_transparent_back"):
+            shading.show_transparent_back = True
 
 
 def apply_material_base_color(mat: Any, rgba: Tuple[float, float, float, float]) -> None:
     """Set Principled Base Color and viewport diffuse — Workbench MATERIAL mode uses both."""
     mat.diffuse_color = rgba
+    alpha = float(rgba[3]) if len(rgba) > 3 else 1.0
+    if alpha < 0.999:
+        mat.blend_method = "BLEND"
+        if hasattr(mat, "use_backface_culling"):
+            mat.use_backface_culling = False
     if getattr(mat, "use_nodes", False) and mat.node_tree is not None:
         bsdf = mat.node_tree.nodes.get("Principled BSDF")
         if bsdf is not None:
             bsdf.inputs["Base Color"].default_value = rgba
             bsdf.inputs["Roughness"].default_value = 0.7
+            if "Alpha" in bsdf.inputs:
+                bsdf.inputs["Alpha"].default_value = alpha
+            if alpha < 0.999 and "Transmission Weight" in bsdf.inputs:
+                bsdf.inputs["Transmission Weight"].default_value = 0.35
 
 
 def reload_pae() -> List[str]:
@@ -1274,6 +1290,86 @@ def _mesh_for_shell_box(p, *, cache: Dict[str, Any]) -> Any:
     return obj
 
 
+def _shell_roof_top_fn(asset_id: str, size_cm, tags: frozenset):
+    """Height field for shell pitched roof wedges (single-slope or gable prism)."""
+    sx, sy, sz = (float(v) for v in size_cm)
+    if asset_id == "shell_roof_slope":
+        if "slope_south" in tags:
+            return lambda x, y: sz * min(1.0, max(0.0, y / sy)) if sy > 0 else 0.0
+        if "slope_north" in tags:
+            return lambda x, y: sz * min(1.0, max(0.0, 1.0 - y / sy)) if sy > 0 else 0.0
+        if "slope_west" in tags:
+            return lambda x, y: sz * min(1.0, max(0.0, x / sx)) if sx > 0 else 0.0
+        if "slope_east" in tags:
+            return lambda x, y: sz * min(1.0, max(0.0, 1.0 - x / sx)) if sx > 0 else 0.0
+    if asset_id == "shell_gable_end":
+        if "gable_west" in tags or "gable_east" in tags:
+            return (
+                lambda x, y: sz * max(0.0, 1.0 - abs(2.0 * y / sy - 1.0))
+                if sy > 0
+                else 0.0
+            )
+        return (
+            lambda x, y: sz * max(0.0, 1.0 - abs(2.0 * x / sx - 1.0))
+            if sx > 0
+            else 0.0
+        )
+    return lambda x, y: sz
+
+
+def _shell_wedge_verts_faces(size_cm, top_fn):
+    """Single rectangular panel with sloped top (no voids)."""
+    sx, sy, _ = (float(v) for v in size_cm)
+    z00, z10 = top_fn(0.0, 0.0), top_fn(sx, 0.0)
+    z11, z01 = top_fn(sx, sy), top_fn(0.0, sy)
+    verts = [
+        (0.0, 0.0, 0.0),
+        (sx, 0.0, 0.0),
+        (sx, sy, 0.0),
+        (0.0, sy, 0.0),
+        (0.0, 0.0, z00),
+        (sx, 0.0, z10),
+        (sx, sy, z11),
+        (0.0, sy, z01),
+    ]
+    faces = [
+        (0, 3, 2, 1),
+        (4, 5, 6, 7),
+        (0, 1, 5, 4),
+        (1, 2, 6, 5),
+        (2, 3, 7, 6),
+        (3, 0, 4, 7),
+    ]
+    return verts, faces
+
+
+def _mesh_for_shell_roof(p, *, cache: Dict[str, Any]) -> Any:
+    """Wedge / gable prism for ``shell_roof_slope`` and ``shell_gable_end``."""
+    from pae.primitives import bpy_util
+
+    bpy_util.require_bpy()
+    tags = getattr(p, "tags", frozenset()) or frozenset()
+    key = f"shell_roof::{p.asset_id}::{p.piece_id}::{tuple(p.size_cm)}::{sorted(tags)}"
+    if key in cache:
+        return cache[key]
+    top_fn = _shell_roof_top_fn(p.asset_id, p.size_cm, tags)
+    verts, faces = _shell_wedge_verts_faces(p.size_cm, top_fn)
+    proto_name = f"PAE_Proto_{p.piece_id}"
+    obj = bpy_util.mesh_from_verts_faces(proto_name, verts, faces)
+    obj.hide_set(True)
+    obj.hide_render = True
+    cache[key] = obj
+    return obj
+
+
+def _mesh_for_shell_placement(p, *, cache: Dict[str, Any]) -> Any:
+    """Route shell placements to box, punched wall, or pitched roof wedge."""
+    aid = getattr(p, "asset_id", "") or ""
+    if aid in ("shell_roof_slope", "shell_gable_end"):
+        return _mesh_for_shell_roof(p, cache=cache)
+    return _mesh_for_shell_box(p, cache=cache)
+
+
 def _shell_opening_cutters_by_face_level(assembly) -> Dict[Tuple[str, int], list]:
     """Index declarative opening cutters for glazed shell wall panels."""
     out: Dict[Tuple[str, int], list] = {}
@@ -1433,7 +1529,7 @@ def instance_assembly(
                     p, cutters, cache=cache
                 )
             else:
-                proto = _mesh_for_shell_box(p, cache=cache)
+                proto = _mesh_for_shell_placement(p, cache=cache)
             sx = sy = sz = 1.0
         else:
             notched_roof = (

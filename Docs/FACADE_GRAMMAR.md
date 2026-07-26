@@ -136,6 +136,17 @@ must reload before **Generate Building** or edits appear to do nothing.
 Add-on version should read **0.2.1** in preferences after this branch. Background
 scripts call `pae.blender_build.reload_pae()` automatically at entry.
 
+### Verifying the stairwell in Blender
+
+After **Generate Building**, orbit to a **section-style view** through a punched
+south window (Workbench → Viewport Shading → **Material**; enable **X-Ray** or
+transparent backfaces if glass reads opaque). You should see: terracotta
+`stair_switchback` treads in the east stair well; **plaster** shaft partitions
+(north/west/east only — hall opens south); **floor holes** punched in every upper
+`floor` deck (no solid slab over the well); and a thin **handrail** on the south
+opening. Count check: `storeys − 1` each for `floor_hole` and `stair_switchback`
+placements. Reload PAE after pulling shell changes.
+
 ## API
 
 ```python

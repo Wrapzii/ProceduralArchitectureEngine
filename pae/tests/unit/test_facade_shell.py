@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
-from pae.contract import MODULE_CM, STOREY_CM, WALL_T_CM, placement_world_aabb
+from pae.contract import EAVE_OVERHANG_CM, MODULE_CM, STOREY_CM, WALL_T_CM, placement_world_aabb
 from pae.export.manifest import placement_loc_cm
 from pae.facade_grammar import FacadeParams, build_from_params
 from pae.facade_shell import (
     SHELL_DOOR_ASSET,
     SHELL_INTERIOR_WALL_ASSET,
+    SHELL_WINDOW_FRAME_ASSET,
+    SHELL_WINDOW_GLASS_ASSET,
     SHELL_WALL_ASSET,
     build_shell_assembly,
     count_chimney_stubs,
@@ -19,9 +21,14 @@ from pae.facade_shell import (
     count_muntin_placements,
     count_opening_cutters,
     count_pier_pieces,
+    count_shell_gable_ends,
+    count_shell_roof_slopes,
     count_shell_doors,
     count_stair_placements,
+    count_stair_shaft_pieces,
     count_style_shell_props,
+    count_window_frame_bars,
+    count_window_glass_placements,
     count_window_placements,
 )
 
@@ -221,6 +228,73 @@ def test_stair_and_floor_hole_counts_match_storeys():
         assembly, _ = build_shell_assembly(params)
         assert count_stair_placements(assembly) == storeys - 1
         assert count_floor_holes(assembly) == storeys - 1
+        assert count_stair_shaft_pieces(assembly) >= 3 * storeys
+
+
+def test_stair_shaft_pieces_inside_footprint():
+    from pae.facade_grammar import metres_to_bays
+
+    params = _default_params(storeys=3, frontage_m=12.0, depth_m=10.0)
+    assembly, _ = build_shell_assembly(params)
+    bays_x = metres_to_bays(params.frontage_m)
+    bays_y = metres_to_bays(params.depth_m)
+    max_x = bays_x * MODULE_CM
+    max_y = bays_y * MODULE_CM
+    shaft = [p for p in assembly.placements if "stair_shaft" in p.tags]
+    assert shaft
+    for piece in shaft:
+        pmin, pmax = placement_world_aabb(
+            piece.cell[0],
+            piece.cell[1],
+            piece.level,
+            piece.yaw,
+            piece.size_cm,
+            piece.offset_cm,
+            rotates_about_center=piece.rotates_about_center,
+        )
+        assert pmin[0] >= -1.0
+        assert pmin[1] >= -1.0
+        assert pmax[0] <= max_x + 1.0
+        assert pmax[1] <= max_y + 1.0
+
+
+def test_hollow_window_frames_and_glass():
+    """Regression: solid sash box filled the opening — must be rim + thin glass."""
+    params = _default_params(storeys=2)
+    assembly, _ = build_shell_assembly(params)
+    glass_count = count_window_glass_placements(assembly)
+    assert glass_count >= 2
+    assert count_window_frame_bars(assembly, "south") == sum(
+        1
+        for p in assembly.placements
+        if p.asset_id == SHELL_WINDOW_GLASS_ASSET and "face_south" in p.tags
+    ) * 4
+    glass = [p for p in assembly.placements if p.asset_id == SHELL_WINDOW_GLASS_ASSET]
+    assert glass
+    for pane in glass:
+        sx, sy, sz = pane.size_cm
+        assert sx <= 3.0, "glass must be a thin plane, not a solid fill"
+        assert sy < MODULE_CM * _WINDOW_W_FRAC * 0.95
+        assert sz < STOREY_CM * _WINDOW_H_FRAC * 0.95
+
+
+def test_window_frame_bars_do_not_fill_opening():
+    params = _default_params(storeys=2)
+    assembly, _ = build_shell_assembly(params)
+    frames = [
+        p
+        for p in assembly.placements
+        if p.asset_id == SHELL_WINDOW_FRAME_ASSET and "frame_bar" in p.tags
+    ]
+    assert frames
+    max_face = max(f.size_cm[1] * f.size_cm[2] for f in frames)
+    open_area = (MODULE_CM * 0.55) * (STOREY_CM * 0.58)
+    assert max_face < open_area * 0.45, "no single bar should cover most of the opening"
+
+
+# Module-level aperture fractions mirrored from facade_shell (import-safe).
+_WINDOW_W_FRAC = 0.55
+_WINDOW_H_FRAC = 0.58
 
 
 def test_generate_facade_operator_uses_shell_mode_only():
@@ -256,7 +330,12 @@ def _shell_placement_bounds_targets(assembly):
     """Placements that must sit inside the footprint AABB (plus wall skin)."""
     for p in assembly.placements:
         aid = p.asset_id
-        if aid in (SHELL_WALL_ASSET, SHELL_INTERIOR_WALL_ASSET, "shell_window_frame"):
+        if aid in (
+            SHELL_WALL_ASSET,
+            SHELL_INTERIOR_WALL_ASSET,
+            SHELL_WINDOW_FRAME_ASSET,
+            SHELL_WINDOW_GLASS_ASSET,
+        ):
             yield p
         elif aid == SHELL_DOOR_ASSET:
             yield p
@@ -283,31 +362,29 @@ def test_user_demo_placements_inside_footprint():
     assert outliers == [], f"out-of-footprint placements: {outliers[:8]}"
 
 
-def test_south_sash_along_frontage_not_depth():
+def test_south_window_frames_along_frontage_not_depth():
     params = _demo_user_params()
     assembly, _ = build_shell_assembly(params)
     width = int(round(22.0 / (MODULE_CM / 100.0))) * MODULE_CM
-    sashes = [
+    frames = [
         p
         for p in assembly.placements
-        if p.asset_id == "shell_window_frame" and "face_south" in p.tags
+        if p.asset_id == SHELL_WINDOW_FRAME_ASSET
+        and "face_south" in p.tags
+        and "frame_bar" in p.tags
     ]
-    assert sashes
-    for sash in sashes:
-        loc = placement_loc_cm(sash)
-        assert 0.0 <= loc[0] <= width + 1.0, sash.piece_id
-        assert loc[1] <= WALL_T_CM + 5.0, sash.piece_id
+    assert frames
+    for bar in frames:
+        loc = placement_loc_cm(bar)
+        assert 0.0 <= loc[0] <= width + 1.0, bar.piece_id
+        assert loc[1] <= WALL_T_CM + 5.0, bar.piece_id
 
 
-def test_shell_roof_is_flat_slab_not_catalog_slope():
+def test_shell_roof_uses_shell_assets_not_catalog_slope():
     params = _demo_user_params()
     assembly, _ = build_shell_assembly(params)
     roofs = [p for p in assembly.placements if p.kind == "roof"]
     assert roofs
-    assert all(p.asset_id == "shell_roof_slab" for p in roofs)
+    shell_roof_ids = {"shell_roof_slab", "shell_roof_slope", "shell_gable_end"}
+    assert all(p.asset_id in shell_roof_ids for p in roofs)
     assert not any(p.asset_id == "roof_pitched_slope" for p in assembly.placements)
-    slab = roofs[0]
-    width = int(round(22.0 / (MODULE_CM / 100.0))) * MODULE_CM
-    depth = int(round(12.0 / (MODULE_CM / 100.0))) * MODULE_CM
-    assert slab.size_cm[0] == width
-    assert slab.size_cm[1] == depth
