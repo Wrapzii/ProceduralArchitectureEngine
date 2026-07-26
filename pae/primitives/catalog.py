@@ -14,10 +14,13 @@ from pae.primitives.railings import all_railings
 from pae.primitives.roofs import all_roofs
 from pae.primitives.spires import all_spires
 from pae.primitives.stairs import all_stairs
+from pae.primitives.style_shell import all_style_shell
 from pae.primitives.surfaces import all_surfaces
 from pae.primitives.towers import all_towers
 from pae.primitives.types import PrimitiveDescriptor
 from pae.primitives.walls import all_walls
+
+_STYLE_SHELL_IDS = frozenset(d.id for d in all_style_shell())
 
 
 def all_descriptors() -> List[PrimitiveDescriptor]:
@@ -34,6 +37,7 @@ def all_descriptors() -> List[PrimitiveDescriptor]:
     pieces.extend(all_spires())
     pieces.extend(all_surfaces())
     pieces.extend(all_bands())
+    pieces.extend(all_style_shell())
     pieces.extend(all_anchors())
     return pieces
 
@@ -67,12 +71,16 @@ def build_mesh(piece_id: str, *, name: Optional[str] = None):
         roofs,
         spires,
         stairs,
+        style_shell,
         surfaces,
         towers,
         walls,
     )
 
     desc = get(piece_id)
+    # Style-shell pieces reuse barrier/band/column/roofline kinds but have dedicated meshes.
+    if desc.id in _STYLE_SHELL_IDS:
+        return style_shell.build_style_shell_mesh(desc, name=name)
     builders = {
         "wall": walls.build_wall_mesh,
         "floor": floors.build_floor_mesh,

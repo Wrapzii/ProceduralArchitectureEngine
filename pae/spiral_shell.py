@@ -106,6 +106,9 @@ def _tower_arc_yaws_at(
             continue
         if p.cell != cell or p.level != level:
             continue
+        if "tower_door_cut_ring" in p.tags:
+            yaws.update(SPIRAL_COMPLEMENTARY_YAWS)
+            continue
         yaws.add(_yaw_norm(p.yaw))
     return yaws
 
@@ -284,6 +287,8 @@ def place_spiral_newels(
     xy_offset: Tuple[float, float],
     next_piece_id,
     stair_outer_radius_cm: Optional[float] = None,
+    height_cm: float = STOREY_CM,
+    z_offset_cm: float = 0.0,
 ) -> None:
     """Emit a newel only when the tread inner edge actually meets the pole."""
     if stair_outer_radius_cm is not None:
@@ -296,14 +301,23 @@ def place_spiral_newels(
             return
     for level in sorted(set(levels)):
         pid = next_piece_id(counters, "spiral_newel", cell, level)
-        placements.append(
-            make_spiral_newel_placement(
+        placement = make_spiral_newel_placement(
                 piece_id=pid,
                 cell=cell,
                 level=level,
                 xy_offset=xy_offset,
             )
+        placement.offset_cm = (
+            placement.offset_cm[0],
+            placement.offset_cm[1],
+            float(z_offset_cm),
         )
+        placement.size_cm = (
+            placement.size_cm[0],
+            placement.size_cm[1],
+            float(height_cm),
+        )
+        placements.append(placement)
 
 
 def ensure_spiral_drum_quarters(

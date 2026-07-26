@@ -567,6 +567,8 @@ def check_compound_range_doors(
 
 def check_building_doorway_exists(assembly: Assembly) -> List[Failure]:
     """Every inhabited building/range must have ≥1 exterior or role doorway."""
+    if str(assembly.building_class or "").lower() == "connector":
+        return []
     footprints = _ground_floors_by_building(assembly)
     if not footprints:
         return []

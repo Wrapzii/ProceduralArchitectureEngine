@@ -358,6 +358,24 @@ _register(
 )
 _register(
     ApertureProfile(
+        name="window_cross",
+        kind=_W,
+        width_frac=0.40,
+        height_frac=0.40,
+        sill_frac=0.30,
+        head=HEAD_FLAT,
+        lights=2,
+        mullion_frac=0.045,
+        transom_frac=0.50,
+        tags=frozenset({"window", "cross", "mullioned", "square"}),
+        notes=(
+            "Square four-light window: thin vertical mullion + mid transom "
+            "(cross bars) with clear opening quadrants."
+        ),
+    )
+)
+_register(
+    ApertureProfile(
         name="window_gothic_traceried",
         kind=_W,
         width_frac=0.58,

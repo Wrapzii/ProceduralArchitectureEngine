@@ -110,6 +110,27 @@ def straight_stair_verts_faces(
     string_t = max(width * 0.09, 6.0)
     parts: List[Tuple[List[Vec3], List[Face]]] = []
 
+    # Closed SOFFIT / undercarriage between the stringers — without this the flight
+    # reads as a hollow inverted-U tunnel when viewed end-on (fancy manor section).
+    core_w = max(width - 2.0 * string_t, width * 0.5)
+    core_y0 = (width - core_w) * 0.5
+    for i in range(n):
+        z_top = max((i + 1) * riser_h - tread_t, riser_h * 0.35)
+        if along == "x":
+            parts.append(
+                _box_verts_faces(i * tread_d, core_y0, 0.0, tread_d, core_w, z_top)
+            )
+        elif along == "y":
+            parts.append(
+                _box_verts_faces(core_y0, i * tread_d, 0.0, core_w, tread_d, z_top)
+            )
+        else:  # -y
+            parts.append(
+                _box_verts_faces(
+                    core_y0, run - (i + 1) * tread_d, 0.0, core_w, tread_d, z_top
+                )
+            )
+
     for i in range(n):
         z0 = i * riser_h
         top = z0 + riser_h

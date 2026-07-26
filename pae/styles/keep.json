@@ -1,11 +1,41 @@
 {
   "id": "keep",
-  "roof_pitch": 0.9,
+  "geometry": {
+    "roof_pitch": 0.88,
+    "storey_height_cm": 360
+  },
   "roof": {
-    "kind_default": "hip"
+    "kind_default": "hip",
+    "eave_overhang_cm": 28
   },
   "window": {"tag": "window_arrowslit", "per_bay": 1, "skip_ground": true},
-  "wall_bands": {"plinth_cm": 60, "cornice_cm": 40},
+  "door": {"tag": "door_arched"},
+  "wall_bands": {"plinth_cm": 110, "cornice_cm": 48, "string_cm": 0},
   "tower": {"cap": "cone_steep", "crown": true, "finial": true},
+  "shell": {
+    "forecourt": false,
+    "doorcase": "arched",
+    "porch_posts": false,
+    "porch_roof": false,
+    "shop_platform": false,
+    "bargeboard": false,
+    "chimney_stub": false,
+    "buttress_corners": true,
+    "stoop": false,
+    "jetty": false,
+    "pilasters": false,
+    "coping": false
+  },
+  "detail": {
+    "opening_accent": "none",
+    "density": 0.40,
+    "mid_string": false,
+    "jettied_mid": false,
+    "verticals_every_bays": 3,
+    "corners_only": true,
+    "coping": false,
+    "ridge_accent": false,
+    "weathering": true
+  },
   "materials": {"wall": "stone_ashlar", "roof": "slate_dark", "trim": "stone_dark"}
 }

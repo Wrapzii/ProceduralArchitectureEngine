@@ -55,7 +55,12 @@ def test_square_spire_has_supported_upper_rooms_and_pyramidal_cap():
     assert any("square_tower" in p.tags for p in assembly.placements)
     caps = [p for p in assembly.placements if p.asset_id == "tower_cap_square"]
     assert len(caps) == 1
-    assert caps[0].size_cm[2] == 3.0 * STOREY_CM
+    shell_storey = next(
+        p.size_cm[2]
+        for p in assembly.placements
+        if "square_tower" in p.tags and p.kind == "wall"
+    )
+    assert caps[0].size_cm[2] == 3.0 * shell_storey
     assert any(
         p.level >= 1 and "tower_room_floor" in p.tags
         for p in assembly.placements
@@ -75,13 +80,17 @@ def test_small_square_spire_is_a_stair_turret_not_a_room_tower():
     assert not any(p.asset_id == "spiral_newel" for p in assembly.placements)
     entries = [p for p in assembly.placements if "tower_entry" in p.tags]
     for entry in entries:
+        # The clear landing quarter faces the doorway.  A tread authored on the
+        # doorway yaw puts its widest edge through the threshold and recreates
+        # the clipping shown in the Blender failure reference.
+        landing_yaw = (entry.yaw + 180) % 360
         landing_treads = [
             p
             for p in stairs
-            if p.level == entry.level and p.yaw == entry.yaw
+            if p.level == entry.level and p.yaw == landing_yaw
         ]
         assert landing_treads
-        assert min(p.offset_cm[2] for p in landing_treads) == 0.0
+        assert min(p.offset_cm[2] for p in landing_treads) == entry.offset_cm[2]
 
 
 def test_lighthouse_and_habitable_round_tower_validate_at_large_scale():

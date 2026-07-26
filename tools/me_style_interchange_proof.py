@@ -151,20 +151,16 @@ def unconsumed_pack_fields() -> Dict[str, str]:
         "geometry.wall_thickness_cm": (
             "Schema slot exists; no pack sets it; assemble uses WALL_T_CM."
         ),
-        "wall_bands.plinth_cm / cornice_cm": (
-            "Loaded and validated; trim/banding uses fixed CourseSpec recipes, "
-            "not per-pack plinth/cornice_cm on this M2 sketch."
-        ),
         "materials.wall / roof / trim": (
-            "Authored per pack; placements carry no material ids from pack "
-            "(Blender/export path may map later)."
-        ),
-        "door.tag": (
-            "Resolved via resolve_piece_id when callers ask; M2 entrance path "
-            "uses entrance policy, not pack door tag, on this sketch."
+            "Authored per pack; export maps kind/tags to material_slot (MI_*) "
+            "via pae.export.materials — UE assigns real MIs (no baked textures)."
         ),
         "tower.cap / crown / finial": (
             "Consumed only when towers are present; interchange sketch has none."
+        ),
+        "shell.* via style_apply": (
+            "Consumed by pae.style_apply.apply_style_shell (gallery/matrix path). "
+            "decorate/pipeline still dirty — hook suggestion in style_variance_report."
         ),
     }
 

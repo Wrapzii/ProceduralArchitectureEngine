@@ -2,15 +2,46 @@
   "id": "wizard_academy",
   "extends": "gothic_academy",
   "geometry": {
-    "roof_pitch": 1.65
+    "roof_pitch": 1.85,
+    "storey_height_cm": 450
   },
   "roof": {
     "pitch_min": 1.6,
     "steep_silhouette": true,
-    "kind_default": "pitched"
+    "kind_default": "pitched",
+    "eave_overhang_cm": 85
   },
   "window": {
-    "tag": "window_gothic"
+    "tag": "window_gothic",
+    "per_bay": 1,
+    "skip_ground": false
+  },
+  "door": {"tag": "door_gothic"},
+  "wall_bands": {"plinth_cm": 65, "cornice_cm": 40, "string_cm": 35},
+  "shell": {
+    "forecourt": true,
+    "doorcase": "gothic",
+    "porch_posts": false,
+    "porch_roof": true,
+    "shop_platform": true,
+    "bargeboard": true,
+    "chimney_stub": false,
+    "buttress_corners": false,
+    "stoop": true,
+    "jetty": false,
+    "pilasters": false,
+    "coping": false
+  },
+  "detail": {
+    "opening_accent": "hood",
+    "density": 0.75,
+    "mid_string": true,
+    "jettied_mid": false,
+    "verticals_every_bays": 1,
+    "corners_only": false,
+    "coping": false,
+    "ridge_accent": true,
+    "weathering": true
   },
   "substitutions": {
     "window_gothic": "wall_window_lancet",

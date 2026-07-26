@@ -247,7 +247,15 @@ def check_gallery_court_railing(assembly: Assembly) -> List[Failure]:
         if p.kind == "wall":
             walls.setdefault(p.level, set()).update(covered_cells(p))
         if p.kind == "barrier":
-            face = {0: "south", 90: "west", 180: "north", 270: "east"}.get(p.yaw)
+            face = None
+            marker = "_gallery_"
+            if marker in p.piece_id:
+                candidate = p.piece_id.rsplit(marker, 1)[-1]
+                if candidate in _NEIGHBOURS:
+                    face = candidate
+            # Legacy barriers did not retain a face tag. Yaw alone is
+            # insufficient because north/south share 90° and east/west share
+            # 0° under the boundary-line primitive contract.
             if face:
                 barriers.setdefault(p.level, set()).add((p.cell, face))
 
@@ -281,6 +289,159 @@ def check_gallery_court_railing(assembly: Assembly) -> List[Failure]:
     return failures
 
 
+def check_gallery_support_spacing(assembly: Assembly) -> List[Failure]:
+    """Upper court rails/roof edges need piers at corners and ≤2-bay spacing."""
+    barriers: List[Tuple[SolidPlacement, str]] = []
+    supports: Dict[Tuple[int, str], Set[Cell]] = {}
+    for p in assembly.placements:
+        if "gallery_support_pier" in p.tags:
+            face = next(
+                (
+                    tag[5:]
+                    for tag in p.tags
+                    if tag.startswith("face_") and tag[5:] in _NEIGHBOURS
+                ),
+                None,
+            )
+            if face:
+                supports.setdefault((p.level, face), set()).add(p.cell)
+        if p.kind == "barrier" and "_gallery_" in p.piece_id:
+            face = p.piece_id.rsplit("_gallery_", 1)[-1]
+            if face in _NEIGHBOURS:
+                barriers.append((p, face))
+
+    failures: List[Failure] = []
+    for barrier, face in barriers:
+        candidates = supports.get((barrier.level, face), set())
+        axis = 0 if face in ("south", "north") else 1
+        cross_axis = 1 - axis
+        supported = any(
+            abs(cell[axis] - barrier.cell[axis]) <= 2
+            and cell[cross_axis] == barrier.cell[cross_axis]
+            for cell in candidates
+        )
+        if supported:
+            continue
+        failures.append(
+            Failure(
+                check="gallery_support_spacing",
+                message=(
+                    f"gallery rail {barrier.piece_id} has no roof-support pier "
+                    "within two bays on the same courtyard run"
+                ),
+                world_xyz=(
+                    barrier.cell[0] * MODULE_CM,
+                    barrier.cell[1] * MODULE_CM,
+                    storey_datum_z_cm(barrier.level),
+                ),
+                piece_id=barrier.piece_id,
+                critical=True,
+            )
+        )
+    return failures
+
+
+def check_gallery_support_bearing(assembly: Assembly) -> List[Failure]:
+    """Gallery columns must physically meet a deck below and roof above."""
+    supports = [
+        p for p in assembly.placements if "gallery_support_pier" in p.tags
+    ]
+    floors = [p for p in assembly.placements if p.kind == "floor"]
+    roofs = [p for p in assembly.placements if p.kind == "roof"]
+    failures: List[Failure] = []
+    for support in supports:
+        smin, smax = placement_world_aabb(
+            support.cell[0],
+            support.cell[1],
+            support.level,
+            support.yaw,
+            support.size_cm,
+            support.offset_cm,
+            rotates_about_center=support.rotates_about_center,
+        )
+        centre_x = (smin[0] + smax[0]) * 0.5
+        centre_y = (smin[1] + smax[1]) * 0.5
+
+        def _contains_support_axis(
+            placement: SolidPlacement,
+        ) -> tuple[tuple[float, float, float], tuple[float, float, float]] | None:
+            pmin, pmax = placement_world_aabb(
+                placement.cell[0],
+                placement.cell[1],
+                placement.level,
+                placement.yaw,
+                placement.size_cm,
+                placement.offset_cm,
+                rotates_about_center=placement.rotates_about_center,
+            )
+            if not (
+                pmin[0] - TOL_CM <= centre_x <= pmax[0] + TOL_CM
+                and pmin[1] - TOL_CM <= centre_y <= pmax[1] + TOL_CM
+            ):
+                return None
+            return pmin, pmax
+
+        has_base = any(
+            bounds is not None and abs(bounds[1][2] - smin[2]) <= TOL_CM
+            for floor in floors
+            for bounds in (_contains_support_axis(floor),)
+        )
+        has_head = any(
+            bounds is not None and abs(bounds[0][2] - smax[2]) <= TOL_CM
+            for roof in roofs
+            for bounds in (_contains_support_axis(roof),)
+        )
+        if has_base and has_head:
+            continue
+        failures.append(
+            Failure(
+                check="gallery_support_bearing",
+                message=(
+                    f"{support.piece_id} does not bear at both ends "
+                    f"(deck={has_base}, roof={has_head})"
+                ),
+                world_xyz=(
+                    (smin[0] + smax[0]) * 0.5,
+                    (smin[1] + smax[1]) * 0.5,
+                    (smin[2] + smax[2]) * 0.5,
+                ),
+                piece_id=support.piece_id,
+                critical=True,
+            )
+        )
+    return failures
+
+
+def check_no_redundant_inner_court_walls(assembly: Assembly) -> List[Failure]:
+    """Arcade-owned court edges may not retain freestanding room-divider walls."""
+    # Legacy decorative trim can include an isolated arcade asset without
+    # transferring ownership of the court edge.  The Stage-G arcade system
+    # marks its complete walk/edge contract with ``arcade_gallery``.
+    if not any("arcade_gallery" in p.tags for p in assembly.placements):
+        return []
+    failures: List[Failure] = []
+    for placement in assembly.placements:
+        if not placement.piece_id.startswith("wall_inner_"):
+            continue
+        failures.append(
+            Failure(
+                check="arcade_redundant_inner_wall",
+                message=(
+                    f"{placement.piece_id} is a freestanding generic inner wall "
+                    "inside an arcade-owned courtyard"
+                ),
+                world_xyz=(
+                    placement.cell[0] * MODULE_CM,
+                    placement.cell[1] * MODULE_CM,
+                    storey_datum_z_cm(placement.level),
+                ),
+                piece_id=placement.piece_id,
+                critical=True,
+            )
+        )
+    return failures
+
+
 def check_arcade_gallery(assembly: Assembly) -> List[Failure]:
     """Run arcade/gallery checks when the assembly uses cloister language."""
     if not assembly_has_arcade_language(assembly):
@@ -289,4 +450,7 @@ def check_arcade_gallery(assembly: Assembly) -> List[Failure]:
     failures.extend(check_arcade_pier_bearing(assembly))
     failures.extend(check_arcade_continuity(assembly))
     failures.extend(check_gallery_court_railing(assembly))
+    failures.extend(check_gallery_support_spacing(assembly))
+    failures.extend(check_gallery_support_bearing(assembly))
+    failures.extend(check_no_redundant_inner_court_walls(assembly))
     return failures

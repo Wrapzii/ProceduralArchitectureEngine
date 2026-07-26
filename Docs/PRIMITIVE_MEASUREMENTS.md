@@ -11,6 +11,7 @@ Tolerance: **6.0 cm**. All dimensions from `pae/contract.py`.
 | `wall_arcade` | wall | 1x1 | 60.0x400.0x350.0 | (0.0,0.0,0.0) | min_corner | False | yes |
 | `wall_gate_arch` | wall | 1x1 | 60.0x400.0x350.0 | (0.0,0.0,0.0) | min_corner | False | yes |
 | `wall_gate_arch_grand` | wall | 1x1 | 60.0x400.0x350.0 | (0.0,0.0,0.0) | min_corner | False | yes |
+| `wall_arch_rib_interior` | wall | 1x1 | 60.0x400.0x350.0 | (0.0,0.0,0.0) | min_corner | False | yes |
 | `wall_arcade_monumental` | wall | 1x1 | 60.0x400.0x350.0 | (0.0,0.0,0.0) | min_corner | False | yes |
 | `wall_arcade_gothic` | wall | 1x1 | 60.0x400.0x350.0 | (0.0,0.0,0.0) | min_corner | False | yes |
 | `wall_arcade_round` | wall | 1x1 | 60.0x400.0x350.0 | (0.0,0.0,0.0) | min_corner | False | yes |
@@ -21,6 +22,7 @@ Tolerance: **6.0 cm**. All dimensions from `pae/contract.py`.
 | `wall_gate_arch_pointed` | wall | 1x1 | 60.0x400.0x350.0 | (0.0,0.0,0.0) | min_corner | False | yes |
 | `wall_window_bay_wide` | wall | 1x1 | 60.0x400.0x350.0 | (0.0,0.0,0.0) | min_corner | False | yes |
 | `wall_window_clerestory` | wall | 1x1 | 60.0x400.0x350.0 | (0.0,0.0,0.0) | min_corner | False | yes |
+| `wall_window_cross` | wall | 1x1 | 60.0x400.0x350.0 | (0.0,0.0,0.0) | min_corner | False | yes |
 | `wall_window_gothic_traceried` | wall | 1x1 | 60.0x400.0x350.0 | (0.0,0.0,0.0) | min_corner | False | yes |
 | `wall_window_lancet` | wall | 1x1 | 60.0x400.0x350.0 | (0.0,0.0,0.0) | min_corner | False | yes |
 | `wall_window_mullioned` | wall | 1x1 | 60.0x400.0x350.0 | (0.0,0.0,0.0) | min_corner | False | yes |
@@ -37,6 +39,7 @@ Tolerance: **6.0 cm**. All dimensions from `pae/contract.py`.
 | `stair_spiral_quarter` | stair | 2x2 | 800.0x800.0x87.5 | (-400.0,-400.0,0.0) | center | True | yes |
 | `tower_arc_quarter` | tower_arc | 2x2 | 800.0x800.0x350.0 | (-400.0,-400.0,0.0) | center | True | yes |
 | `tower_arc_quarter_window` | tower_arc | 2x2 | 800.0x800.0x350.0 | (-400.0,-400.0,0.0) | center | True | yes |
+| `tower_drum_door_ring` | tower_arc | 2x2 | 800.0x800.0x350.0 | (-400.0,-400.0,0.0) | center | True | yes |
 | `tower_junction` | tower_crown | 2x2 | 800.0x800.0x21.0 | (-400.0,-400.0,0.0) | center | True | yes |
 | `tower_crown` | tower_crown | 2x2 | 800.0x800.0x70.0 | (-400.0,-400.0,0.0) | center | True | yes |
 | `tower_cap` | tower_cap | 2x2 | 800.0x800.0x297.5 | (-400.0,-400.0,0.0) | center | True | yes |
@@ -80,8 +83,31 @@ Tolerance: **6.0 cm**. All dimensions from `pae/contract.py`.
 | `band_pilaster` | band | 1x1 | 15.0x40.0x350.0 | (0.0,0.0,0.0) | min_corner | False | yes |
 | `band_brace` | band | 1x1 | 15.0x400.0x350.0 | (0.0,0.0,0.0) | min_corner | False | yes |
 | `coping_cap` | band | 1x1 | 78.0x400.0x15.8 | (0.0,0.0,0.0) | min_corner | False | yes |
+| `forecourt_wall` | barrier | 1x1 | 43.2x400.0x112.0 | (0.0,0.0,0.0) | min_corner | False | yes |
+| `planter_wall` | barrier | 1x1 | 51.0x400.0x77.0 | (0.0,0.0,0.0) | min_corner | False | yes |
+| `doorcase_plain` | band | 1x1 | 27.0x288.0x322.0 | (0.0,0.0,0.0) | min_corner | False | yes |
+| `doorcase_arched` | band | 1x1 | 27.0x302.4x322.0 | (0.0,0.0,0.0) | min_corner | False | yes |
+| `doorcase_grand` | band | 1x1 | 27.0x360.0x350.0 | (0.0,0.0,0.0) | min_corner | False | yes |
+| `doorcase_gothic` | band | 1x1 | 27.0x288.0x350.0 | (0.0,0.0,0.0) | min_corner | False | yes |
+| `porch_post` | column | 1x1 | 48.0x48.0x192.5 | (0.0,0.0,0.0) | min_corner | False | yes |
+| `porch_slab` | surface | 1x1 | 220.0x380.0x42.0 | (0.0,0.0,0.0) | min_corner | False | NO |
+| `porch_roof` | band | 1x1 | 220.0x392.0x21.0 | (0.0,0.0,0.0) | min_corner | False | NO |
+| `bargeboard` | band | 1x1 | 21.0x400.0x63.0 | (0.0,0.0,0.0) | min_corner | False | yes |
+| `chimney_stub` | roofline | 1x1 | 72.0x72.0x192.5 | (0.0,0.0,0.0) | min_corner | False | yes |
+| `window_sill` | band | 1x1 | 16.8x168.0x12.3 | (0.0,0.0,0.0) | min_corner | False | yes |
+| `window_hood` | band | 1x1 | 24.0x192.0x15.8 | (0.0,0.0,0.0) | min_corner | False | yes |
+| `window_box` | band | 1x1 | 77.0x144.0x35.0 | (0.0,0.0,0.0) | min_corner | False | NO |
+| `balcony_deck` | floor | 1x1 | 280.0x380.0x21.0 | (0.0,0.0,0.0) | min_corner | False | NO |
+| `balcony_bracket` | column | 1x1 | 112.0x48.0x98.0 | (0.0,0.0,0.0) | min_corner | False | yes |
 | `light_anchor_sconce` | light_anchor | 1x1 | 8.0x8.0x8.0 | (-4.0,-4.0,-4.0) | min_corner | True | yes |
 | `light_anchor_chandelier` | light_anchor | 1x1 | 8.0x8.0x8.0 | (-4.0,-4.0,-4.0) | min_corner | True | yes |
 | `light_anchor_pendant` | light_anchor | 1x1 | 8.0x8.0x8.0 | (-4.0,-4.0,-4.0) | min_corner | True | yes |
 
-All pieces within tolerance.
+## Failures
+
+- `porch_slab`: porch_slab.size.y: got 380.000 cm, expected 400.000 cm (±6.0 cm)
+- `porch_roof`: porch_roof.size.x: projection 220.0 cm exceeds a wall thickness (60.0 cm) — banding articulates a face, it is not a wall
+- `window_box`: window_box.size.x: projection 77.0 cm exceeds a wall thickness (60.0 cm) — banding articulates a face, it is not a wall
+- `balcony_deck`: balcony_deck.size.x: got 280.000 cm, expected 400.000 cm (±6.0 cm)
+- `balcony_deck`: balcony_deck.size.y: got 380.000 cm, expected 400.000 cm (±6.0 cm)
+- `balcony_deck`: balcony_deck.size.z: got 21.000 cm, expected 30.000 cm (±6.0 cm)

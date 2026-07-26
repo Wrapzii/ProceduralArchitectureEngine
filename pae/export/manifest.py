@@ -23,6 +23,11 @@ from pae.contract import (
     placement_origin_cm,
 )
 from pae.export.gate import ExportRefused, ensure_exportable
+from pae.export.materials import (
+    asset_material_slot,
+    material_contract_block,
+    placement_material_fields,
+)
 from pae.report import Failure, Report
 
 SCHEMA = "pae.manifest/1"
@@ -101,16 +106,22 @@ def _default_assets(
     fbx_map: Mapping[str, str],
 ) -> List[Dict[str, Any]]:
     seen: Dict[str, None] = {}
+    kind_by_id: Dict[str, str] = {}
     asset_rows: List[Dict[str, Any]] = []
     for p in assembly.placements:
+        if p.asset_id not in kind_by_id:
+            kind_by_id[p.asset_id] = p.kind
         if p.asset_id in seen:
             continue
         seen[p.asset_id] = None
+        kind = p.kind
         asset_rows.append(
             {
                 "id": p.asset_id,
                 "fbx": fbx_map.get(p.asset_id, ""),
                 "lod": lod_placeholder(),
+                "kind": kind,
+                "material_slot": asset_material_slot(p.asset_id, kind_hint=kind),
             }
         )
     asset_rows.sort(key=lambda row: row["id"])
@@ -180,6 +191,12 @@ def build_manifest(
     placements: List[Dict[str, Any]] = []
     for p in assembly.placements:
         lx, ly, lz = placement_loc_cm(p)
+        mat_fields = placement_material_fields(
+            kind=p.kind,
+            asset_id=p.asset_id,
+            tags=p.tags,
+            level=p.level,
+        )
         placements.append(
             {
                 "asset_id": p.asset_id,
@@ -188,6 +205,9 @@ def build_manifest(
                 "yaw": p.yaw,
                 "cell": [p.cell[0], p.cell[1]],
                 "level": p.level,
+                "kind": mat_fields["kind"],
+                "material_slot": mat_fields["material_slot"],
+                "masks": mat_fields["masks"],
             }
         )
 
@@ -198,6 +218,7 @@ def build_manifest(
         "storey_cm": contract["storey_cm"],
         "origin_convention": ORIGIN_CONVENTION,
         "contract": contract,
+        "materials": material_contract_block(),
         "assets": asset_rows,
         "placements": placements,
         "light_anchors": _light_anchors_block(assembly),

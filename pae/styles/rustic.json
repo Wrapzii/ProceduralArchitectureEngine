@@ -1,15 +1,48 @@
 {
   "id": "rustic",
   "geometry": {
-    "roof_pitch": 1.35,
-    "storey_height_cm": 320
+    "roof_pitch": 1.45,
+    "storey_height_cm": 300
   },
   "roof": {
-    "kind_default": "pitched"
+    "kind_default": "pitched",
+    "eave_overhang_cm": 95,
+    "steep_silhouette": false
   },
   "window": {"tag": "window_simple", "per_bay": 1, "skip_ground": false},
   "door": {"tag": "door_plain"},
-  "wall_bands": {"plinth_cm": 20, "cornice_cm": 12},
+  "wall_bands": {"plinth_cm": 75, "cornice_cm": 28, "string_cm": 0},
   "tower": {"cap": "flat", "crown": false, "finial": false},
+  "shell": {
+    "forecourt": false,
+    "doorcase": "plain",
+    "porch_posts": false,
+    "porch_roof": true,
+    "shop_platform": true,
+    "bargeboard": true,
+    "chimney_stub": true,
+    "buttress_corners": false,
+    "stoop": true,
+    "jetty": true,
+    "pilasters": false,
+    "coping": false,
+    "window_sills": true,
+    "window_hoods": false,
+    "window_boxes": true,
+    "ground_planters": true,
+    "patio": true,
+    "balcony": false
+  },
+  "detail": {
+    "opening_accent": "sill_lintel",
+    "density": 0.50,
+    "mid_string": false,
+    "jettied_mid": true,
+    "verticals_every_bays": 2,
+    "corners_only": true,
+    "coping": false,
+    "ridge_accent": false,
+    "weathering": true
+  },
   "materials": {"wall": "cob_whitewash", "roof": "thatch_wheat", "trim": "timber_oak"}
 }

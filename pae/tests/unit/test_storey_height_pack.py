@@ -31,9 +31,9 @@ def _level1_floor_slab_top_z(asm) -> float:
 
 def test_tall_storey_pack_raises_level1_datum_above_short():
     short = m2_two_storey_stair_spec(seed=7)
-    short.style = "rustic"  # 320 cm authored
+    short.style = "rustic"  # 300 cm authored
     tall = m2_two_storey_stair_spec(seed=7)
-    tall.style = "civic"  # 400 cm authored
+    tall.style = "civic"  # 430 cm authored
 
     _, _, asm_short, _ = run_through_assemble(short)
     _, _, asm_tall, _ = run_through_assemble(tall)
@@ -42,18 +42,26 @@ def test_tall_storey_pack_raises_level1_datum_above_short():
     z_tall = _level1_floor_slab_top_z(asm_tall)
 
     assert z_tall > z_short
-    assert z_short == pytest.approx(320.0, abs=2.0)
+    assert z_short == pytest.approx(300.0, abs=2.0)
     civic_pack, _ = load_style_pack("civic")
     assert z_tall == pytest.approx(resolve_storey_height_cm(civic_pack), abs=2.0)
 
 
 def test_default_pack_uses_contract_storey_cm():
-    spec = m2_two_storey_stair_spec(seed=7)
-    spec.style = "townhouse"  # no geometry.storey_height_cm
-    assert resolve_storey_height_cm({"id": "townhouse"}) == STOREY_CM
+    """Packs without an authored storey still fall back to ``STOREY_CM``."""
+    assert resolve_storey_height_cm({"id": "missing_pack"}) == STOREY_CM
+    # townhouse now authors 330 — verify pack resolve, not the old "missing" path.
+    from pae.style_pack import load_style_pack
 
+    pack, report = load_style_pack("townhouse")
+    assert report.ok and pack is not None
+    assert pack.geometry.storey_height_cm == 330.0
+    assert resolve_storey_height_cm(pack) == 330.0
+
+    spec = m2_two_storey_stair_spec(seed=7)
+    spec.style = "townhouse"
     _, _, asm, _ = run_through_assemble(spec)
-    assert _level1_floor_slab_top_z(asm) == pytest.approx(STOREY_CM, abs=2.0)
+    assert _level1_floor_slab_top_z(asm) == pytest.approx(330.0, abs=2.0)
 
 
 def test_pack_storey_height_composes_with_height_units():

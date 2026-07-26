@@ -1,15 +1,47 @@
 {
   "id": "civic",
   "geometry": {
-    "roof_pitch": 0.75,
-    "storey_height_cm": 400
+    "roof_pitch": 0.55,
+    "storey_height_cm": 430
   },
   "roof": {
-    "kind_default": "flat"
+    "kind_default": "flat",
+    "eave_overhang_cm": 18
   },
   "window": {"tag": "window_round", "per_bay": 1, "skip_ground": false},
-  "door": {"tag": "door_plain"},
-  "wall_bands": {"plinth_cm": 70, "cornice_cm": 50},
+  "door": {"tag": "door_double"},
+  "wall_bands": {"plinth_cm": 120, "cornice_cm": 80, "string_cm": 0},
   "tower": {"cap": "flat", "crown": false, "finial": false},
+  "shell": {
+    "forecourt": true,
+    "doorcase": "grand",
+    "porch_posts": false,
+    "porch_roof": true,
+    "shop_platform": false,
+    "bargeboard": false,
+    "chimney_stub": false,
+    "buttress_corners": false,
+    "stoop": true,
+    "jetty": false,
+    "pilasters": true,
+    "coping": true,
+    "window_sills": true,
+    "window_hoods": true,
+    "window_boxes": false,
+    "ground_planters": true,
+    "patio": false,
+    "balcony": false
+  },
+  "detail": {
+    "opening_accent": "frame",
+    "density": 0.92,
+    "mid_string": false,
+    "jettied_mid": false,
+    "verticals_every_bays": 1,
+    "corners_only": false,
+    "coping": true,
+    "ridge_accent": false,
+    "weathering": false
+  },
   "materials": {"wall": "civic_limestone", "roof": "slate_blue", "trim": "bronze_trim"}
 }

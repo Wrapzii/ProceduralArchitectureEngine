@@ -194,6 +194,67 @@ def hole_rects_for_deck_cm(
     return rects
 
 
+def hole_cells_for_deck_punch(
+    deck_cells: Set[Cell],
+    hole_cells: Iterable[Cell],
+) -> Set[Cell]:
+    """Map exterior VOID bays to the deck border cell that shares an edge.
+
+    Used only for single-wing gutters (M2): the well sits west of one spanning
+    deck and the east border column must open. Split-wing manor gutters already
+    have ``floor_hole`` rim pieces in the between-wing column — do not call this
+  for those (see :func:`hole_in_split_wing_gutter`).
+    """
+    out: Set[Cell] = set()
+    for x, y in hole_cells:
+        if (x, y) in deck_cells:
+            out.add((x, y))
+            continue
+        for nx, ny in ((x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)):
+            if (nx, ny) in deck_cells:
+                out.add((nx, ny))
+                break
+    return out
+
+
+def hole_in_split_wing_gutter(
+    hole_cells: Set[Cell],
+    peer_deck_cell_sets: Sequence[Set[Cell]],
+) -> bool:
+    """True when separate wing decks flank the well column (manor gutter).
+
+    In that layout the ``floor_hole`` placements live in the between-wing column;
+    spanning wing slabs must not neighbour-punch inward or they delete whole border
+    bays and leave skeletal floors.
+    """
+    if not hole_cells or not peer_deck_cell_sets:
+        return False
+    hx0 = min(c[0] for c in hole_cells)
+    hx1 = max(c[0] for c in hole_cells)
+    hy0 = min(c[1] for c in hole_cells)
+    hy1 = max(c[1] for c in hole_cells)
+    west = any(max(c[0] for c in ds) < hx0 for ds in peer_deck_cell_sets if ds)
+    east = any(min(c[0] for c in ds) > hx1 for ds in peer_deck_cell_sets if ds)
+    if west and east:
+        return True
+    north = any(max(c[1] for c in ds) < hy0 for ds in peer_deck_cell_sets if ds)
+    south = any(min(c[1] for c in ds) > hy1 for ds in peer_deck_cell_sets if ds)
+    return north and south
+
+
+def _hole_inner_world_xy(hole) -> Tuple[Tuple[float, float], Tuple[float, float]]:
+    """Inner stair void min/max XY in world cm (hole placement, yaw 0)."""
+    local_min, local_max = floor_hole_inner_aabb_cm(
+        float(hole.size_cm[0]), float(hole.size_cm[1])
+    )
+    ox = hole.cell[0] * MODULE_CM + hole.offset_cm[0]
+    oy = hole.cell[1] * MODULE_CM + hole.offset_cm[1]
+    return (
+        (ox + local_min[0], oy + local_min[1]),
+        (ox + local_max[0], oy + local_max[1]),
+    )
+
+
 def hole_rects_merged_for_deck_cm(
     deck_cell: Tuple[int, int],
     hole_cells: Sequence[Tuple[int, int]],
@@ -219,6 +280,81 @@ def hole_rects_merged_for_deck_cm(
                 oy + h * MODULE_CM - m,
             )
         )
+    return rects
+
+
+def spanning_deck_hole_rects_cm(
+    deck,
+    hole_placements,
+    *,
+    peer_decks: Sequence = (),
+) -> List[Tuple[float, float, float, float]]:
+    """Local VOID punch rects for one spanning upper-floor deck (Blender + validate).
+
+    Implemented here (not in ``blender_build``) so ``reload_pae()`` refreshes the
+    contract after agent edits — ``pae.blender_build`` itself stays cached in Blender.
+
+    Uses world→local intersection of each hole's inner void with the deck AABB
+    (same contract as roof notches). Single-wing gutters (M2) may neighbour-map
+    exterior VOID bays onto the abutting deck border; split-wing manor gutters must
+    not — the rim ``floor_hole`` pieces own the between-wing opening.
+    """
+    from pae.contract import placement_world_aabb
+    from pae.export.manifest import placement_loc_cm
+    from pae.trim import covered_cells
+
+    deck_cells = covered_cells(deck)
+    deck_level = getattr(deck, "level", None)
+    peer_cell_sets = [
+        covered_cells(d)
+        for d in peer_decks
+        if getattr(d, "level", None) == deck_level
+    ]
+    dmin, dmax = placement_world_aabb(
+        deck.cell[0],
+        deck.cell[1],
+        deck.level,
+        deck.yaw,
+        deck.size_cm,
+        deck.offset_cm,
+        rotates_about_center=deck.rotates_about_center,
+    )
+    origin = placement_loc_cm(deck)
+    sx, sy = float(deck.size_cm[0]), float(deck.size_cm[1])
+
+    cells: Set[Cell] = set()
+    world_rects: List[Tuple[float, float, float, float]] = []
+    for h in hole_placements:
+        if getattr(h, "asset_id", None) != "floor_hole":
+            continue
+        if getattr(h, "level", None) != deck_level:
+            continue
+        hole_cells = set(covered_cells(h))
+        on_deck = hole_cells & deck_cells
+        cells |= on_deck
+
+        all_deck_sets = peer_cell_sets + [deck_cells]
+        in_gutter = hole_in_split_wing_gutter(hole_cells, all_deck_sets)
+        if not on_deck:
+            # Split-wing gutters: the well sits between wing slabs. World→local
+            # intersection still nibbles the abutting border column and leaves thin
+            # rim beams beside a shaft that has no solid panels — the live defect.
+            # The gutter opening is owned by ``floor_hole`` / landing decks, not a
+            # neighbour punch on the wing.
+            if not in_gutter:
+                hmin, hmax = _hole_inner_world_xy(h)
+                x0 = max(dmin[0], hmin[0]) - origin[0]
+                y0 = max(dmin[1], hmin[1]) - origin[1]
+                x1 = min(dmax[0], hmax[0]) - origin[0]
+                y1 = min(dmax[1], hmax[1]) - origin[1]
+                x0, x1 = max(0.0, x0), min(sx, x1)
+                y0, y1 = max(0.0, y0), min(sy, y1)
+                if x1 - x0 > 0.5 and y1 - y0 > 0.5:
+                    world_rects.append((x0, y0, x1, y1))
+                cells |= hole_cells_for_deck_punch(deck_cells, hole_cells)
+
+    rects = hole_rects_merged_for_deck_cm(tuple(deck.cell), cells) if cells else []
+    rects.extend(world_rects)
     return rects
 
 

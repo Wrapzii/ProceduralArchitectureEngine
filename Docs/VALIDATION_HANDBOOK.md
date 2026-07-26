@@ -44,7 +44,7 @@ list and ask which of these it can now violate. That is your check list.
 | 6 | **Coherence** | Is it part of one building, or its own island? | `freestanding`, `spire_freestanding`, `structure_contiguous`, `structure_party_wall_open`, `structure_masses_reachable`, `structure_single_stair_core`, `compound_not_partitioned_as_buildings`, `building_in_building`, `footprint_overlap` |
 | 7 | **Exclusion** | Does it avoid what it must avoid? | `interpenetration`, `roof_penetration` |
 | 8 | **Containment** | Is the envelope sealed, floored, covered? | `enclosure`, `floor_coverage`, `roof_covers_enclosed`, `spiral_drum_enclosure` |
-| 9 | **Use** | Can a person reach it, enter it, walk it, leave it? | `stair_reachability`, `stair_exit_clearance`, `stair_run_floor_clear`, `stair_landing_clear`, `stair_flight_stack`, `stair_typology_match`, `classroom_corridor`, `aperture_sanity`, `gate_passage_clear`, `approach_stair_height_mate`, `approach_stair_aligned_to_gate` |
+| 9 | **Use** | Can a person reach it, enter it, walk it, leave it? | `stair_reachability`, `stair_exit_clearance`, `stair_run_floor_clear`, `stair_landing_clear`, `stair_exit_into_wall`, `stair_flight_direction_incoherent`, `stair_unreachable_landing`, `floor_island`, `stair_flight_stack`, `stair_typology_match`, `classroom_corridor`, `aperture_sanity`, `gate_passage_clear`, `approach_stair_height_mate`, `approach_stair_aligned_to_gate` |
 
 A tenth class — **proportion** ("does it look right") — is *not* mechanically checkable and
 must not be faked. See §9.
@@ -231,6 +231,16 @@ tags). Autofix in assemble/compound: strip blocking skins **only when every**
 the run axis). Check: `stair_landing_strip_scope` (**critical**) — a blocker that spans
 outside the zone must not be auto-stripped (prevents punching through the building).
 Ledger D-18 / D-27 / D-30.
+
+**5.8b Circulation integrity (P0).** Pads follow **yaw ascent**, not geometric min/max alone.
+Stacked opposite-facing flights need a floor-linked switchback landing
+(`stair_flight_direction_incoherent`). Top pads must stay inside the footprint with
+walkable floor — never flush into the exterior wall (`stair_exit_into_wall`,
+`stair_unreachable_landing`). Habitable decks on a storey must form one connected region
+unless tagged as a designed atrium (`floor_island`). Monumental wells must not span the
+full built depth/width (solver ranking). Upper-storey `floor_hole` rects punch only
+VOID/STAIR roles on that level — never the entire multi-flight `stair_cells` well.
+Ledger: fancy-manor false-green (2026-07-25).
 
 **5.9 Connected compound ranges are one circulation graph.** Touching ranges on one
 compound/site must not be sealed by back-to-back exterior skins with no doorway. Detect
@@ -548,3 +558,38 @@ That is a genuine hole in the method, and it is not fixed by adding more validat
 cheapest cover is a **feature smoke test** per showcase build: assert that what the spec asked
 for appears in the output at all. It is not validation and does not belong in `validate.py` —
 put it beside the showcase tests. See Roadmap 10.7.
+
+---
+
+## 11e. Style-shell / K2 detail contracts (@P0_FANCY_VALIDATE)
+
+New decorative pieces are not optional for Handbook §2. Module:
+`pae/shell_detail_validate.py` (wired into `validate()` via
+`_check_shell_detail_contracts`). Inventory + contracts live in
+`SHELL_DETAIL_CONTRACTS` in that module.
+
+| Piece family | Host | Yaw | Support | Must NOT | Clearance / edge |
+|---|---|---|---|---|---|
+| Door jamb / lintel (`band_pilaster`/`band_course` + `door_surround`) | Ground door wall only; **one-storey leaf height** | 0/90/180/270 | Host face | Door aperture prism | Jambs in side margin outside `width_frac`; lintel above head |
+| `porch_roof` canopy | Above door head | ortho | Host wall | Aperture prism | Bottom ≥ head |
+| `porch_slab` / `steps_external` | Outward of ground door | ortho | Ground | Filling aperture | Approach OK; deep void overlap critical |
+| `forecourt_wall` / `planter_wall` | Exterior cells | ortho | Ground | Approach cells + aperture | `entrance_approach_clear` + `doorway_opening_clear` |
+| `window_sill` / `hood` / `box` | Window host | ortho | Host wall | Door aperture | Sill below glass; box below sill |
+| `balcony_deck` | Balcony door, outward | ortho | Host + brackets | Freestanding | Kiss door; not plug void |
+| `balcony_guard` rails | **Exposed deck edges only** | ortho; run **tangent** to edge | Deck top | Host-wall edge; access band | `balcony_rail_on_edge`, `balcony_rail_orientation`, `balcony_access_gap`, `balcony_guard_complete` |
+| `balcony_bracket` | Under deck | ortho | Host / deck underside | Aperture | `balcony_deck_support` |
+| Non-spiral stairs | STAIR well / pads | **0/90/180/270 only** | Floor/ground | Diagonal yaw; hollow tunnel mesh | `stair_yaw_ortho` + solid soffit |
+
+### Critical check names (poison-proven)
+
+| check | poison |
+|---|---|
+| `doorway_opening_clear` | Post / forecourt in door aperture prism |
+| `balcony_rail_on_edge` | Rail in deck interior / on host wall |
+| `balcony_rail_orientation` | Yaw 45° or run ⊥ edge |
+| `balcony_access_gap` | Rail across near-host door corridor |
+| `balcony_deck_support` | Deck with no brackets |
+| `stair_yaw_ortho` | Non-spiral stair yaw not multiple of 90 |
+
+**Do not** pass these by tag whitelist when the AABB still intersects the void.
+Tests: `pae/tests/unit/test_shell_detail_validate.py`.

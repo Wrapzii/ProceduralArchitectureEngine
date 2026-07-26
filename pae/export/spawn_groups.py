@@ -28,13 +28,22 @@ def group_rows_by_asset_id(rows: Sequence[Mapping[str, Any]]) -> List[JsonDict]:
         piece_id = row.get("piece_id")
         if not isinstance(piece_id, str) or not piece_id:
             raise ValueError(f"spawn table row for {asset_id!r} has invalid piece_id")
-        buckets.setdefault(asset_id, []).append(
-            {
-                "loc_cm": [float(loc_cm[0]), float(loc_cm[1]), float(loc_cm[2])],
-                "yaw": int(yaw),
-                "piece_id": piece_id,
-            }
-        )
+        inst: JsonDict = {
+            "loc_cm": [float(loc_cm[0]), float(loc_cm[1]), float(loc_cm[2])],
+            "yaw": int(yaw),
+            "piece_id": piece_id,
+        }
+        if isinstance(row.get("material_slot"), str) and row["material_slot"]:
+            inst["material_slot"] = row["material_slot"]
+        if isinstance(row.get("kind"), str) and row["kind"]:
+            inst["kind"] = row["kind"]
+        masks = row.get("masks")
+        if isinstance(masks, Mapping):
+            inst["masks"] = dict(masks)
+            cd = masks.get("custom_data")
+            if isinstance(cd, (list, tuple)) and len(cd) >= 4:
+                inst["custom_data"] = [float(cd[0]), float(cd[1]), float(cd[2]), float(cd[3])]
+        buckets.setdefault(asset_id, []).append(inst)
 
     groups: List[JsonDict] = []
     for asset_id in sorted(buckets):

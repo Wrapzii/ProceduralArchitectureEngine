@@ -23,6 +23,9 @@ SPIRAL_COMPLEMENTARY_YAWS = frozenset({0, 90, 180, 270})
 # Fail-closed slug — not demotable to warning; no suppress tags.
 CHECK_STAIR_LANDING_CLEAR = "stair_landing_clear"
 CHECK_STAIR_LANDING_STRIP_SCOPE = "stair_landing_strip_scope"
+# Multi-storey well contracts (orphan opening beside stairs / scattered flights).
+CHECK_STAIR_WELL_HOLE_SCOPE = "stair_well_hole_scope"
+CHECK_STAIR_SHAFT_CONTINUITY = "stair_shaft_continuity"
 # Legacy alias kept for older test greps during transition.
 CHECK_STAIR_LANDING_CLEARANCE = "stair_landing_clearance"
 
@@ -373,6 +376,149 @@ def check_stair_landing_strip_scope(assembly: Assembly) -> List[Failure]:
     return failures
 
 
+def _building_key(p: SolidPlacement) -> str:
+    """Partition multi-building sites so one street does not compare lot A to lot B."""
+    for t in p.tags:
+        if t.startswith("building:"):
+            return t
+    return ""
+
+
+def check_stair_well_hole_scope(assembly: Assembly) -> List[Failure]:
+    """CRITICAL: a stair-well opening may not extend past the flights it serves.
+
+    The plan reserves a whole stair well (often 2 bays wide / 4 long) and marks it
+    ``STAIR``/``VOID``. Punching the ENTIRE reserved well on upper decks left a
+    permanent orphan opening next to the flights — the "hole beside the stairs" that
+    appeared on every 3+ storey building. Reserved cells no flight uses are landings
+    and must be walkable floor.
+
+    A hole is in scope when any of its cells is covered by a stair at the same level
+    (run passes through the deck) or one level below (arrival head-room). Every cell of
+    such a hole must then be stair-covered at level or level-1. Genuine double-height
+    voids never touch a stair footprint, so they are untouched by this check.
+    Spiral wells are exempt (``stair_exit_clearance`` owns helix arrival).
+    """
+    stairs = [
+        p
+        for p in assembly.placements
+        if p.kind == "stair" and p.asset_id != SPIRAL_QUARTER_ASSET
+    ]
+    if not stairs:
+        return []
+
+    stair_cells: Dict[Tuple[str, int], Set[Cell]] = {}
+    for st in stairs:
+        key = (_building_key(st), st.level)
+        stair_cells.setdefault(key, set()).update(covered_cells_safe(st))
+
+    spiral_cells: Dict[Tuple[str, int], Set[Cell]] = {}
+    for p in assembly.placements:
+        if p.kind == "stair" and p.asset_id == SPIRAL_QUARTER_ASSET:
+            key = (_building_key(p), p.level)
+            spiral_cells.setdefault(key, set()).update(covered_cells_safe(p))
+
+    failures: List[Failure] = []
+    for hole in assembly.placements:
+        if hole.kind != "floor" or "hole" not in hole.asset_id:
+            continue
+        bkey = _building_key(hole)
+        cells = covered_cells_safe(hole)
+        if not cells:
+            continue
+        same = stair_cells.get((bkey, hole.level), set())
+        below = stair_cells.get((bkey, hole.level - 1), set())
+        served = same | below
+        if not (cells & served):
+            continue  # not a stair well opening (double-height void, tower, etc.)
+        spiral = spiral_cells.get((bkey, hole.level), set()) | spiral_cells.get(
+            (bkey, hole.level - 1), set()
+        )
+        orphan = sorted(cells - served - spiral)
+        if not orphan:
+            continue
+        bb_min, bb_max = _placement_aabb(hole)
+        failures.append(
+            Failure(
+                check=CHECK_STAIR_WELL_HOLE_SCOPE,
+                message=(
+                    f"floor opening {hole.piece_id} on level {hole.level} extends "
+                    f"past the stair flights it serves — cells {orphan} have no stair "
+                    f"at level {hole.level} or {hole.level - 1}. Reserved well cells "
+                    "with no flight are landings: emit floor, not a hole."
+                ),
+                world_xyz=_centre(bb_min, bb_max),
+                piece_id=hole.piece_id,
+                critical=True,
+            )
+        )
+    return failures
+
+
+def check_stair_shaft_continuity(assembly: Assembly) -> List[Failure]:
+    """CRITICAL: consecutive flights must form one shaft (shared or adjacent cells).
+
+    Multi-storey circulation has to read as a single stair core. When the flight on
+    level N+1 sits in a detached part of the plan (no shared cell, not orthogonally
+    adjacent to the lower flight's footprint) the stairs look randomly scattered and
+    the player cannot walk the climb. Spiral quarters are exempt (same anchor cell).
+    """
+    flights = [
+        p
+        for p in assembly.placements
+        if p.kind == "stair" and p.asset_id != SPIRAL_QUARTER_ASSET
+    ]
+    if not flights:
+        return []
+
+    by_key: Dict[Tuple[str, int], Set[Cell]] = {}
+    pieces: Dict[Tuple[str, int], List[str]] = {}
+    for f in flights:
+        key = (_building_key(f), f.level)
+        by_key.setdefault(key, set()).update(covered_cells_safe(f))
+        pieces.setdefault(key, []).append(f.piece_id)
+
+    buildings = sorted({k[0] for k in by_key})
+    failures: List[Failure] = []
+    for b in buildings:
+        levels = sorted(lv for (bk, lv) in by_key if bk == b)
+        for lo, hi in zip(levels, levels[1:]):
+            if hi != lo + 1:
+                continue  # non-consecutive levels handled by storey_egress
+            lo_cells = by_key[(b, lo)]
+            hi_cells = by_key[(b, hi)]
+            if lo_cells & hi_cells:
+                continue
+            touching = any(
+                abs(x1 - x2) + abs(y1 - y2) <= 1
+                for (x1, y1) in lo_cells
+                for (x2, y2) in hi_cells
+            )
+            if touching:
+                continue
+            hx = sum(c[0] for c in hi_cells) / len(hi_cells)
+            hy = sum(c[1] for c in hi_cells) / len(hi_cells)
+            failures.append(
+                Failure(
+                    check=CHECK_STAIR_SHAFT_CONTINUITY,
+                    message=(
+                        f"stair flight(s) {sorted(pieces[(b, hi)])} on level {hi} "
+                        f"are detached from the level {lo} flight footprint "
+                        f"{sorted(lo_cells)} — flights must share a cell or sit in "
+                        "the adjacent landing bay so the climb is one shaft."
+                    ),
+                    world_xyz=(
+                        hx * MODULE_CM + MODULE_CM * 0.5,
+                        hy * MODULE_CM + MODULE_CM * 0.5,
+                        float(hi) * STOREY_CM,
+                    ),
+                    piece_id=sorted(pieces[(b, hi)])[0],
+                    critical=True,
+                )
+            )
+    return failures
+
+
 def measure_stair_landing_strip(assembly: Assembly) -> Dict[str, int]:
     """Count landing strip candidates vs stair footprint (fortress diagnostics)."""
     floors_by_level: Dict[int, Set[Cell]] = {}
@@ -667,13 +813,60 @@ def _built_plan_cells(assembly: Assembly, level: int) -> Set[Cell]:
     return _interior_floor_cells(assembly).get(level, set())
 
 
-def check_stair_exit_into_wall(assembly: Assembly) -> List[Failure]:
-    """CRITICAL: top of a linear flight must not walk into an exterior/solid wall.
+def _built_plan_cells_for_stair(assembly: Assembly, level: int) -> Set[Cell]:
+    """Footprint cells for stair landing checks — plan/deck union + landing pads."""
+    built = set(_built_plan_cells(assembly, level))
+    for p in assembly.placements:
+        if p.kind != "stair" or p.asset_id not in _FLIGHT_ASSETS:
+            continue
+        for _name, pad, lv, _from_c, _to_c in landing_cells_for_stair(p):
+            if lv == level:
+                built.add(pad)
+    if not built:
+        return built
+    xs = [c[0] for c in built]
+    ys = [c[1] for c in built]
+    for x in range(min(xs), max(xs) + 1):
+        for y in range(min(ys), max(ys) + 1):
+            built.add((x, y))
+    return built
 
-    Catches the manor regression: offset pad flush to the north envelope so the
-    yaw-aware top landing sits outside the footprint or behind perimeter masonry.
-    Uses covered_cells + yaw ascent (Rule 5.1) — never ``p.cell`` alone.
-    """
+
+def _building_markers(assembly: Assembly) -> List[str]:
+    return sorted(
+        {
+            t
+            for p in assembly.placements
+            for t in (getattr(p, "tags", ()) or ())
+            if isinstance(t, str) and t.startswith("building:")
+        }
+    )
+
+
+def _run_per_building_stair_check(
+    assembly: Assembly,
+    fn,
+) -> List[Failure]:
+    """Run a stair validator per ``building:*`` marker on multi-building sites."""
+    markers = _building_markers(assembly)
+    if len(markers) <= 1:
+        return fn(assembly)
+    from dataclasses import replace as _replace
+
+    out: List[Failure] = []
+    for marker in markers:
+        subset = [
+            p for p in assembly.placements if marker in (getattr(p, "tags", ()) or ())
+        ]
+        if not any(p.kind == "stair" for p in subset):
+            continue
+        one = _replace(assembly, placements=subset, floor_plan={})
+        out.extend(fn(one))
+    return out
+
+
+def _check_stair_exit_into_wall_one(assembly: Assembly) -> List[Failure]:
+    """Single-building body for :func:`check_stair_exit_into_wall`."""
     floors = _interior_floor_cells(assembly)
     walls_by_level: Dict[int, List[SolidPlacement]] = {}
     for p in assembly.placements:
@@ -689,7 +882,7 @@ def check_stair_exit_into_wall(assembly: Assembly) -> List[Failure]:
         for name, pad, level, from_c, to_c in landing_cells_for_stair(st):
             if name != "top":
                 continue
-            built = _built_plan_cells(assembly, level)
+            built = _built_plan_cells_for_stair(assembly, level)
             pad_outside = pad not in built
             in_floor = pad in floors.get(level, set())
             blocked = False
@@ -722,8 +915,16 @@ def check_stair_exit_into_wall(assembly: Assembly) -> List[Failure]:
     return failures
 
 
-def check_stair_unreachable_landing(assembly: Assembly) -> List[Failure]:
-    """CRITICAL: top landing pad must have walkable floor (or designed atrium tag)."""
+def check_stair_exit_into_wall(assembly: Assembly) -> List[Failure]:
+    """CRITICAL: top of a linear flight must not walk into an exterior/solid wall.
+
+    Partitioned by ``building:*`` on multi-building sites (Handbook §11d).
+    """
+    return _run_per_building_stair_check(assembly, _check_stair_exit_into_wall_one)
+
+
+def _check_stair_unreachable_landing_one(assembly: Assembly) -> List[Failure]:
+    """Single-building body for :func:`check_stair_unreachable_landing`."""
     floors = _interior_floor_cells(assembly)
     stair_walkable: Dict[int, Set[Cell]] = {}
     for p in assembly.placements:
@@ -754,7 +955,7 @@ def check_stair_unreachable_landing(assembly: Assembly) -> List[Failure]:
             # unless the whole building declares an atrium/light well.
             if atrium:
                 continue
-            built = _built_plan_cells(assembly, level)
+            built = _built_plan_cells_for_stair(assembly, level)
             if pad not in built and level >= assembly.storeys:
                 continue
             bb_min, bb_max = _placement_aabb(st)
@@ -771,6 +972,14 @@ def check_stair_unreachable_landing(assembly: Assembly) -> List[Failure]:
                 )
             )
     return failures
+
+
+def check_stair_unreachable_landing(assembly: Assembly) -> List[Failure]:
+    """CRITICAL: top landing pad must have walkable floor (or designed atrium tag).
+
+    Partitioned by ``building:*`` on multi-building sites.
+    """
+    return _run_per_building_stair_check(assembly, _check_stair_unreachable_landing_one)
 
 
 def _flight_ends(st: SolidPlacement) -> Optional[Tuple[Cell, Cell]]:
@@ -825,13 +1034,8 @@ def _floor_links_stair_ends(
     return False
 
 
-def check_stair_flight_direction_incoherent(assembly: Assembly) -> List[Failure]:
-    """CRITICAL: stacked opposite-facing flights need a switchback landing link.
-
-    A 180° yaw flip with laterally offset pads is only legal when the lower
-    flight's top end reaches the upper flight's bottom end via adjacent cells or
-    a walkable **floor** landing path. Opposite-facing traps fail closed.
-    """
+def _check_stair_flight_direction_incoherent_one(assembly: Assembly) -> List[Failure]:
+    """Single-building body for :func:`check_stair_flight_direction_incoherent`."""
     floors = _interior_floor_cells(assembly)
     by_level: Dict[int, List[SolidPlacement]] = {}
     for p in assembly.placements:
@@ -882,6 +1086,16 @@ def check_stair_flight_direction_incoherent(assembly: Assembly) -> List[Failure]
     return failures
 
 
+def check_stair_flight_direction_incoherent(assembly: Assembly) -> List[Failure]:
+    """CRITICAL: stacked opposite-facing flights need a switchback landing link.
+
+    Partitioned by ``building:*`` on multi-building sites.
+    """
+    return _run_per_building_stair_check(
+        assembly, _check_stair_flight_direction_incoherent_one
+    )
+
+
 def check_floor_islands(assembly: Assembly) -> List[Failure]:
     """CRITICAL: each storey must have one connected habitable floor region.
 
@@ -915,9 +1129,17 @@ def check_floor_islands(assembly: Assembly) -> List[Failure]:
                 one = _replace(assembly, placements=subset)
             except Exception:
                 continue
-            out.extend(check_floor_islands(one))
+            # Analyse the slice directly. Recursing here never terminated: pieces
+            # on a shared party wall carry BOTH neighbours' ``building:`` tags, so
+            # the filtered subset still had two markers and re-partitioned itself
+            # forever, branching once per marker each time.
+            out.extend(_check_floor_islands_single(one))
         return out
+    return _check_floor_islands_single(assembly)
 
+
+def _check_floor_islands_single(assembly: Assembly) -> List[Failure]:
+    """Floor-island analysis for ONE building's placements (no partitioning)."""
     if any(
         _ATRIUM_TAGS & set(getattr(p, "tags", ()) or ())
         for p in assembly.placements

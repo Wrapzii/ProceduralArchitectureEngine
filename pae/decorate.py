@@ -186,9 +186,17 @@ def decorate(
     return out, Report.from_failures([])
 
 
+def apply_stage_k_detail(assembly, *, style_id=None, seed: int = 0):
+    """Public Stage K hook — delegates to ``pae.detail_layer.apply_detail_layer``."""
+    from pae.detail_layer import apply_detail_layer
+
+    return apply_detail_layer(assembly, style_id=style_id, seed=seed)
+
+
 __all__ = [
     "DEFAULT_DENSITY",
     "DEFAULT_MAX_PROPS",
+    "apply_stage_k_detail",
     "decorate",
     "pick_prop_assets",
 ]

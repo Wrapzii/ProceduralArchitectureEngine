@@ -205,11 +205,19 @@ def test_random_monumental_multi_storey_never_stacks(seed_count: int = 40):
     assert not stacked, f"stair_flight_stack regressions: {stacked[:5]}"
 
 
-def test_fortress_gatehouse_straight_flights_are_laterally_offset():
-    """3-storey straight hall: L0/L1 must not share cells or yaw (D3-3)."""
+def test_fortress_gatehouse_straight_flights_are_offset_and_enterable():
+    """3-storey straight hall: L0/L1 must not share cells, and L1 must be enterable.
+
+    Yaw alternates ONLY when the pads sit side by side. When they are offset along
+    the climb, reversing the upper flight puts its foot at the far end of the well,
+    so the climber surfaces at the TOP of a flight they cannot enter — the
+    "stacked 180°, can't walk up it" defect.
+    """
     from dataclasses import replace
 
+    from pae.assemble import _monumental_pad_split, _pads_flip_yaw
     from pae.spec import BuildingSpec, CirculationSpec, FootprintSpec, RoofSpec
+    from pae.stair_occupancy import landing_cells_for_stair
 
     spec = BuildingSpec(
         name="straight_hall_3",
@@ -227,7 +235,7 @@ def test_fortress_gatehouse_straight_flights_are_laterally_offset():
     massing, _, assembly, _ = run_through_assemble(spec)
     assert massing.stair_kind == "straight"
     assert len(massing.stair_cells) >= 8, massing.stair_cells
-    pads = _monumental_flight_pads(massing.stair_cells)
+    pads = _monumental_flight_pads(massing.stair_cells, "straight")
     assert pads is not None
 
     straights = [p for p in assembly.placements if p.asset_id == "stair_straight"]
@@ -236,7 +244,37 @@ def test_fortress_gatehouse_straight_flights_are_laterally_offset():
     low = covered_cells(by_level[0])
     high = covered_cells(by_level[1])
     assert not (low & high), "stacked straight flights must shift pads"
-    assert by_level[0].yaw != by_level[1].yaw, "alternate yaw required for straight pads"
+
+    split = _monumental_pad_split(massing.stair_cells, "straight")
+    assert split is not None
+    lateral = _pads_flip_yaw(split[2], by_level[0].yaw)
+    if lateral:
+        assert by_level[0].yaw != by_level[1].yaw, (
+            "side-by-side pads form a switchback — upper flight must reverse"
+        )
+    else:
+        assert by_level[0].yaw == by_level[1].yaw, (
+            "pads offset along the climb must keep going the same way"
+        )
+        # The climber surfaces on L1 at the lower flight's top pad; that cell must
+        # be the first tread of the upper flight, not its far end.
+        top_pad = {
+            name: cell for (name, cell, _l, _f, _t) in landing_cells_for_stair(by_level[0])
+        }["top"]
+        assert top_pad in high, (
+            f"L0 arrives at {top_pad}, which is not part of the L1 flight {sorted(high)}"
+        )
+
+    # Every arrival cell must stay inside the footprint. Pads that step along the
+    # climb walk the top landing out through the far wall on the upper storey.
+    for lvl, flight in sorted(by_level.items()):
+        top = {
+            name: cell for (name, cell, _l, _f, _t) in landing_cells_for_stair(flight)
+        }["top"]
+        assert 0 <= top[0] < 8 and 0 <= top[1] < 5, (
+            f"L{lvl} top landing {top} lies outside the 8×5 footprint — "
+            "the flight climbs out through the wall"
+        )
     assert _check_stair_flight_stack(assembly) == []
 
 

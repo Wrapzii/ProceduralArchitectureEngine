@@ -137,19 +137,23 @@ def _resolve_hall_landing_cell(
             return seed
     queue: List[Tuple[int, int]] = list(seeds)
     seen = set(seeds)
+    tx, ty = tower_cell
     while queue:
         cx, cy = queue.pop(0)
+        if abs(cx - tx) + abs(cy - ty) > 8:
+            continue
         role = role_at(cx, cy)
         if role in _HALL_WALKABLE:
             return (cx, cy)
-        if role not in (
-            CellRole.WALL_LINE,
-            CellRole.DOOR,
-            CellRole.VOID,
-            CellRole.DOUBLE_VOID,
-            CellRole.EXTERIOR,
-            None,
-        ):
+        # Never flood-fill through unbounded off-plan space. A deliberately
+        # unoccupied intermediate gate level has no hall landing, and the old
+        # search expanded through ``None`` forever until RAM was exhausted.
+        if role is None:
+            continue
+        # A hall landing search may cross envelope/door cells only. VOID and
+        # DOUBLE_VOID have no walking surface; traversing them linked a tower
+        # doorway to a distant stair across the open gate volume.
+        if role not in (CellRole.WALL_LINE, CellRole.DOOR):
             continue
         for dx, dy in (inward, perp, (-perp[0], -perp[1])):
             nxt = (cx + dx, cy + dy)
@@ -214,6 +218,8 @@ def place_tower_entry_doors(
     floor_plan: Optional[FloorPlan] = None,
     radius_cm: float = MODULE_CM,
     chord_cm: Optional[float] = None,
+    storey_height_cm: float = STOREY_CM,
+    datum_z_cm: Optional[Callable[[int], float]] = None,
 ) -> int:
     """Emit hall↔drum doors on the attach face. Returns count placed.
 
@@ -234,7 +240,7 @@ def place_tower_entry_doors(
     # clear leaf. The wall must reach the storey plate so upper doorway modules
     # and landings have continuous bearing; its aperture profile owns the actual
     # clear opening height.
-    height = STOREY_CM
+    height = float(storey_height_cm)
     chord = _TOWER_ENTRY_CHORD_CM if chord_cm is None else float(chord_cm)
     placed = 0
     for level in range(n_levels):
@@ -242,6 +248,12 @@ def place_tower_entry_doors(
             grid = floor_plan.storeys[level]
 
             def role_at(x: int, y: int, _g=grid) -> Optional[CellRole]:
+                # ``StoreyGrid.get`` maps missing/off-plan cells to EXTERIOR.
+                # For landing search that erases the plan boundary and permits
+                # a tower on one side to flood through open air until it finds
+                # the other tower's stair. Preserve missing as ``None``.
+                if (x, y) not in _g.cells:
+                    return None
                 return _g.get(x, y)
 
             drum_role = role_at(*cell)
@@ -259,7 +271,11 @@ def place_tower_entry_doors(
         size, offset = _tower_entry_shell_pose(
             drum_xy,
             skip_yaw,
-            z_off=0.0,
+            z_off=(
+                (datum_z_cm(level) - storey_datum_z_cm(level))
+                if datum_z_cm is not None
+                else 0.0
+            ),
             height_cm=height,
             chord_cm=chord,
             skip_yaw=skip_yaw,
@@ -280,7 +296,11 @@ def place_tower_entry_doors(
             tags=frozenset(tags),
         )
         placements.append(sp)
-        floor_z = storey_datum_z_cm(level)
+        floor_z = (
+            datum_z_cm(level)
+            if datum_z_cm is not None
+            else storey_datum_z_cm(level)
+        )
         world = aperture_world(sp, "door")
         apertures.append(
             Aperture(

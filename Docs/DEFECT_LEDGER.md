@@ -147,12 +147,22 @@ next person does not have to re-derive it. Open items carry the lane that owns t
 | D3-8 | S3 | "Is it not spawning stairs? Does the agent have to place them?" | Not a defect — the solver auto-allocates. `solver.py:827`: `storeys > 1` and no `stair_cells` → `_default_stair_cells`. `assemble._place_stairs` returns early only if that list is empty | `solver.py:827`, `assemble.py:1176` | No action. A building with no stairs is either **single-storey in its spec**, or the solver raised `stair_serves_upper` ("storeys > 1 but no stair cells could be placed", `solver.py:838`) — that is critical and will be in the report |
 | D3-9 | S1 | West cloister court face shows `wall_plain` + `wall_arcade` coplanar (double skin) | `trim._colonnade` / `_add_cloister_arcade` place arcade while assemble already emitted plain walls; post-unify merge retags range names so arcade pass missed cloister walls | measured **2** coplanar arcade pairs (west cloister poison) before `repair_wall_face_stacks`; **0** after | **FIXED (@CLOISTER_WALL_STACK)** — `pae/wall_faces.py` critical `wall_face_exclusive` + `repair_wall_face_stacks`; trim/compound share `claimed_wall_arcade_faces`; `_placement_matches_range` for post-unify piece_ids; `FORTRESS_CURTAIN_TRIM.parapets=False` so `_add_curtain_battlements` can claim edges. Tests: `test_wall_face_exclusive.py` |
 | D3-9 | S1 | One building reads as several — a sketched U produced a tall block, a low block and another tall block | Roof is emitted PER VOLUME. `rect_cover` splits an arbitrary mask into rectangles so the solver can reason in boxes — an internal detail — but ridge height is then derived per rectangle, so a 2-bay bridge gets a low ridge and the 4-bay legs a tall one | Measured on the sketched U: 3 pitched slopes at z-tops 2200 / 2200 / 1640 plus valleys at 1220; **0** internal seam walls, so walls are already correct | **CLOSED (@MP-WS2 / Stage C)** — column height field (`roof_height_field_bands`) + `structure_ridge_span_modules` (max short-span per eaves band). Sketched U pitched/hip → one ridge family `{1150}`; M-A proof `ma_roof_ridge_report.json`. Tests: `test_roof_height_field.py` |
+| D3-10 | S1 | Fancy manor: stair flush to exterior, opposite-facing flights, full-depth void slot — validators returned critical=[] | Landing pads geometric not yaw-aware; flight_stack only XY; no floor_island; hole punch blanketed stair_cells; solver preferred full-depth 2x4 | measured: L0 yaw90 @(2,0-1) L1 yaw270 @(2,2-3); L1 holes 8-cell slot; islands=2 | **FIXED (@P0_STAIR_CIRCULATION)** — yaw-aware landings; stair_exit_into_wall / flight_direction_incoherent / unreachable_landing / floor_island; solver inset ranking; hole punch VOID|STAIR only. Tests: test_stair_circulation_integrity.py |
 
 ### MP-WS6b — M-E style interchange (2026-07-25)
 
 | ID | Sev | Symptom | Root cause | Fix / rule |
 |---|---|---|---|---|
 | ME-1 | S3 | Same sketch should read as different architecture when style pack changes | Style packs were loaded but no interchange proof tied sketch → assemble → validate across all eight builtins | **DONE (@MP-WS6b)** — M2 4×3 × 8 packs, 8/8 `critical=[]`; report `Saved/exports/me_style_interchange_report.json`; tests `test_style_interchange.py`. **Gaps (authored, unconsumed):** `wall_bands.*`, `materials.*` — engine lane, not demoted. **`storey_height_cm` consumed @MP-WS-Z** |
+
+### P0 fancy kit — unvalidated shell/detail (2026-07-25)
+
+| ID | Sev | Symptom | Root cause | Fix / rule |
+|---|---|---|---|---|
+| K2-1 | S1 | ~11 m door jamb columns / posts read as blocking the doorway | Door surround used full multi-storey spanning wall `size_cm[2]` for jamb height | **FIXED (@P0_FANCY_VALIDATE)** — one-storey leaf height + aperture margin jambs; `doorway_opening_clear` AABB prism |
+| K2-2 | S1 | Balcony rails on host wall / wrong orientation; access blocked | Side rails reused front-edge yaw + magic lateral offsets | **FIXED** — rails from deck AABB edges; tangent yaw 0/180 on sides; `balcony_rail_*` / `balcony_access_gap` |
+| K2-3 | S1 | `critical=[]` despite broken fancy pieces | Arch/door checks not in `validate()` chain | **FIXED** — `pae/shell_detail_validate.py` wired into `validate()`; poison tests |
+| K2-4 | S2 | Straight stairs read as hollow inverted-U / “diagonal” in section | Stringers-only mesh; monumental offset flights | **FIXED** — closed soffit core under treads; `stair_yaw_ortho`; solid section proof |
 
 ### What D3 says about our coverage
 

@@ -6,6 +6,7 @@ See Docs/PROCEDURAL_ARCHITECTURE_ENGINE.md §2.
 
 from __future__ import annotations
 
+from functools import lru_cache
 from typing import Dict, Iterable, Optional, Sequence, Set, Tuple
 
 # --- §2 core dimensions (centimetres) ---
@@ -29,10 +30,10 @@ GATE_CLEAR_MIN_STOREYS = 1.0
 GATE_OPENING_HEIGHT_FRAC_MIN = 0.88
 
 # Tower drum rim apertures (@TOWER_ENTRY_CLIMB_FIX) — fractions of MODULE / STOREY.
-DRUM_WINDOW_CHORD_FRAC = 0.58  # tangential shell run (readable outward slot)
-DRUM_WINDOW_HEIGHT_FRAC = 0.46  # perimeter window height per storey
-DRUM_WINDOW_HELICAL_HEIGHT_FRAC = 0.42  # helical quarter-turn slot height
-DRUM_WINDOW_SILL_FRAC = 0.24  # helical sill above storey datum
+DRUM_WINDOW_CHORD_FRAC = 0.36  # narrow vertical lancet chord on curved masonry
+DRUM_WINDOW_HEIGHT_FRAC = 0.58  # perimeter lancet height per storey
+DRUM_WINDOW_HELICAL_HEIGHT_FRAC = 0.52  # stair-light lancet below next tread
+DRUM_WINDOW_SILL_FRAC = 0.18  # sill above storey datum
 TOWER_ENTRY_DOOR_CHORD_FRAC = 0.42  # attach-face passage width
 TOWER_ENTRY_DOOR_HEIGHT_FRAC = 0.82  # clear leaf height under storey plate
 
@@ -333,6 +334,7 @@ def placement_origin_cm(
     return cell_to_world_cm(cell_x, cell_y, level, ox, oy, oz)
 
 
+@lru_cache(maxsize=1 << 16)
 def placement_world_aabb(
     cell_x: int,
     cell_y: int,
@@ -343,7 +345,12 @@ def placement_world_aabb(
     *,
     rotates_about_center: bool = False,
 ) -> Tuple[Tuple[float, float, float], Tuple[float, float, float]]:
-    """Axis-aligned world bounds for a placed solid (min_corner convention)."""
+    """Axis-aligned world bounds for a placed solid (min_corner convention).
+
+    Memoized: validation asks for the same placement's bounds hundreds of times
+    per run (interpenetration, headroom and support each rescan every pair), and
+    the result depends only on these arguments.
+    """
     sx, sy, sz = size_cm
     wx, wy, wz = placement_origin_cm(cell_x, cell_y, level, offset_cm)
 
@@ -354,20 +361,20 @@ def placement_world_aabb(
             (wx + hx, wy + hy, wz + sz),
         )
 
+    # Yaw never tilts the piece, so Z needs no rotation and the four base corners
+    # bound XY on their own.
     xs: list[float] = []
     ys: list[float] = []
-    zs: list[float] = []
     for lx in (0.0, sx):
         for ly in (0.0, sy):
-            for lz in (0.0, sz):
-                rx, ry = rotate_local_xy(lx, ly, yaw, sx, sy)
-                xs.append(wx + rx)
-                ys.append(wy + ry)
-                zs.append(wz + lz)
+            rx, ry = rotate_local_xy(lx, ly, yaw, sx, sy)
+            xs.append(wx + rx)
+            ys.append(wy + ry)
 
+    lo_z, hi_z = (wz, wz + sz) if sz >= 0.0 else (wz + sz, wz)
     return (
-        (min(xs), min(ys), min(zs)),
-        (max(xs), max(ys), max(zs)),
+        (min(xs), min(ys), lo_z),
+        (max(xs), max(ys), hi_z),
     )
 
 

@@ -234,6 +234,8 @@ def _is_approach_steps(p: SolidPlacement) -> bool:
 def _is_gate_leaf(p: SolidPlacement) -> bool:
     if p.kind != "wall" or p.level != 0:
         return False
+    if "tower_entry" in p.tags:
+        return False
     aid = (p.asset_id or "").lower()
     if "gate" in aid:
         return True
@@ -434,6 +436,11 @@ def check_gate_through_passage(assembly: Assembly) -> List[Failure]:
         blockers: List[SolidPlacement] = []
         for p in assembly.placements:
             if p.kind != "wall" or p.level != 0:
+                continue
+            # Longitudinal jamb walls enclose the lane at its west/east edge;
+            # their anchor cell is the lane, but they do not occupy its clear
+            # centreline.
+            if "gate_passage_wall" in p.tags:
                 continue
             aid = (p.asset_id or "").lower()
             if is_door_or_gate_asset(aid):
@@ -897,14 +904,29 @@ def check_fortress_gatehouse_hall_stair(assembly: Assembly) -> List[Failure]:
     """Fortress gatehouse (≥2 storeys) must ship an L0 hall stair well (critical)."""
     if not assembly_is_fortress(assembly):
         return []
+    gatehouse_scoped = any(
+        _placement_in_range(p, "gatehouse") for p in assembly.placements
+    )
     hall = [
         p
         for p in assembly.placements
-        if _placement_in_range(p, "gatehouse")
+        if (not gatehouse_scoped or _placement_in_range(p, "gatehouse"))
         and (p.asset_id or "") in _HALL_STAIR_ASSETS
         and p.level == 0
     ]
     if hall:
+        return []
+    tower_spiral_cells = {
+        p.cell
+        for p in assembly.placements
+        if p.asset_id == "stair_spiral_quarter" and p.level == 0
+    }
+    tower_entry_cells = {
+        p.cell
+        for p in assembly.placements
+        if p.level == 0 and "tower_entry" in p.tags
+    }
+    if tower_spiral_cells & tower_entry_cells:
         return []
     return [
         Failure(

@@ -374,10 +374,27 @@ def _place_doors_windows(
     elif massing.openings_windows_ground is not None:
         n_win = massing.openings_windows_ground
     else:
-        # Approximate: per_bay along longest exterior edge.
-        n_win = max(0, massing.openings_windows_per_bay * max(1, len(south) - n_doors))
+        # ``windows_per_bay=1`` means a coherent opening in each available
+        # exterior bay, not "the first south-run count of arbitrarily sorted
+        # perimeter cells." Upper storeys repeat this same rhythm.
+        n_win = max(
+            0,
+            massing.openings_windows_per_bay
+            * max(0, len(remaining_wall) - n_doors),
+        )
+    candidates = [cell for cell in remaining_wall if cell not in doors]
+    # For sparse explicit counts, choose a reproducible evenly distributed
+    # subset whose phase comes from the building seed.
+    if 0 < n_win < len(candidates):
+        phase = int(massing.seed) % len(candidates)
+        ordered = candidates[phase:] + candidates[:phase]
+        step = len(candidates) / float(n_win)
+        candidates = [
+            ordered[min(len(ordered) - 1, int(i * step))]
+            for i in range(n_win)
+        ]
     placed = 0
-    for cell in remaining_wall:
+    for cell in candidates:
         if placed >= n_win:
             break
         # Skip door cells; mark as window by recording only (role stays WALL_LINE
@@ -1237,7 +1254,7 @@ def _apply_stairs(
     is_spiral = (massing.stair_kind or "").lower() == "spiral"
     kind = (massing.stair_kind or "straight").lower()
     pads = (
-        _monumental_flight_pads(stair_cells)
+        _monumental_flight_pads(stair_cells, kind)
         if kind in _MONUMENTAL_PAD_KINDS
         else None
     )
@@ -1289,7 +1306,7 @@ def _reserve_monumental_stairwell(
     kind = (massing.stair_kind or "straight").lower()
     if kind not in _MONUMENTAL_PAD_KINDS:
         return
-    if _monumental_flight_pads(stair_cells) is None:
+    if _monumental_flight_pads(stair_cells, kind) is None:
         return
 
     # Only double-loaded school wings run corridor spine through the inactive
@@ -1321,14 +1338,34 @@ def _build_circulation(
 
     region_maps: Dict[int, Dict[Tuple[int, int], int]] = {}
     for level in range(massing.storeys):
-        interior = interior_by_level.get(level, set())
-        voidish = {
+        walkable_roles = {
+            CellRole.INTERIOR,
+            CellRole.WALL_LINE,
+            CellRole.DOOR,
+            CellRole.STAIR,
+            CellRole.CORRIDOR,
+            CellRole.CLASSROOM,
+            CellRole.ROOM,
+            CellRole.HALL,
+            CellRole.SERVICE,
+            CellRole.ARCADE,
+        }
+        walkable = {
             c
             for c, role in storeys[level].cells.items()
-            if role in (CellRole.VOID, CellRole.DOUBLE_VOID)
+            if role in walkable_roles
         }
-        # Stairs are walkable landings for region membership at their level.
-        rmap = _regions(interior, voidish)
+        # A tower's logical anchor often remains WALL_LINE even though the drum
+        # interior is a walkable stair shaft. Add only authored spiral towers;
+        # ordinary envelope wall lines must never become circulation regions.
+        for vol in massing.volumes:
+            if (
+                vol.role == "tower"
+                and level < vol.storeys
+                and str(getattr(vol, "stair_kind", "") or "").lower() == "spiral"
+            ):
+                walkable |= vol.cells()
+        rmap = _regions(walkable, set())
         region_maps[level] = rmap
         for r in set(rmap.values()):
             graph.add_node(level, r)
@@ -1339,7 +1376,7 @@ def _build_circulation(
 
     kind = (massing.stair_kind or "straight").lower()
     pads = (
-        _monumental_flight_pads(list(massing.stair_cells))
+        _monumental_flight_pads(list(massing.stair_cells), kind)
         if kind in _MONUMENTAL_PAD_KINDS
         else None
     )
@@ -1397,6 +1434,29 @@ def _build_circulation(
                 graph.add_node(level, r0)
                 graph.add_node(level + 1, r1)
                 graph.add_edge((level, r0), (level + 1, r1))
+
+    # Every TowerSpec with ``stair_kind=spiral`` owns a real helix emitted by
+    # assemble, not only the single building-level stair cell. Account for all
+    # of those shafts in the plan graph so twin gate towers and unequal hall
+    # towers are not falsely treated as unreachable islands.
+    for vol in massing.volumes:
+        if vol.role != "tower":
+            continue
+        if str(getattr(vol, "stair_kind", "") or "").lower() != "spiral":
+            continue
+        shaft_cells = list(vol.cells())
+        for level in range(min(massing.storeys, vol.storeys) - 1):
+            r0 = _pick_region_for_cells(
+                region_maps[level], shaft_cells, neighbor_expand=True
+            )
+            r1 = _pick_region_for_cells(
+                region_maps[level + 1], shaft_cells, neighbor_expand=True
+            )
+            if r0 is None or r1 is None:
+                continue
+            graph.add_node(level, r0)
+            graph.add_node(level + 1, r1)
+            graph.add_edge((level, r0), (level + 1, r1))
 
     _link_stair_void_regions(storeys, region_maps, graph)
 
@@ -1481,7 +1541,7 @@ def plan(massing: Massing) -> Tuple[Optional[FloorPlan], Report]:
             for y in range(y0, y1 + 1):
                 if (x, y) in courtyard:
                     grid.set(x, y, CellRole.COURTYARD)
-                elif (x, y) in voids and (x, y) not in interior:
+                elif (x, y) in voids:
                     if level == 0:
                         grid.set(x, y, CellRole.COURTYARD)
                     else:
@@ -1491,13 +1551,6 @@ def plan(massing: Massing) -> Tuple[Optional[FloorPlan], Report]:
                         grid.set(x, y, CellRole.WALL_LINE)
                     else:
                         grid.set(x, y, CellRole.INTERIOR)
-                elif (x, y) in voids:
-                    # Void marked on a cell that would otherwise be exterior —
-                    # still treat as open-to-below when above the foundation.
-                    if level == 0:
-                        grid.set(x, y, CellRole.COURTYARD)
-                    else:
-                        grid.set(x, y, CellRole.DOUBLE_VOID)
                 else:
                     grid.set(x, y, CellRole.EXTERIOR)
         storeys.append(grid)

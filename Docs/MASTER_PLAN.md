@@ -93,7 +93,7 @@ Measured, not estimated.
 | Program region carving | **PARTIAL @MP-WS7** — hall/classroom/service/corridor (+ arcade) carve plan roles; sketch H/C/V/R/A; walkable courtyard arcade producer (`pae/arcade.py`). Stage H openings still open. |
 | Fortress collateral reds | **OPEN** — `tower_hall_kiss` / `aperture_sanity` on some fortress paths (not ridge) |
 | Valley merge on irregular roofs | **OPEN** — S-021 stub; band valleys only (S-019 greybox) |
-| Style pack hints unconsumed | `wall_bands.*`, `materials.*` authored but not in assemble (`storey_height_cm` **consumed** @MP-WS-Z) |
+| Style pack hints unconsumed | `materials.*` authored but not on placements; `wall_bands.*` **partially consumed** by Stage K detail_layer (@MP-WS-K1); `storey_height_cm` **consumed** @MP-WS-Z |
 | Two builders discarded validation reports | fixed `b31eb35` |
 
 ### The pattern behind most of it
@@ -285,8 +285,9 @@ opening or arch. **Ranges and drums are the same problem — one mechanism.**
 Already JSON. Eight packs ship. **Interchangeable by design** — same sketch + different pack =
 same building in a different architecture. Proof: `Saved/exports/me_style_interchange_report.json`
 (8/8 `critical=[]`). **`geometry.storey_height_cm`** consumed in assemble via
-``storey_datum_z_cm(..., storey_cm=)`` (@MP-WS-Z). **Gaps:** `wall_bands` / `materials` hints
-authored but not yet consumed by assemble.
+``storey_datum_z_cm(..., storey_cm=)`` (@MP-WS-Z). **Gaps:** `materials` hints
+authored but not yet on placements; `wall_bands` partially consumed by Stage K
+detail_layer (@MP-WS-K1).
 
 ### Stage J — Site and city *(needs A–D)* — **SKELETON @MP-WS-J** *(M-G city deferred)*
 - **Landed (@MP-WS-J):** `SiteSpec` / `PlacedStructureSpec` in `pae/site_spec.py` —
@@ -298,20 +299,33 @@ authored but not yet consumed by assemble.
 - **M-G "generate me a city" deferred.** Skeleton only; a city of broken buildings
   is worse than one good building.
 
-### Stage K — Detail layer *(last, explicitly — **DEFERRED by design**)*
-- Seeded surface variation: wall roughness, stone courses, timber grain
-- Wear/weathering driven by the same seed
-- Props and decor: lamps, signage, planters, market stalls
-- Interior fit-out beyond greybox
+### Stage K — Detail layer — **PARTIAL @MP-WS-K1** *(generic first pass)*
+- **Landed (@MP-WS-K1):** `pae/detail_layer.py` seeded façade articulation via
+  existing `band_*` kit (plinth/cornice/string/jetty, corner/pilaster rhythm,
+  optional coping) driven by style family + pack `wall_bands`; opening sill/lintel/
+  hood/frame **metadata** tags (no aperture family mixing); roof eave/ridge
+  **metadata** only (Stage C roof gen untouched); weathering/dampness tags by
+  height/orientation; density/budget cap (`MAX_DETAIL_ABS` / ratio); hooked into
+  `run_through_decorate` (`apply_detail=True` default) + `decorate.apply_stage_k_detail`.
+- Seeded surface roughness / timber grain mesh noise — **not started** (metadata only)
+- Props and decor beyond M5 AssetDB / fitout greybox — **not started**
+- Interior fit-out beyond greybox — deferred to fitout lanes
+- Full photoreal material / MI consumption of weather tags — **partial @MP-WS-UEMAT**
+  (export carries `material_slot` + mask channels; in-editor MI wiring still M-I)
 
-**Deliberately last.** Detail on broken massing is polish on a crooked house — and it is
-also the part that is genuinely easier to add once everything else is stable.
+**Deliberately late.** Detail on broken massing is polish on a crooked house — K1 is a
+bounded generic layer on small/medium buildings, not city / school / fortress polish.
 
-### Stage L — Unreal delivery — **PARTIAL @MP-WS11** *(filesystem chain green; in-editor spawn/collision/nav/LOD = M-I)*
+### Stage L — Unreal delivery — **PARTIAL @MP-WS11** *(filesystem chain green; in-editor spawn/collision/nav/LOD = M-I)*; **material slots @MP-WS-UEMAT**
 - Manifest already exists (`UE_MANIFEST_CONSUMER.md`)
 - Collision, nav-mesh sanity, LODs
 - Instanced static meshes per piece type — the reason a city is even feasible
 - Light anchors already emitted; wire them to UE placement
+- **@MP-WS-UEMAT:** every export placement/asset carries `material_slot` (kind→`MI_*`)
+  + Stage K wear/damp **mask channels** (vertex-color / PerInstanceCustomData
+  contract). Nanite recommended on geometry; surfacing stays in-engine (no baked
+  textures). Docs: Materials & Nanite section. Proof: `style_seed_matrix.json` +
+  `test_ue_material_slots.py`.
 
 ---
 

@@ -84,8 +84,8 @@ def test_wizard_academy_steep_pitch_and_inheritance():
     [
         ("rustic", "pitched", "window_simple", 1.3),
         ("medieval", "hip", "window_mullioned", 0.8),
-        ("manor", "pitched", "window_mullioned", 1.0),
-        ("civic", "flat", "window_round", 0.7),
+        ("manor", "pitched", "window_bay_wide", 1.0),
+        ("civic", "flat", "window_round", 0.5),
     ],
 )
 def test_stage_i_style_packs_distinct(
@@ -106,6 +106,8 @@ def test_manor_has_generous_window_density():
     assert report.ok and pack is not None
     assert pack.window.per_bay == 2
     assert pack.wall_bands.cornice_cm >= 40
+    assert pack.door.tag == "door_double"
+    assert pack.shell.doorcase == "grand"
 
 
 def test_civic_has_grand_plinth():
@@ -113,6 +115,8 @@ def test_civic_has_grand_plinth():
     assert report.ok and pack is not None
     assert pack.wall_bands.plinth_cm >= 65
     assert resolve_piece_id(pack.to_legacy_dict(), role="window") == "wall_window_round"
+    assert pack.shell.forecourt is True
+    assert pack.shell.pilasters is True
 
 
 def test_medieval_tower_finial():
@@ -120,6 +124,7 @@ def test_medieval_tower_finial():
     assert report.ok and pack is not None
     assert pack.tower.cap == "cone_steep"
     assert pack.tower.finial is True
+    assert pack.door.tag == "door_arched"
     assert resolve_piece_id(pack.to_legacy_dict(), role="window", tag="window_mullioned") == (
         "wall_window_mullioned"
     )
@@ -241,7 +246,8 @@ def test_style_pack_error_type_on_schema(tmp_path: Path):
 def test_resolution_order_engine_default_then_pack_then_override():
     base = resolve_style_pack("townhouse")
     assert base is not None
-    assert base.geometry.roof_pitch == 1.0
+    # Street-shop language uses a modest pitched roof (was flat 0.70).
+    assert base.geometry.roof_pitch == pytest.approx(1.05)
 
     overridden = base.resolve({"geometry": {"roof_pitch": 1.25}})
     assert overridden.geometry.roof_pitch == 1.25

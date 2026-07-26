@@ -1,9 +1,48 @@
 {
   "id": "gothic_academy",
-  "roof_pitch": 1.05,
+  "geometry": {
+    "roof_pitch": 1.55,
+    "storey_height_cm": 410
+  },
+  "roof": {
+    "kind_default": "pitched",
+    "eave_overhang_cm": 50,
+    "steep_silhouette": true
+  },
   "window": {"tag": "window_gothic", "per_bay": 1, "skip_ground": false},
   "door": {"tag": "door_gothic"},
-  "wall_bands": {"plinth_cm": 45, "cornice_cm": 30},
+  "wall_bands": {"plinth_cm": 70, "cornice_cm": 45, "string_cm": 30},
   "tower": {"cap": "cone_steep", "crown": true, "finial": true},
+  "shell": {
+    "forecourt": false,
+    "doorcase": "gothic",
+    "porch_posts": false,
+    "porch_roof": true,
+    "shop_platform": false,
+    "bargeboard": true,
+    "chimney_stub": false,
+    "buttress_corners": true,
+    "stoop": true,
+    "jetty": false,
+    "pilasters": false,
+    "coping": false,
+    "window_sills": true,
+    "window_hoods": true,
+    "window_boxes": false,
+    "ground_planters": false,
+    "patio": false,
+    "balcony": false
+  },
+  "detail": {
+    "opening_accent": "hood",
+    "density": 0.80,
+    "mid_string": true,
+    "jettied_mid": false,
+    "verticals_every_bays": 1,
+    "corners_only": false,
+    "coping": false,
+    "ridge_accent": true,
+    "weathering": true
+  },
   "materials": {"wall": "stone_ashlar", "roof": "slate_blue", "trim": "stone_light"}
 }

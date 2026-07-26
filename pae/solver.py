@@ -126,6 +126,7 @@ class Massing:
     level_programs: Optional[
         Tuple[Dict[str, Tuple[Tuple[int, int, int, int], ...]], ...]
     ] = None
+    interior_arch_rib_every_bays: Optional[int] = None
 
     def volume_by_id(self, vid: str) -> Optional[Volume]:
         for v in self.volumes:
@@ -826,25 +827,70 @@ def _well_rank_key(
     per_level: List[Set[Tuple[int, int]]],
     *,
     anchor: Optional[Tuple[int, int]] = None,
-) -> Tuple[int, int, int, int, int, int, int]:
-    """Lower is better — connector junctions beat narrow-wing dead ends."""
+) -> Tuple[int, ...]:
+    """Lower is better — connector junctions beat narrow-wing dead ends.
+
+    Circulation integrity (P0): never prefer a well that spans the full built
+    depth/width — that bisects upper decks into floor islands and leaves no
+    landing bay beyond the run (flush exterior wall). Prefer wells with a
+    one-cell margin on the long axis so landings stay inside the footprint.
+    """
     built0 = per_level[0]
     well_set = set(well)
     xs = {c[0] for c in well}
     ys = {c[1] for c in well}
     y_min = min(c[1] for c in built0)
+    y_max = max(c[1] for c in built0)
     x_min = min(c[0] for c in built0)
     x_max = max(c[0] for c in built0)
+    built_h = y_max - y_min + 1
+    built_w = x_max - x_min + 1
+    well_h = max(ys) - min(ys) + 1
+    well_w = max(xs) - min(xs) + 1
+    # Full-span wells bisect floors (manor 2×4 in a 4-deep mass) — worst rank.
+    full_span = 1 if (well_h >= built_h or well_w >= built_w) else 0
+    # Both ends of the long axis flush to the envelope → no walk-off landing.
+    flush_ns = int(min(ys) == y_min and max(ys) == y_max)
+    flush_ew = int(min(xs) == x_min and max(xs) == x_max)
+    flush_both_ends = 1 if flush_ns or flush_ew else 0
+    # Run-axis flush: 2×N / N×2 monumental pads run along the depth-2 axis.
+    # A well on the north envelope with N–S flights exits into the exterior wall.
+    if well_h == 2 and well_w >= 2:
+        run_flush = int(min(ys) == y_min or max(ys) == y_max)
+    elif well_w == 2 and well_h >= 2:
+        run_flush = int(min(xs) == x_min or max(xs) == x_max)
+    else:
+        run_flush = flush_both_ends
+    # Prefer inset wells (margin both sides of the short/run axis).
+    if well_h == 2:
+        inset_run = int(min(ys) > y_min and max(ys) < y_max)
+    elif well_w == 2:
+        inset_run = int(min(xs) > x_min and max(xs) < x_max)
+    else:
+        inset_run = 0
+    no_inset = 0 if inset_run else 1
     south_row = sum(1 for c in well if c[1] == y_min)
     edge_cols = sum(1 for c in well if c[0] in (x_min, x_max))
     depth = min(c[1] for c in well)
     auto_miss = 0 if anchor and anchor in well_set else 1
     connector = -_regions_touching_well(built0, well)
     # 4×2 in a 2-row south bar splits L/U connectors on alternating storeys.
-    shallow_split = 1 if len(ys) <= 2 and len(xs) >= 4 else 0
-    # Prefer 2×4 leg wells over shallow horizontal splits.
-    vertical_well = 0 if len(ys) > len(xs) else 1
-    return (auto_miss, shallow_split, vertical_well, connector, south_row, edge_cols, -depth)
+    shallow_split = 1 if len(ys) <= 2 and len(xs) >= 4 and built_h <= 2 else 0
+    # Prefer 2×4 leg wells only when they are NOT a full-depth slot.
+    vertical_well = 0 if (len(ys) > len(xs) and not full_span) else 1
+    return (
+        auto_miss,
+        full_span,
+        flush_both_ends,
+        run_flush,
+        no_inset,
+        shallow_split,
+        vertical_well,
+        connector,
+        south_row,
+        edge_cols,
+        -depth,
+    )
 
 
 def _pick_best_well(
@@ -1255,5 +1301,8 @@ def solve(spec: BuildingSpec) -> Tuple[Optional[Massing], Report]:
         level_wall_styles=getattr(spec, "level_wall_styles", None),
         level_window_tags=getattr(spec, "level_window_tags", None),
         level_programs=getattr(spec, "level_programs", None),
+        interior_arch_rib_every_bays=getattr(
+            spec, "interior_arch_rib_every_bays", None
+        ),
     )
     return massing, Report.from_failures([])

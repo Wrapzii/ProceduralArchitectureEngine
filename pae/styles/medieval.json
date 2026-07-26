@@ -1,15 +1,47 @@
 {
   "id": "medieval",
   "geometry": {
-    "roof_pitch": 0.85,
+    "roof_pitch": 0.82,
     "storey_height_cm": 340
   },
   "roof": {
-    "kind_default": "hip"
+    "kind_default": "hip",
+    "eave_overhang_cm": 45
   },
   "window": {"tag": "window_mullioned", "per_bay": 1, "skip_ground": false},
-  "door": {"tag": "door_plain"},
-  "wall_bands": {"plinth_cm": 55, "cornice_cm": 38},
+  "door": {"tag": "door_arched"},
+  "wall_bands": {"plinth_cm": 90, "cornice_cm": 55, "string_cm": 40},
   "tower": {"cap": "cone_steep", "crown": true, "finial": true},
+  "shell": {
+    "forecourt": false,
+    "doorcase": "arched",
+    "porch_posts": false,
+    "porch_roof": false,
+    "shop_platform": false,
+    "bargeboard": false,
+    "chimney_stub": false,
+    "buttress_corners": true,
+    "stoop": true,
+    "jetty": false,
+    "pilasters": false,
+    "coping": false,
+    "window_sills": true,
+    "window_hoods": true,
+    "window_boxes": false,
+    "ground_planters": false,
+    "patio": false,
+    "balcony": false
+  },
+  "detail": {
+    "opening_accent": "hood",
+    "density": 0.78,
+    "mid_string": true,
+    "jettied_mid": false,
+    "verticals_every_bays": 2,
+    "corners_only": true,
+    "coping": false,
+    "ridge_accent": true,
+    "weathering": true
+  },
   "materials": {"wall": "stone_rough", "roof": "slate_dark", "trim": "iron_trim"}
 }

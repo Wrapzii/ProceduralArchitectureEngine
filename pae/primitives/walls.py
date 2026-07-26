@@ -278,6 +278,17 @@ def wall_gate_arch_grand() -> PrimitiveDescriptor:
     )
 
 
+def wall_arch_rib_interior() -> PrimitiveDescriptor:
+    """Transverse great-hall arch rib; assemble scales its run to hall width."""
+    return wall_from_profile(
+        get_profile("arcade_monumental"),
+        piece_id="wall_arch_rib_interior",
+        extra_tags=frozenset(
+            {"interior", "arch_rib", "structural", "great_hall"}
+        ),
+    )
+
+
 def wall_arcade_monumental() -> PrimitiveDescriptor:
     """Tall cloister arcade — low spring, wide round head under a gallery roof."""
     return wall_from_profile(
@@ -295,6 +306,7 @@ def all_walls() -> tuple:
         wall_arcade(),
         wall_gate_arch(),
         wall_gate_arch_grand(),
+        wall_arch_rib_interior(),
         wall_arcade_monumental(),
     ]
     taken = {p.id for p in pieces}

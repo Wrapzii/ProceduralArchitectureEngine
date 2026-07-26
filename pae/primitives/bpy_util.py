@@ -395,6 +395,242 @@ def annulus_quarter_verts(
     return verts, faces
 
 
+def annulus_ring_door_cut_verts(
+    outer_r: float,
+    inner_r: float,
+    z0: float,
+    z1: float,
+    *,
+    opening_width: float,
+    opening_height: float,
+    window_width: float = 0.0,
+    window_sill: float = 0.0,
+    window_height: float = 0.0,
+    segments_full: int = ARC_SEGMENTS_FULL,
+) -> Tuple[List[Vec3], List[Tuple[int, int, int, int]]]:
+    """Full drum ring with a west door and optional windows on other faces.
+
+    This is the stable mesh-authoring equivalent of subtracting a doorway
+    cutter after the drum is placed.  It avoids Blender runtime booleans while
+    preserving the continuous curved wall on both sides and above the opening.
+    """
+    import math
+
+    n = max(24, int(segments_full))
+    mid_r = max(1.0, (outer_r + inner_r) * 0.5)
+    half_angle = math.asin(
+        min(0.95, max(0.0, opening_width * 0.5 / mid_r))
+    )
+    window_half_angle = math.asin(
+        min(0.95, max(0.0, window_width * 0.5 / mid_r))
+    )
+    door_top = min(z1, max(z0, z0 + opening_height))
+    sill_top = min(z1, max(z0, z0 + window_sill))
+    window_peak = min(z1, max(sill_top, sill_top + window_height))
+    window_spring = sill_top + (window_peak - sill_top) * 0.58
+    verts: List[Vec3] = []
+    faces: List[Tuple[int, int, int, int]] = []
+
+    def add_sector(
+        a0: float,
+        a1: float,
+        low: float,
+        high: float,
+        *,
+        cap_bottom: bool = False,
+        cap_top: bool = False,
+    ) -> None:
+        base = len(verts)
+        for z in (low, high):
+            for radius in (outer_r, inner_r):
+                for angle in (a0, a1):
+                    verts.append(
+                        (
+                            radius * math.cos(angle),
+                            radius * math.sin(angle),
+                            z,
+                        )
+                    )
+        # bottom outer 0,1; bottom inner 2,3; top outer 4,5; top inner 6,7
+        faces.extend(
+            [
+                (base + 0, base + 1, base + 5, base + 4),
+                (base + 3, base + 2, base + 6, base + 7),
+            ]
+        )
+        if cap_bottom:
+            faces.append((base + 0, base + 2, base + 3, base + 1))
+        if cap_top:
+            faces.append((base + 4, base + 5, base + 7, base + 6))
+
+    def add_reveal(angle: float, low: float, high: float) -> None:
+        """Close the masonry thickness only at a real opening jamb."""
+        if high <= low:
+            return
+        base = len(verts)
+        ca, sa = math.cos(angle), math.sin(angle)
+        verts.extend(
+            [
+                (outer_r * ca, outer_r * sa, low),
+                (inner_r * ca, inner_r * sa, low),
+                (inner_r * ca, inner_r * sa, high),
+                (outer_r * ca, outer_r * sa, high),
+            ]
+        )
+        faces.append((base, base + 1, base + 2, base + 3))
+
+    window_angles = (0.0, math.pi * 0.5, math.pi * 1.5)
+    sector_classes: List[str] = []
+    for index in range(n):
+        a0 = (index / n) * math.tau
+        a1 = ((index + 1) / n) * math.tau
+        mid = (a0 + a1) * 0.5
+        delta = abs((mid - math.pi + math.pi) % math.tau - math.pi)
+        in_opening = delta <= half_angle
+        if in_opening and door_top < z1:
+            sector_classes.append("door")
+            add_sector(a0, a1, door_top, z1, cap_bottom=True)
+            continue
+        in_window = any(
+            abs((mid - angle + math.pi) % math.tau - math.pi)
+            <= window_half_angle
+            for angle in window_angles
+        )
+        if (
+            in_window
+            and window_width > 0.0
+            and sill_top > z0
+            and window_peak < z1
+        ):
+            sector_classes.append("window")
+            nearest_delta = min(
+                abs((mid - angle + math.pi) % math.tau - math.pi)
+                for angle in window_angles
+            )
+            arch_t = max(
+                0.0,
+                1.0 - nearest_delta / max(window_half_angle, 1e-9),
+            )
+            shaped_top = window_spring + (
+                window_peak - window_spring
+            ) * arch_t
+            add_sector(a0, a1, z0, sill_top, cap_top=True)
+            add_sector(a0, a1, shaped_top, z1, cap_bottom=True)
+        elif not in_opening:
+            sector_classes.append("solid")
+            add_sector(a0, a1, z0, z1)
+
+    # Adjacent solid sectors share an edge and need no internal radial face.
+    # Only opening transitions receive jamb/reveal geometry.
+    for index, current in enumerate(sector_classes):
+        previous = sector_classes[index - 1]
+        if current == previous:
+            continue
+        angle = (index / n) * math.tau
+        pair = {current, previous}
+        if "door" in pair:
+            add_reveal(angle, z0, door_top)
+        elif "window" in pair:
+            add_reveal(angle, sill_top, window_spring)
+    return verts, faces
+
+
+def annulus_quarter_window_cut_verts(
+    outer_r: float,
+    inner_r: float,
+    z0: float,
+    z1: float,
+    *,
+    opening_width: float,
+    opening_sill: float,
+    opening_height: float,
+    segments_full: int = TOWER_ARC_SEGMENTS_FULL,
+) -> Tuple[List[Vec3], List[Tuple[int, ...]]]:
+    """First-quadrant drum sector with a pointed stair-light opening."""
+    import math
+
+    n = max(12, int(segments_full) // 4)
+    mid_r = max(1.0, (outer_r + inner_r) * 0.5)
+    half_angle = math.asin(
+        min(0.95, max(0.0, opening_width * 0.5 / mid_r))
+    )
+    centre = math.pi * 0.25
+    sill = min(z1, max(z0, z0 + opening_sill))
+    peak = min(z1, max(sill, sill + opening_height))
+    spring = sill + (peak - sill) * 0.58
+    verts: List[Vec3] = []
+    faces: List[Tuple[int, ...]] = []
+    classes: List[str] = []
+
+    def add_sector(
+        a0: float,
+        a1: float,
+        low: float,
+        high: float,
+        *,
+        cap_bottom: bool = False,
+        cap_top: bool = False,
+    ) -> None:
+        base = len(verts)
+        for z in (low, high):
+            for radius in (outer_r, inner_r):
+                for angle in (a0, a1):
+                    verts.append(
+                        (
+                            radius * math.cos(angle),
+                            radius * math.sin(angle),
+                            z,
+                        )
+                    )
+        faces.extend(
+            [
+                (base + 0, base + 1, base + 5, base + 4),
+                (base + 3, base + 2, base + 6, base + 7),
+            ]
+        )
+        if cap_bottom:
+            faces.append((base + 0, base + 2, base + 3, base + 1))
+        if cap_top:
+            faces.append((base + 4, base + 5, base + 7, base + 6))
+
+    def add_reveal(angle: float, low: float, high: float) -> None:
+        base = len(verts)
+        ca, sa = math.cos(angle), math.sin(angle)
+        verts.extend(
+            [
+                (outer_r * ca, outer_r * sa, low),
+                (inner_r * ca, inner_r * sa, low),
+                (inner_r * ca, inner_r * sa, high),
+                (outer_r * ca, outer_r * sa, high),
+            ]
+        )
+        faces.append((base, base + 1, base + 2, base + 3))
+
+    for index in range(n):
+        a0 = (index / n) * (math.pi * 0.5)
+        a1 = ((index + 1) / n) * (math.pi * 0.5)
+        mid = (a0 + a1) * 0.5
+        delta = abs(mid - centre)
+        if delta <= half_angle and sill > z0 and peak < z1:
+            classes.append("window")
+            arch_t = max(0.0, 1.0 - delta / max(half_angle, 1e-9))
+            shaped_top = spring + (peak - spring) * arch_t
+            add_sector(a0, a1, z0, sill, cap_top=True)
+            add_sector(a0, a1, shaped_top, z1, cap_bottom=True)
+        else:
+            classes.append("solid")
+            add_sector(a0, a1, z0, z1)
+
+    for index in range(1, n):
+        if classes[index] == classes[index - 1]:
+            continue
+        add_reveal((index / n) * (math.pi * 0.5), sill, spring)
+    # Close the two quarter seams; adjacent quarters meet these faces exactly.
+    add_reveal(0.0, z0, z1)
+    add_reveal(math.pi * 0.5, z0, z1)
+    return verts, faces
+
+
 def annulus_ring_verts(
     outer_r: float,
     inner_r: float,

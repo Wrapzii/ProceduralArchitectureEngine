@@ -228,6 +228,53 @@ def arch_freestanding() -> PrimitiveDescriptor:
     )
 
 
+def arch_rib_freestanding() -> PrimitiveDescriptor:
+    """Thin transverse structural rib: two piers joined by a curved band."""
+    tag = frozenset({module_tag(), "arch", "arch_rib", "structural"})
+    return PrimitiveDescriptor(
+        id="arch_rib_freestanding",
+        kind="column",
+        footprint_modules=(1, 1),
+        height_storeys=1.0,
+        size_cm=(WALL_T_CM, MODULE_CM, STOREY_CM),
+        sockets=(
+            SocketDesc(
+                name="base_a",
+                pos_cm=(WALL_T_CM * 0.5, 0.0, 0.0),
+                normal=(0.0, 0.0, -1.0),
+                type="column_base",
+                tags=tag,
+            ),
+            SocketDesc(
+                name="base_b",
+                pos_cm=(WALL_T_CM * 0.5, MODULE_CM, 0.0),
+                normal=(0.0, 0.0, -1.0),
+                type="column_base",
+                tags=tag,
+            ),
+            SocketDesc(
+                name="apex",
+                pos_cm=(WALL_T_CM * 0.5, MODULE_CM * 0.5, STOREY_CM),
+                normal=(0.0, 0.0, 1.0),
+                type="column_head",
+                tags=tag,
+            ),
+        ),
+        tags=frozenset(
+            {
+                "column",
+                "arch",
+                "arch_rib",
+                "structural",
+                "interior",
+                module_tag(),
+            }
+        ),
+        origin="min_corner",
+        notes="Two bearing piers and a smooth extruded arch band; no spandrel or plate.",
+    )
+
+
 def spiral_newel() -> PrimitiveDescriptor:
     """Central newel pillar for a spiral / helical tower stair (Phase 4.7 shell).
 
@@ -278,6 +325,7 @@ def all_columns() -> tuple:
         pilaster(),
         buttress(),
         arch_freestanding(),
+        arch_rib_freestanding(),
         spiral_newel(),
     )
 
@@ -402,6 +450,62 @@ def _spiral_newel_mesh(name: str):
     return obj
 
 
+def _arch_rib_mesh(name: str):
+    """Extrude one smooth YZ arch-band polygon through the rib thickness."""
+    from pae.primitives import bpy_util
+
+    segments = 48
+    band = MODULE_CM * 0.075
+    outer_r = MODULE_CM * 0.5
+    inner_r = outer_r - band
+    centre_y = MODULE_CM * 0.5
+    spring_z = STOREY_CM - outer_r
+
+    outline: List[Tuple[float, float]] = []
+    # Outer curve: right spring → apex → left spring.
+    for i in range(segments + 1):
+        theta = math.pi * i / segments
+        outline.append(
+            (
+                centre_y + outer_r * math.cos(theta),
+                spring_z + outer_r * math.sin(theta),
+            )
+        )
+    # Left pier down and back to the inner spring.
+    outline.extend(((0.0, 0.0), (band, 0.0), (band, spring_z)))
+    # Inner curve: left spring → apex → right spring.
+    for i in range(segments, -1, -1):
+        theta = math.pi * i / segments
+        outline.append(
+            (
+                centre_y + inner_r * math.cos(theta),
+                spring_z + inner_r * math.sin(theta),
+            )
+        )
+    # Right pier back to the outer spring.
+    outline.extend(
+        (
+            (MODULE_CM - band, 0.0),
+            (MODULE_CM, 0.0),
+        )
+    )
+
+    verts: List[Tuple[float, float, float]] = []
+    for x in (0.0, WALL_T_CM):
+        verts.extend((x, y, z) for y, z in outline)
+    count = len(outline)
+    faces: List[Tuple[int, ...]] = [
+        tuple(range(count)),
+        tuple(range(count, count * 2))[::-1],
+    ]
+    for i in range(count):
+        nxt = (i + 1) % count
+        faces.append((i, nxt, count + nxt, count + i))
+    obj = bpy_util.mesh_from_verts_faces(name, verts, faces)
+    bpy_util.smooth_shade_curved_faces(obj, angle_deg=12.0)
+    return obj
+
+
 def build_column_mesh(desc: PrimitiveDescriptor, *, name: Optional[str] = None):
     from pae.primitives import bpy_util
 
@@ -412,6 +516,8 @@ def build_column_mesh(desc: PrimitiveDescriptor, *, name: Optional[str] = None):
         return _round_column_mesh(obj_name)
     if desc.id == "spiral_newel":
         return _spiral_newel_mesh(obj_name)
+    if desc.id == "arch_rib_freestanding":
+        return _arch_rib_mesh(obj_name)
     if desc.id == "buttress":
         parts = _buttress_parts()
     elif desc.id == "arch_freestanding":

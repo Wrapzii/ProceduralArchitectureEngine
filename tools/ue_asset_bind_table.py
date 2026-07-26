@@ -35,6 +35,7 @@ from tools.ue_manifest_dry_run import (  # noqa: E402
     ensure_manifest_exists,
     load_manifest,
 )
+from pae.export.materials import asset_material_slot  # noqa: E402
 from tools.ue_spawn_table import (  # noqa: E402
     SUPPORTED_SPAWN_TABLE_SCHEMAS,
     spawn_table_out_path,
@@ -131,6 +132,24 @@ def collect_asset_ids_from_spawn_table(table: Mapping[str, Any]) -> List[str]:
     return sorted(seen)
 
 
+def _material_slot_for_asset(asset_id: str, manifest: Mapping[str, Any]) -> str:
+    """Prefer ``assets[].material_slot`` from the manifest; else infer from id."""
+    assets = manifest.get("assets")
+    if isinstance(assets, list):
+        for entry in assets:
+            if not isinstance(entry, Mapping):
+                continue
+            if entry.get("id") != asset_id:
+                continue
+            slot = entry.get("material_slot")
+            if isinstance(slot, str) and slot:
+                return slot
+            kind = entry.get("kind")
+            if isinstance(kind, str) and kind:
+                return asset_material_slot(asset_id, kind_hint=kind)
+    return asset_material_slot(asset_id)
+
+
 def manifest_to_bindings(
     manifest: Mapping[str, Any],
     *,
@@ -146,6 +165,7 @@ def manifest_to_bindings(
                 "suggested_content_path": path,
                 "lod0": path,
                 "collision_profile": _collision_profile_for(asset_id, manifest),
+                "material_slot": _material_slot_for_asset(asset_id, manifest),
             }
         )
     return bindings
@@ -168,6 +188,7 @@ def spawn_table_to_bindings(
                 "suggested_content_path": path,
                 "lod0": path,
                 "collision_profile": _collision_profile_for(asset_id, manifest),
+                "material_slot": _material_slot_for_asset(asset_id, manifest),
             }
         )
     return bindings

@@ -188,6 +188,34 @@ def tower_cap() -> PrimitiveDescriptor:
     )
 
 
+def tower_drum_door_ring() -> PrimitiveDescriptor:
+    """Complete round drum course with a large doorway cut through its west face."""
+    diameter = 2.0 * MODULE_CM
+    return PrimitiveDescriptor(
+        id="tower_drum_door_ring",
+        kind="tower_arc",
+        footprint_modules=(2, 2),
+        height_storeys=1.0,
+        size_cm=(diameter, diameter, STOREY_CM),
+        sockets=(),
+        tags=frozenset(
+            {
+                "tower",
+                "arc",
+                "door_cut",
+                "window",
+                "drum_window",
+                "structural",
+                module_tag(),
+            }
+        ),
+        origin="center",
+        rotates_about_center=True,
+        aabb_min_cm=(-MODULE_CM, -MODULE_CM, 0.0),
+        notes="Continuous drum course with deterministic monumental doorway subtraction.",
+    )
+
+
 def tower_cap_square() -> PrimitiveDescriptor:
     """Centred pyramidal spire for square towers and steeples."""
     diam = 2.0 * MODULE_CM
@@ -220,6 +248,7 @@ def all_towers() -> tuple:
     return (
         tower_arc_quarter(),
         tower_arc_quarter_window(),
+        tower_drum_door_ring(),
         tower_junction(),
         tower_crown(),
         tower_cap(),
@@ -234,7 +263,7 @@ def build_tower_mesh(desc: PrimitiveDescriptor, *, name: Optional[str] = None):
     obj_name = name or desc.id
     outer = MODULE_CM
     inner = MODULE_CM - WALL_T_CM
-    if desc.id in ("tower_arc_quarter", "tower_arc_quarter_window"):
+    if desc.id == "tower_arc_quarter":
         verts, faces = bpy_util.annulus_quarter_verts(
             outer,
             inner,
@@ -276,6 +305,36 @@ def build_tower_mesh(desc: PrimitiveDescriptor, *, name: Optional[str] = None):
             outer,
             0.0,
             h,
+            segments_full=bpy_util.TOWER_ARC_SEGMENTS_FULL,
+        )
+        obj = bpy_util.mesh_from_verts_faces(obj_name, verts, faces)
+        bpy_util.smooth_shade_curved_faces(obj, angle_deg=40.0)
+        return obj
+    if desc.id == "tower_arc_quarter_window":
+        verts, faces = bpy_util.annulus_quarter_window_cut_verts(
+            outer,
+            inner,
+            0.0,
+            STOREY_CM,
+            opening_width=MODULE_CM * _ARC_WINDOW_W_FRAC,
+            opening_sill=STOREY_CM * _ARC_WINDOW_SILL_FRAC,
+            opening_height=STOREY_CM * _ARC_WINDOW_H_FRAC,
+            segments_full=bpy_util.TOWER_ARC_SEGMENTS_FULL,
+        )
+        obj = bpy_util.mesh_from_verts_faces(obj_name, verts, faces)
+        bpy_util.smooth_shade_curved_faces(obj, angle_deg=40.0)
+        return obj
+    if desc.id == "tower_drum_door_ring":
+        verts, faces = bpy_util.annulus_ring_door_cut_verts(
+            outer,
+            inner,
+            0.0,
+            STOREY_CM,
+            opening_width=MODULE_CM * 0.88,
+            opening_height=STOREY_CM * 0.90,
+            window_width=MODULE_CM * _ARC_WINDOW_W_FRAC,
+            window_sill=STOREY_CM * _ARC_WINDOW_SILL_FRAC,
+            window_height=STOREY_CM * _ARC_WINDOW_H_FRAC,
             segments_full=bpy_util.TOWER_ARC_SEGMENTS_FULL,
         )
         obj = bpy_util.mesh_from_verts_faces(obj_name, verts, faces)

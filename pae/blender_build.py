@@ -1037,7 +1037,7 @@ def build_framed_opening_fallback(
 
 
 def is_spanning_floor_deck(p) -> bool:
-    """True for upper-storey floor decks larger than one module bay."""
+    """True for upper-storey floor decks larger than one module bay on both axes."""
     from pae.contract import MODULE_CM
 
     return (
@@ -1048,40 +1048,155 @@ def is_spanning_floor_deck(p) -> bool:
     )
 
 
-def spanning_floor_hole_rects_cm(deck, hole_placements) -> List[Tuple[float, float, float, float]]:
+def spanning_floor_hole_rects_cm(deck, hole_placements, *, peer_decks=()) -> List[Tuple[float, float, float, float]]:
     """Local hole rectangles for VOID ``floor_hole`` placements on a spanning deck.
 
     Rule 5.1 / Ledger F-7: use every ``covered_cells`` bay of each hole (full
     ``size_cm`` footprint), never ``h.cell`` alone. A 1×2 / 2×1 stairwell is one
     spanning opening — origin-only punch left stairs buried under half a deck.
     """
-    from pae.primitives.floors import hole_rects_merged_for_deck_cm
-    from pae.trim import covered_cells
+    from pae.primitives.floors import spanning_deck_hole_rects_cm
 
-    cells = set()
-    for h in hole_placements:
-        if getattr(h, "asset_id", None) != "floor_hole":
-            continue
-        if getattr(h, "level", None) != getattr(deck, "level", None):
-            continue
-        cells |= covered_cells(h)
-    return hole_rects_merged_for_deck_cm(tuple(deck.cell), cells)
+    return spanning_deck_hole_rects_cm(deck, hole_placements, peer_decks=peer_decks)
 
 
-def _mesh_for_spanning_floor_deck(p, hole_placements, *, cache: Dict[str, Any]) -> Any:
+def _mesh_for_spanning_floor_deck(p, hole_placements, *, peer_decks=(), cache: Dict[str, Any]) -> Any:
     """Full-size spanning floor mesh with stair VOIDs punched open."""
     from pae.primitives import bpy_util
     from pae.primitives.floors import slab_with_rect_holes_verts_faces
+
+    from pae.primitives.floors import spanning_deck_hole_rects_cm
 
     bpy_util.require_bpy()
     key = f"floor_deck::{p.piece_id}::{tuple(p.size_cm)}"
     if key in cache:
         return cache[key]
-    rects = spanning_floor_hole_rects_cm(p, hole_placements)
+    rects = spanning_deck_hole_rects_cm(p, hole_placements, peer_decks=peer_decks)
     sx, sy, sz = tuple(p.size_cm)
     verts, faces = slab_with_rect_holes_verts_faces(sx, sy, sz, rects)
     proto_name = f"PAE_Proto_floor_deck_{p.piece_id}"
     obj = bpy_util.mesh_from_verts_faces(proto_name, verts, faces)
+    obj.hide_set(True)
+    obj.hide_render = True
+    cache[key] = obj
+    return obj
+
+
+def _roof_hole_rects_local_cm(p, roof_hole_placements):
+    """Return exact local XY exclusions for one unrotated roof placement.
+
+    Roof/tower junctions used to be cut with Blender's Boolean modifier.  Aside
+    from being non-deterministic on coplanar faces, that operation can terminate
+    Blender.  The authored roof-hole contract is axis-aligned, so panelizing on
+    its boundaries produces the same opening without a runtime boolean.
+    """
+    from pae.contract import placement_world_aabb
+    from pae.export.manifest import placement_loc_cm
+
+    if int(round(float(p.yaw))) % 360 != 0 or p.rotates_about_center:
+        return []
+    origin = placement_loc_cm(p)
+    sx, sy, _sz = (float(v) for v in p.size_cm)
+    pmin, pmax = placement_world_aabb(
+        p.cell[0],
+        p.cell[1],
+        p.level,
+        p.yaw,
+        p.size_cm,
+        p.offset_cm,
+        rotates_about_center=p.rotates_about_center,
+    )
+    rects = []
+    for hole in roof_hole_placements:
+        hmin, hmax = placement_world_aabb(
+            hole.cell[0],
+            hole.cell[1],
+            hole.level,
+            hole.yaw,
+            hole.size_cm,
+            hole.offset_cm,
+            rotates_about_center=hole.rotates_about_center,
+        )
+        x0 = max(pmin[0], hmin[0]) - origin[0]
+        y0 = max(pmin[1], hmin[1]) - origin[1]
+        x1 = min(pmax[0], hmax[0]) - origin[0]
+        y1 = min(pmax[1], hmax[1]) - origin[1]
+        x0, x1 = max(0.0, x0), min(sx, x1)
+        y0, y1 = max(0.0, y0), min(sy, y1)
+        if x1 - x0 > 0.5 and y1 - y0 > 0.5:
+            rects.append((x0, y0, x1, y1))
+    return rects
+
+
+def _notched_roof_verts_faces(asset_id, size_cm, rects):
+    """Panelize a flat, double-pitch, or gable roof around rectangular voids."""
+    sx, sy, sz = (float(v) for v in size_cm)
+    xs = sorted({0.0, sx, *(v for r in rects for v in (r[0], r[2]))})
+    ys = sorted({0.0, sy, *(v for r in rects for v in (r[1], r[3]))})
+
+    if asset_id == "roof_gable_infill":
+        # Gable prisms use their thin dimension as the extrusion axis.
+        if sy >= sx:
+            top = lambda x, y: sz * max(0.0, 1.0 - abs(2.0 * y / sy - 1.0))
+        else:
+            top = lambda x, y: sz * max(0.0, 1.0 - abs(2.0 * x / sx - 1.0))
+    elif asset_id == "roof_pitched_slope":
+        if sx >= sy:
+            top = lambda x, y: sz * max(0.0, 1.0 - abs(2.0 * y / sy - 1.0))
+        else:
+            top = lambda x, y: sz * max(0.0, 1.0 - abs(2.0 * x / sx - 1.0))
+    else:
+        top = lambda x, y: sz
+
+    verts = []
+    faces = []
+    for xa, xb in zip(xs, xs[1:]):
+        for ya, yb in zip(ys, ys[1:]):
+            cx, cy = (xa + xb) * 0.5, (ya + yb) * 0.5
+            if any(rx0 < cx < rx1 and ry0 < cy < ry1 for rx0, ry0, rx1, ry1 in rects):
+                continue
+            z00, z10 = top(xa, ya), top(xb, ya)
+            z11, z01 = top(xb, yb), top(xa, yb)
+            base = len(verts)
+            verts.extend(
+                [
+                    (xa, ya, 0.0),
+                    (xb, ya, 0.0),
+                    (xb, yb, 0.0),
+                    (xa, yb, 0.0),
+                    (xa, ya, z00),
+                    (xb, ya, z10),
+                    (xb, yb, z11),
+                    (xa, yb, z01),
+                ]
+            )
+            faces.extend(
+                [
+                    (base, base + 3, base + 2, base + 1),
+                    (base + 4, base + 5, base + 6, base + 7),
+                    (base, base + 1, base + 5, base + 4),
+                    (base + 1, base + 2, base + 6, base + 5),
+                    (base + 2, base + 3, base + 7, base + 6),
+                    (base + 3, base, base + 4, base + 7),
+                ]
+            )
+    return verts, faces
+
+
+def _mesh_for_notched_roof(p, roof_hole_placements, *, cache: Dict[str, Any]):
+    """Build a placement-sized roof mesh with deterministic tower exclusions."""
+    from pae.primitives import bpy_util
+
+    rects = _roof_hole_rects_local_cm(p, roof_hole_placements)
+    if not rects:
+        return None
+    key = f"roof_notched::{p.piece_id}::{tuple(p.size_cm)}::{tuple(rects)}"
+    if key in cache:
+        return cache[key]
+    verts, faces = _notched_roof_verts_faces(p.asset_id, p.size_cm, rects)
+    obj = bpy_util.mesh_from_verts_faces(
+        f"PAE_Proto_roof_notched_{p.piece_id}", verts, faces
+    )
     obj.hide_set(True)
     obj.hide_render = True
     cache[key] = obj
@@ -1163,15 +1278,48 @@ def instance_assembly(
         for hp in assembly.placements
         if getattr(hp, "asset_id", None) == "floor_hole"
     ]
+    spanning_floor_decks = [
+        dp for dp in assembly.placements if is_spanning_floor_deck(dp)
+    ]
+    all_floor_decks = [
+        dp
+        for dp in assembly.placements
+        if getattr(dp, "kind", None) == "floor"
+        and getattr(dp, "asset_id", None) == "floor"
+    ]
+    roof_hole_placements = [
+        hp
+        for hp in assembly.placements
+        if getattr(hp, "asset_id", None) == "roof_hole"
+    ]
     for p in assembly.placements:
         # ``floor_hole`` is a declarative void/cutter used above to punch the
         # surrounding floor deck. Instancing its legacy blue frame puts solid
         # geometry back into the opening and blocks the stair.
-        if p.asset_id == "floor_hole":
+        # Drum-window wall leaves are likewise logical aperture proxies; the
+        # windowed curved arc owns the visible geometry.
+        if p.asset_id in ("floor_hole", "roof_hole") or (
+            "non_rendering_aperture_proxy" in p.tags
+        ):
             continue
-        if is_spanning_floor_deck(p):
+        notched_roof = (
+            _mesh_for_notched_roof(p, roof_hole_placements, cache=cache)
+            if getattr(p, "kind", None) == "roof" and roof_hole_placements
+            else None
+        )
+        if notched_roof is not None:
+            proto = notched_roof
+            sx = sy = sz = 1.0
+        elif is_spanning_floor_deck(p):
             # Full-size mesh with VOID openings already cut — uniform cm→m only.
-            proto = _mesh_for_spanning_floor_deck(p, hole_placements, cache=cache)
+            peers = [
+                d
+                for d in all_floor_decks
+                if d.level == p.level and d.piece_id != p.piece_id
+            ]
+            proto = _mesh_for_spanning_floor_deck(
+                p, hole_placements, peer_decks=peers, cache=cache
+            )
             sx = sy = sz = 1.0
         else:
             proto = _mesh_for_asset(p.asset_id, tuple(p.size_cm), cache=cache)
@@ -1227,6 +1375,10 @@ def instance_assembly(
         inst["pae_piece_id"] = p.piece_id
         inst["pae_asset_id"] = p.asset_id
         inst["pae_level"] = int(getattr(p, "level", 0))
+        inst["pae_cell_x"] = int(p.cell[0])
+        inst["pae_cell_y"] = int(p.cell[1])
+        inst["pae_kind"] = str(getattr(p, "kind", ""))
+        inst["pae_tags"] = "|".join(sorted(str(tag) for tag in p.tags))
         count += 1
     return count
 

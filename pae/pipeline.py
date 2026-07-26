@@ -134,8 +134,14 @@ def run_through_decorate(
     tags=None,
     apply_trim: bool = True,
     apply_anchors: bool = False,
+    apply_detail: bool = True,
 ) -> Tuple[Massing, FloorPlan, Assembly, Report]:
-    """spec → assemble → validate → trim → decorate (M5 + school campus path)."""
+    """spec → assemble → validate → trim → decorate → detail (M5 + Stage K).
+
+    ``apply_detail`` (default True) runs the generic Stage K detail layer after
+    fitout and before the final validate. Opt out with ``apply_detail=False``
+    for bare decorate regressions.
+    """
     from pae.decorate import decorate
 
     if apply_trim:
@@ -169,10 +175,25 @@ def run_through_decorate(
     if not freport.ok:
         return massing, floor_plan, decorated, freport
 
+    kreport = Report.from_failures([])
+    if apply_detail:
+        from pae.detail_layer import apply_detail_layer
+
+        style_id = getattr(spec, "style", None)
+        decorated, kreport = apply_detail_layer(
+            decorated,
+            style_id=style_id,
+            seed=decor_seed,
+        )
+        if not kreport.ok:
+            return massing, floor_plan, decorated, kreport
+
     from pae.validate import validate
 
     decorated, vreport = validate(decorated)
     if not vreport.ok:
         return massing, floor_plan, decorated, vreport
-    # Non-critical decorate / fitout warnings (empty DB / no cells) still return ok assembly.
-    return massing, floor_plan, decorated, _merge_reports(dreport, freport, vreport)
+    # Non-critical decorate / fitout / detail warnings still return ok assembly.
+    return massing, floor_plan, decorated, _merge_reports(
+        dreport, freport, kreport, vreport
+    )

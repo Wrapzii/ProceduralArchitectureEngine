@@ -50,6 +50,8 @@ _TOP_LEVEL_KEYS: FrozenSet[str] = frozenset(
         "wall_bands",
         "tower",
         "roof",
+        "shell",
+        "detail",
         "substitutions",
         # legacy flat alias accepted during load
         "roof_pitch",
@@ -61,10 +63,54 @@ _GEOMETRY_KEYS: FrozenSet[str] = frozenset(
 _WINDOW_KEYS: FrozenSet[str] = frozenset({"tag", "per_bay", "skip_ground"})
 _DOOR_KEYS: FrozenSet[str] = frozenset({"tag"})
 _MATERIALS_KEYS: FrozenSet[str] = frozenset({"wall", "roof", "trim"})
-_WALL_BANDS_KEYS: FrozenSet[str] = frozenset({"plinth_cm", "cornice_cm"})
+_WALL_BANDS_KEYS: FrozenSet[str] = frozenset({"plinth_cm", "cornice_cm", "string_cm"})
 _TOWER_KEYS: FrozenSet[str] = frozenset({"cap", "crown", "finial"})
 _ROOF_KEYS: FrozenSet[str] = frozenset(
-    {"pitch_min", "pitch_max", "steep_silhouette", "kind_default"}
+    {
+        "pitch_min",
+        "pitch_max",
+        "steep_silhouette",
+        "kind_default",
+        "eave_overhang_cm",
+    }
+)
+_SHELL_KEYS: FrozenSet[str] = frozenset(
+    {
+        "forecourt",
+        "doorcase",
+        "porch_posts",
+        "porch_roof",
+        "shop_platform",
+        "bargeboard",
+        "chimney_stub",
+        "buttress_corners",
+        "stoop",
+        "jetty",
+        "pilasters",
+        "coping",
+        # MP-WS-K2 architectural details
+        "window_sills",
+        "window_hoods",
+        "window_boxes",
+        "ground_planters",
+        "patio",
+        "balcony",
+    }
+)
+_DETAIL_KEYS: FrozenSet[str] = frozenset(
+    {
+        "opening_accent",
+        "density",
+        "mid_string",
+        "jettied_mid",
+        "verticals_every_bays",
+        "corners_only",
+        "coping",
+        "ridge_accent",
+        "weathering",
+        "roof_eave_trim",
+        "braces",
+    }
 )
 
 _SUPPORTED_ROOF_KIND_DEFAULTS: Dict[str, str] = {
@@ -120,6 +166,7 @@ class MaterialsHints:
 class WallBands:
     plinth_cm: float = FLOOR_T_CM
     cornice_cm: float = 20.0
+    string_cm: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -137,6 +184,56 @@ class RoofHints:
     pitch_max: Optional[float] = None
     steep_silhouette: bool = False
     kind_default: Optional[str] = None
+    eave_overhang_cm: Optional[float] = None
+
+
+@dataclass(frozen=True)
+class ShellHints:
+    """Style-shell kit entities (forecourt, doorcase, porch, bargeboard, …)."""
+
+    forecourt: bool = False
+    doorcase: str = "none"  # none | plain | arched | grand | gothic
+    porch_posts: bool = False  # deprecated — not placed (read as mystery rails)
+    bargeboard: bool = False
+    chimney_stub: bool = False
+    buttress_corners: bool = False
+    stoop: bool = False
+    #: Raised deck / engawa / shop platform projecting from the entrance bay.
+    shop_platform: bool = False
+    #: Canopy / porch roof / awning placed ABOVE the door opening (never on ground).
+    porch_roof: bool = False
+    jetty: bool = False
+    pilasters: bool = False
+    coping: bool = False
+    #: Projecting sill under window openings (mesh, sized to opening width).
+    window_sills: bool = False
+    #: Optional hood / head above windows (manor / civic / gothic).
+    window_hoods: bool = False
+    #: Sparse window-box planters under selected windows (not civic).
+    window_boxes: bool = False
+    #: Low ground planter boxes along clear façade bays.
+    ground_planters: bool = False
+    #: Raised patio / veranda at ground door (rustic / townhouse / japanese-like).
+    patio: bool = False
+    #: Functional upper balcony — fail-closed unless L1 door bay is valid.
+    balcony: bool = False
+
+
+@dataclass(frozen=True)
+class DetailHints:
+    """Optional Stage K detail overrides authored on the pack."""
+
+    opening_accent: Optional[str] = None
+    density: Optional[float] = None
+    mid_string: Optional[bool] = None
+    jettied_mid: Optional[bool] = None
+    verticals_every_bays: Optional[int] = None
+    corners_only: Optional[bool] = None
+    coping: Optional[bool] = None
+    ridge_accent: Optional[bool] = None
+    weathering: Optional[bool] = None
+    roof_eave_trim: Optional[bool] = None
+    braces: Optional[bool] = None
 
 
 @dataclass(frozen=True)
@@ -151,6 +248,8 @@ class StylePack:
     wall_bands: WallBands = field(default_factory=WallBands)
     tower: TowerHints = field(default_factory=TowerHints)
     roof: RoofHints = field(default_factory=RoofHints)
+    shell: ShellHints = field(default_factory=ShellHints)
+    detail: DetailHints = field(default_factory=DetailHints)
     substitutions: Dict[str, str] = field(default_factory=dict)
     extends: Optional[str] = None
 
@@ -168,6 +267,7 @@ class StylePack:
             "wall_bands": {
                 "plinth_cm": self.wall_bands.plinth_cm,
                 "cornice_cm": self.wall_bands.cornice_cm,
+                "string_cm": self.wall_bands.string_cm,
             },
             "tower": {
                 "cap": self.tower.cap,
@@ -180,6 +280,8 @@ class StylePack:
                 "trim": self.materials.trim,
             },
             "roof": asdict(self.roof),
+            "shell": asdict(self.shell),
+            "detail": asdict(self.detail),
             "substitutions": dict(self.substitutions),
             "geometry": asdict(self.geometry),
         }
@@ -212,6 +314,8 @@ def _rebuild_pack(pack: StylePack, *, style_id: Optional[str] = None, **changes:
         wall_bands=changes.get("wall_bands", pack.wall_bands),
         tower=changes.get("tower", pack.tower),
         roof=changes.get("roof", pack.roof),
+        shell=changes.get("shell", pack.shell),
+        detail=changes.get("detail", pack.detail),
         substitutions=changes.get("substitutions", pack.substitutions),
         extends=changes.get("extends", pack.extends),
     )
@@ -308,6 +412,30 @@ def _overlay_from_raw(base: StylePack, raw: Mapping[str, Any], *, style_id: str)
         if err:
             _raise_schema(err)
         pack = _rebuild_pack(pack, style_id=style_id, roof=roof)
+
+    if "shell" in raw:
+        shell, err = _parse_section(
+            raw.get("shell"),
+            ShellHints,
+            _SHELL_KEYS,
+            section="shell",
+            defaults=pack.shell,
+        )
+        if err:
+            _raise_schema(err)
+        pack = _rebuild_pack(pack, style_id=style_id, shell=shell)
+
+    if "detail" in raw:
+        detail, err = _parse_section(
+            raw.get("detail"),
+            DetailHints,
+            _DETAIL_KEYS,
+            section="detail",
+            defaults=pack.detail,
+        )
+        if err:
+            _raise_schema(err)
+        pack = _rebuild_pack(pack, style_id=style_id, detail=detail)
 
     if "substitutions" in raw:
         raw_subs = raw.get("substitutions")
@@ -586,6 +714,26 @@ def _parse_style_dict(
     if err:
         return None, err
 
+    shell, err = _parse_section(
+        data.get("shell"),
+        ShellHints,
+        _SHELL_KEYS,
+        section="shell",
+        defaults=ENGINE_DEFAULTS.shell,
+    )
+    if err:
+        return None, err
+
+    detail, err = _parse_section(
+        data.get("detail"),
+        DetailHints,
+        _DETAIL_KEYS,
+        section="detail",
+        defaults=ENGINE_DEFAULTS.detail,
+    )
+    if err:
+        return None, err
+
     substitutions: Dict[str, str] = {}
     raw_subs = data.get("substitutions")
     if raw_subs is not None:
@@ -610,6 +758,8 @@ def _parse_style_dict(
             wall_bands=wall_bands,
             tower=tower,
             roof=roof,
+            shell=shell,
+            detail=detail,
             substitutions=substitutions,
             extends=extends,
         ),
@@ -783,8 +933,13 @@ WINDOW_SHAPE_ALIASES: Dict[str, str] = {
     "lancet": "window_lancet",
     "gothic": "window_gothic",
     "mullioned": "window_mullioned",
+    "cross": "window_cross",
+    "window_cross": "window_cross",
+    "square_cross": "window_cross",
     "oculus": "window_oculus",
     "arrowslit": "window_arrowslit",
+    "bay_wide": "window_bay_wide",
+    "bay": "window_bay_wide",
     "window_square": "window_plain",
 }
 
@@ -804,6 +959,7 @@ _BUILTIN_SUBSTITUTIONS: Dict[str, str] = {
     "window_lancet": "wall_window_lancet",
     "window_gothic_traceried": "wall_window_gothic_traceried",
     "window_mullioned": "wall_window_mullioned",
+    "window_cross": "wall_window_cross",
     "window_round": "wall_window_round",
     "window_oculus": "wall_window_oculus",
     "window_clerestory": "wall_window_clerestory",
@@ -866,13 +1022,77 @@ def resolve_window_tag(
     return normalize_aperture_tag(str(win.get("tag") or "window_plain"), kind="window")
 
 
+def resolve_eave_overhang_cm(
+    style: StylePack | Mapping[str, Any] | None,
+    *,
+    default_cm: Optional[float] = None,
+) -> float:
+    """Pack ``roof.eave_overhang_cm`` or contract ``EAVE_OVERHANG_CM``."""
+    from pae.contract import EAVE_OVERHANG_CM
+
+    fallback = float(default_cm) if default_cm is not None else float(EAVE_OVERHANG_CM)
+    if isinstance(style, StylePack):
+        authored = style.roof.eave_overhang_cm
+        return float(authored) if authored is not None else fallback
+    if isinstance(style, Mapping):
+        roof = style.get("roof")
+        if isinstance(roof, Mapping) and roof.get("eave_overhang_cm") is not None:
+            return float(roof["eave_overhang_cm"])
+    return fallback
+
+
+def resolve_doorcase_asset(style: StylePack | Mapping[str, Any] | None) -> Optional[str]:
+    """Map shell.doorcase → kit piece id, or None when disabled."""
+    if isinstance(style, StylePack):
+        kind = (style.shell.doorcase or "none").strip().lower()
+    elif isinstance(style, Mapping):
+        shell = style.get("shell")
+        kind = ""
+        if isinstance(shell, Mapping):
+            kind = str(shell.get("doorcase") or "none").strip().lower()
+        if not kind or kind == "none":
+            # Infer from door tag when shell omitted.
+            door_tag = resolve_door_tag(style)
+            if "gothic" in door_tag:
+                kind = "gothic"
+            elif "double" in door_tag or "gate" in door_tag:
+                kind = "grand"
+            elif "arch" in door_tag:
+                kind = "arched"
+            else:
+                kind = "plain"
+    else:
+        return None
+    mapping = {
+        "plain": "doorcase_plain",
+        "arched": "doorcase_arched",
+        "grand": "doorcase_grand",
+        "gothic": "doorcase_gothic",
+        "none": None,
+    }
+    return mapping.get(kind)
+
+
 def resolve_window_piece_id(
     style: StylePack | Mapping[str, Any] | None,
     *,
     level_override: Optional[str] = None,
 ) -> str:
-    """Map resolved window tag → catalog wall piece id (S-007 / Stage H)."""
+    """Map resolved window tag → catalog wall piece id (S-007 / Stage H).
+
+    Manor-style ``per_bay >= 2`` upgrades mullioned/plain tags to bay-wide when the
+    pack did not already name a bay piece.
+    """
     tag = resolve_window_tag(style, level_override=level_override)
+    per_bay = 1
+    if isinstance(style, StylePack):
+        per_bay = int(style.window.per_bay)
+    elif isinstance(style, Mapping):
+        win = style.get("window")
+        if isinstance(win, Mapping) and win.get("per_bay") is not None:
+            per_bay = int(win["per_bay"])
+    if per_bay >= 2 and tag in ("window_mullioned", "window_plain", "window_simple"):
+        tag = "window_bay_wide"
     style_dict = style.to_legacy_dict() if isinstance(style, StylePack) else style
     return resolve_piece_id(
         style_dict if isinstance(style_dict, dict) else None,

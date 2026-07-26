@@ -1,8 +1,47 @@
 {
   "id": "townhouse",
-  "roof_pitch": 1.0,
-  "window": {"tag": "window_simple", "per_bay": 1, "skip_ground": false},
-  "wall_bands": {"plinth_cm": 30, "cornice_cm": 20},
+  "geometry": {
+    "roof_pitch": 1.05,
+    "storey_height_cm": 330
+  },
+  "roof": {
+    "kind_default": "pitched",
+    "eave_overhang_cm": 55
+  },
+  "window": {"tag": "window_cross", "per_bay": 1, "skip_ground": false},
+  "door": {"tag": "door_plain"},
+  "wall_bands": {"plinth_cm": 55, "cornice_cm": 32, "string_cm": 28},
   "tower": {"cap": "flat", "crown": false, "finial": false},
-  "materials": {"wall": "brick_red", "roof": "tile_terracotta", "trim": "stone_light"}
+  "shell": {
+    "forecourt": true,
+    "doorcase": "plain",
+    "porch_posts": false,
+    "porch_roof": true,
+    "shop_platform": true,
+    "bargeboard": false,
+    "chimney_stub": false,
+    "buttress_corners": false,
+    "stoop": true,
+    "jetty": false,
+    "pilasters": false,
+    "coping": false,
+    "window_sills": true,
+    "window_hoods": false,
+    "window_boxes": true,
+    "ground_planters": true,
+    "patio": true,
+    "balcony": false
+  },
+  "detail": {
+    "opening_accent": "sill_lintel",
+    "density": 0.65,
+    "mid_string": true,
+    "jettied_mid": false,
+    "verticals_every_bays": 1,
+    "corners_only": false,
+    "coping": false,
+    "ridge_accent": false,
+    "weathering": false
+  },
+  "materials": {"wall": "timber_plaster", "roof": "tile_grey", "trim": "timber_oak"}
 }

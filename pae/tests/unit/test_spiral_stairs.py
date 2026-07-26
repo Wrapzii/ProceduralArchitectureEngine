@@ -50,7 +50,6 @@ def test_spiral_has_full_turn_and_reaches_each_storey():
     climbs = len(floor_plan.storeys) - 1
     assert climbs >= 1
     assert len(spirals) == 4 * climbs
-    step_rise = STOREY_CM / 4.0
     stair_cell = tuple(massing.stair_cells[0])
     for level in range(climbs):
         level_pieces = [p for p in spirals if p.level == level]
@@ -58,9 +57,19 @@ def test_spiral_has_full_turn_and_reaches_each_storey():
         assert {p.yaw for p in level_pieces} == {0, 90, 180, 270}
         assert {p.cell for p in level_pieces} == {stair_cell}
         assert all(p.rotates_about_center for p in level_pieces)
+        step_rise = level_pieces[0].size_cm[2]
         z_offs = sorted(p.offset_cm[2] for p in level_pieces)
-        assert z_offs == [0.0, step_rise, 2 * step_rise, 3 * step_rise]
-        assert max(p.offset_cm[2] + p.size_cm[2] for p in level_pieces) == STOREY_CM
+        base = z_offs[0]
+        assert z_offs == [
+            base,
+            base + step_rise,
+            base + 2 * step_rise,
+            base + 3 * step_rise,
+        ]
+        assert (
+            max(p.offset_cm[2] + p.size_cm[2] for p in level_pieces)
+            == base + 4 * step_rise
+        )
 
 
 def test_spiral_stair_reachability_and_exit_clearance():

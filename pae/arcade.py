@@ -17,7 +17,15 @@ from typing import Dict, List, Optional, Sequence, Set, Tuple
 
 from pae.assembly_types import Assembly, FloorPlanLayer, SolidPlacement
 from pae.boundary import FACE_YAW, boundary_offset_cm
-from pae.contract import FLOOR_T_CM, MODULE_CM, STOREY_CM, storey_datum_z_cm
+from pae.contract import (
+    FLOOR_T_CM,
+    MODULE_CM,
+    STOREY_CM,
+    TOL_CM,
+    WALL_T_CM,
+    placement_world_aabb,
+    storey_datum_z_cm,
+)
 from pae.plan import CellRole
 from pae.primitives.catalog import catalog_by_id
 from pae.report import Failure, Report
@@ -279,7 +287,14 @@ def arcade(
     deck_desc = catalog.get(spec.deck_piece) or catalog.get("floor")
 
     court = _courtyard_from_plan(assembly)
-    placements = list(assembly.placements)
+    # Once an arcade owns the courtyard edge, generic ``wall_inner_*`` leaves
+    # are redundant freestanding skins in the gallery/court. Remove them on
+    # every level; arches, balustrades, and support piers own this boundary.
+    placements = [
+        p
+        for p in assembly.placements
+        if not p.piece_id.startswith("wall_inner_")
+    ]
     extra: List[SolidPlacement] = []
     failures: List[Failure] = []
     claimed = claimed_wall_arcade_faces(assembly)
@@ -383,6 +398,109 @@ def arcade(
                     )
                 )
 
+        # Upper gallery roof supports at corners and at most every two bays.
+        # A continuous balustrade is not a roof bearer.
+        support_desc = catalog.get("column_round")
+        if assembly.storeys > 1 and support_desc is not None:
+            support_seen: Set[Tuple[Cell, Face]] = set()
+            by_face: Dict[Face, List[Cell]] = {}
+            for cell, face in arch_seen:
+                by_face.setdefault(face, []).append(cell)
+            for face, cells in by_face.items():
+                axis = 0 if face in ("south", "north") else 1
+                ordered = sorted(cells, key=lambda cell: cell[axis])
+                for index, cell in enumerate(ordered):
+                    if index not in (0, len(ordered) - 1) and index % 2:
+                        continue
+                    key = (cell, face)
+                    if key in support_seen:
+                        continue
+                    support_seen.add(key)
+                    px = MODULE_CM if face == "east" else 0.0
+                    py = MODULE_CM if face == "north" else 0.0
+                    support_level = level + 1
+                    target_x = cell[0] * MODULE_CM + px
+                    target_y = cell[1] * MODULE_CM + py
+                    deck_tops: List[float] = []
+                    for deck in assembly.placements:
+                        if deck.kind != "floor" or deck.level != support_level:
+                            continue
+                        dmin, dmax = placement_world_aabb(
+                            deck.cell[0],
+                            deck.cell[1],
+                            deck.level,
+                            deck.yaw,
+                            deck.size_cm,
+                            deck.offset_cm,
+                            rotates_about_center=deck.rotates_about_center,
+                        )
+                        if (
+                            dmin[0] - TOL_CM <= target_x <= dmax[0] + TOL_CM
+                            and dmin[1] - TOL_CM <= target_y <= dmax[1] + TOL_CM
+                        ):
+                            deck_tops.append(dmax[2])
+                    base_z = max(deck_tops) if deck_tops else storey_datum_z_cm(
+                        support_level
+                    )
+                    soffits: List[float] = []
+                    for roof in assembly.placements:
+                        if roof.kind != "roof":
+                            continue
+                        rmin, rmax = placement_world_aabb(
+                            roof.cell[0],
+                            roof.cell[1],
+                            roof.level,
+                            roof.yaw,
+                            roof.size_cm,
+                            roof.offset_cm,
+                            rotates_about_center=roof.rotates_about_center,
+                        )
+                        if (
+                            rmin[0] - TOL_CM <= target_x <= rmax[0] + TOL_CM
+                            and rmin[1] - TOL_CM <= target_y <= rmax[1] + TOL_CM
+                            and rmin[2] >= base_z - TOL_CM
+                        ):
+                            soffits.append(rmin[2])
+                    soffit_z = min(soffits) if soffits else (
+                        base_z + STOREY_CM
+                    )
+                    support_height = max(
+                        STOREY_CM * 0.5, soffit_z - base_z
+                    )
+                    extra.append(
+                        SolidPlacement(
+                            piece_id=(
+                                f"gallery_support_{level + 1}_"
+                                f"{cell[0]}_{cell[1]}_{face}"
+                            ),
+                            asset_id=support_desc.id,
+                            kind="column",
+                            cell=cell,
+                            level=support_level,
+                            yaw=0,
+                            offset_cm=(
+                                px,
+                                py,
+                                base_z - storey_datum_z_cm(support_level),
+                            ),
+                            size_cm=(
+                                support_desc.size_cm[0],
+                                support_desc.size_cm[1],
+                                support_height,
+                            ),
+                            rotates_about_center=True,
+                            tags=frozenset(
+                                {
+                                    "arcade",
+                                    "arcade_gallery",
+                                    "gallery_support_pier",
+                                    f"face_{face}",
+                                    "structural",
+                                }
+                            ),
+                        )
+                    )
+
         # Solid corner pier where two arcade runs would double-claim.
         if spec.corner_pier and pier_desc is not None:
             for cell in sorted(corners_by_level.get(level, ())):
@@ -412,11 +530,30 @@ def arcade(
         storeys=assembly.storeys,
         aperture_policy=assembly.aperture_policy,
         room_specs=list(getattr(assembly, "room_specs", []) or []),
+        entrance_specs=list(getattr(assembly, "entrance_specs", []) or []),
         building_class=getattr(assembly, "building_class", "generic"),
         stair_kind=getattr(assembly, "stair_kind", "straight"),
         wide_stair_well_available=getattr(
             assembly, "wide_stair_well_available", False
         ),
+    )
+    # Once the courtyard is genuinely open, every upper gallery edge becomes a
+    # real fall hazard. Generate the same stone balustrade contract used by
+    # trim instead of relying on a later optional decoration pass.
+    from pae.trim import TrimOptions, _gallery_court_railings
+
+    merged.placements.extend(
+        _gallery_court_railings(
+            merged,
+            TrimOptions(
+                railings=True,
+                buttresses=False,
+                roofline=False,
+                colonnade=False,
+                parapets=False,
+                balustrade_piece="balustrade_stone",
+            ),
+        )
     )
     # Prefer arcade wall over any leftover plain coplanar skin.
     merged = repair_wall_face_stacks(merged)

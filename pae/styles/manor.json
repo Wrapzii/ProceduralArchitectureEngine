@@ -1,15 +1,47 @@
 {
   "id": "manor",
   "geometry": {
-    "roof_pitch": 1.1,
-    "storey_height_cm": 380
+    "roof_pitch": 1.25,
+    "storey_height_cm": 395
   },
   "roof": {
-    "kind_default": "pitched"
+    "kind_default": "pitched",
+    "eave_overhang_cm": 70
   },
-  "window": {"tag": "window_mullioned", "per_bay": 2, "skip_ground": false},
-  "door": {"tag": "door_plain"},
-  "wall_bands": {"plinth_cm": 50, "cornice_cm": 42},
+  "window": {"tag": "window_cross", "per_bay": 2, "skip_ground": false},
+  "door": {"tag": "door_double"},
+  "wall_bands": {"plinth_cm": 85, "cornice_cm": 72, "string_cm": 45},
   "tower": {"cap": "flat", "crown": true, "finial": false},
+  "shell": {
+    "forecourt": true,
+    "doorcase": "grand",
+    "porch_posts": false,
+    "porch_roof": true,
+    "shop_platform": true,
+    "bargeboard": true,
+    "chimney_stub": true,
+    "buttress_corners": false,
+    "stoop": true,
+    "jetty": false,
+    "pilasters": true,
+    "coping": true,
+    "window_sills": true,
+    "window_hoods": true,
+    "window_boxes": false,
+    "ground_planters": true,
+    "patio": false,
+    "balcony": true
+  },
+  "detail": {
+    "opening_accent": "frame",
+    "density": 0.88,
+    "mid_string": true,
+    "jettied_mid": false,
+    "verticals_every_bays": 1,
+    "corners_only": true,
+    "coping": false,
+    "ridge_accent": true,
+    "weathering": false
+  },
   "materials": {"wall": "limestone_cream", "roof": "tile_terracotta", "trim": "stone_light"}
 }

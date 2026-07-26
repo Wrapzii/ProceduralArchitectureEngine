@@ -107,7 +107,7 @@ Spawn table schema (`pae.spawn_table/2` — v1 `pae.spawn_table/1` still accepte
 | `source_manifest` | Relative path to the manifest JSON |
 | `row_count` | Number of `rows[]` |
 | `ism_group_count` | Number of `ism_groups[]` (unique `asset_id` batches) |
-| `rows[]` | One ISM instance: `asset_id`, `loc_cm` (3 floats, cm), `yaw` (int), `piece_id` |
+| `rows[]` | One ISM instance: `asset_id`, `loc_cm` (3 floats, cm), `yaw` (int), `piece_id`; optional `kind`, `material_slot`, `masks` (@MP-WS-UEMAT) |
 | `ism_groups[]` | ISM/HISM batches grouped by `asset_id` (see below) |
 
 Each `ism_groups[]` entry:
@@ -280,7 +280,8 @@ Pair with the spawn table: load `ASSET_MAP` from the bind file, then iterate
 | `origin_convention` | Always `"min_corner"` — `loc_cm` is the mesh min-corner world origin |
 | `contract` | Full contract block: `module_cm`, `storey_cm`, `wall_t_cm`, `floor_t_cm` |
 | `assets[]` | Unique meshes: `id`, `fbx` path, `lod` placeholder map `{"0","1","2"}` |
-| `placements[]` | One row per instance: `asset_id`, `piece_id`, `loc_cm`, `yaw`, `cell`, `level` |
+| `placements[]` | One row per instance: `asset_id`, `piece_id`, `loc_cm`, `yaw`, `cell`, `level`, plus `kind`, `material_slot`, `masks` (@MP-WS-UEMAT) |
+| `materials` | Optional `pae.materials/1` — slot map + mask channel contract + Nanite note |
 | `collision[]` | Per-asset collision **stubs** — bind UE presets / complex collision in editor |
 | `validation` | Export-time validator snapshot (`ok`, counts, `failures`, `checks`) |
 | `terrain_bind` | Optional `{mode, source}` when export followed `bind_to_terrain` |
@@ -348,6 +349,76 @@ collision lag produce buried cities.
 
 Those belong exclusively to PAE Python. UE is a dumb, fast instancing consumer.
 
+## Materials & Nanite (@MP-WS-UEMAT)
+
+PAE exports **real geometry** (kit meshes + Stage K band/reveal pieces) plus a
+consumable material contract. It does **not** bake albedo/normal textures or
+download photoreal MIs — assign brick/stone/slate materials in Unreal.
+
+### Kind → material slot
+
+Every `placements[]` / spawn row / `assets[]` / bind row carries `material_slot`.
+Resolution order: course tags (`course:plinth` → `MI_Plinth`, `course:cornice` →
+`MI_Cornice`) → asset-id prefixes (`wall_window*` → `MI_Window`, `wall_door*` →
+`MI_Door`, `band_*` → `MI_Trim`) → placement `kind` map:
+
+| Kind | Slot |
+|---|---|
+| wall | `MI_Wall` |
+| roof | `MI_Roof` |
+| floor | `MI_Floor` |
+| ground | `MI_Ground` |
+| stair | `MI_Stair` |
+| tower | `MI_Tower` |
+| door | `MI_Door` |
+| window | `MI_Window` |
+| band / trim | `MI_Trim` |
+| plinth | `MI_Plinth` |
+| cornice | `MI_Cornice` |
+| prop | `MI_Prop` |
+| light_anchor | `None` |
+
+Manifest also embeds top-level `materials` (`pae.materials/1`) with the same map
+plus Nanite guidance.
+
+### Wear / damp masks (Stage K → UE)
+
+Stage K tags (`wear:*`, `dampness:*`, `weather:*`, `orient:*`, `mat_var:LN`) are
+exported on each placement as `masks`:
+
+| Field | Meaning |
+|---|---|
+| `wear` | 0..1 (low/medium/high → 0.25/0.55/0.9) |
+| `dampness` | 0..1 (base/damp → 0.65/0.85) |
+| `height_band` | 0..1 from `mat_var:LN` / level |
+| `streak` | 0 or 1 (`weather:streak`) |
+| `orientation` | face string (`south`, …) when tagged |
+| `channels` | `{R,G,B,A}` = wear / dampness / height_band / streak |
+| `custom_data` | `[wear, dampness, height_band, streak]` for ISM PerInstanceCustomData |
+
+**Suggested UE binding** (also in `materials.mask_channels`):
+
+- Vertex Color **R/G/B/A** → wear / dampness / height_band / streak
+- Or ISM **CustomData0..3** → same order (`instances[].custom_data` on spawn
+  `ism_groups`)
+
+Drive MI parameters (wetness, dirt lerp, height tint) from these channels. The
+contract is metadata + float payloads — not baked texture maps.
+
+### Nanite
+
+- **Recommend Nanite on** for imported PAE static meshes (walls, roofs, bands,
+  towers). Geometric detail already exists as real kit pieces (plinth/cornice/
+  pilaster bands, aperture frames) — Nanite preserves that silhouette cheaply.
+- Surfacing (brick/stone normal-height, slate roughness) is an **in-engine MI**
+  job. Do not expect PAE to ship baked façade textures.
+- Light-anchor markers stay `None` / no mesh collision.
+
+Implementation: `pae/export/materials.py`; fields written by
+`pae/export/manifest.py` and passed through `tools/ue_spawn_table.py` /
+`tools/ue_asset_bind_table.py`. Style×seed visual proof:
+`tools/style_seed_matrix.py` → `Saved/exports/style_seed_matrix.json`.
+
 ## Not yet done in Unreal Editor (honest gaps)
 
 The filesystem pipeline above is **complete and tested** through
@@ -362,6 +433,7 @@ in-editor lane (M-I) and are **not** produced by these tools:
 | LOD1/LOD2 binding beyond `lod0` stub | Not automated |
 | Spawning `AInstancedStaticMeshActor` from delivery artifacts | Example pseudocode only |
 | Light anchor → UE light actor wiring | Manifest emits anchors; no spawner |
+| Applying `material_slot` / mask custom-data in editor | Contract shipped (@MP-WS-UEMAT); MI wiring is M-I |
 | PIE / gameplay validation | Not done |
 
 Use `{milestone}_delivery.json` as the handoff contract: when `ok` is true,

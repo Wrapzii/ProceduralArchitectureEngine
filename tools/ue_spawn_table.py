@@ -88,14 +88,23 @@ def manifest_to_spawn_rows(manifest: Mapping[str, Any]) -> List[JsonDict]:
         yaw = placement["yaw"]
         if int(yaw) != float(yaw):
             raise ValueError(f"{prefix} yaw must be an integer degree value")
-        rows.append(
-            {
-                "asset_id": asset_id,
-                "loc_cm": _normalize_loc_cm(placement["loc_cm"]),
-                "yaw": int(yaw),
-                "piece_id": piece_id,
-            }
-        )
+        row: JsonDict = {
+            "asset_id": asset_id,
+            "loc_cm": _normalize_loc_cm(placement["loc_cm"]),
+            "yaw": int(yaw),
+            "piece_id": piece_id,
+        }
+        # Optional UE material / mask contract (pae.manifest placements).
+        if "material_slot" in placement:
+            slot = placement["material_slot"]
+            if not isinstance(slot, str) or not slot:
+                raise ValueError(f"{prefix} material_slot must be a non-empty string")
+            row["material_slot"] = slot
+        if "kind" in placement and isinstance(placement["kind"], str):
+            row["kind"] = placement["kind"]
+        if "masks" in placement and isinstance(placement["masks"], Mapping):
+            row["masks"] = dict(placement["masks"])
+        rows.append(row)
     return rows
 
 

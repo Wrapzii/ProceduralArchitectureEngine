@@ -42,7 +42,16 @@ STEEP_PITCH_MIN = 1.6  # S-011 anime-fantasy silhouette
 # Building typology — drives default / allowed stair kinds (VAL_STAIR_TYPOLOGY).
 # Buttresses are structural trim, NEVER stairs (see STAIR_TYPOLOGY_FORBIDDEN_ASSETS).
 BUILDING_CLASSES = frozenset(
-    {"house", "cottage", "industrial", "academy", "castle", "tower", "generic"}
+    {
+        "house",
+        "cottage",
+        "industrial",
+        "academy",
+        "castle",
+        "tower",
+        "connector",
+        "generic",
+    }
 )
 # Compact dwelling stairs (1×1 / 2×1). ``stair_half`` is an asset, not a stair_kind.
 COMPACT_STAIR_ASSETS = frozenset({"stair_straight", "stair_half", "stair_landing"})
@@ -92,6 +101,11 @@ STAIR_TYPOLOGY_POLICY: Dict[str, Dict[str, Any]] = {
         "default": "spiral",
         "allowed": frozenset({"spiral"}),
         "notes": "Standalone / keep towers → spiral with newel (shell owned elsewhere)",
+    },
+    "connector": {
+        "default": "straight",
+        "allowed": frozenset({"straight"}),
+        "notes": "Open-ended covered links have no vertical circulation",
     },
     "generic": {
         "default": "straight",
@@ -294,6 +308,8 @@ class BuildingSpec:
     level_programs: Optional[
         Tuple[Dict[str, Tuple[Tuple[int, int, int, int], ...]], ...]
     ] = None
+    #: Optional transverse interior arch-rib cadence. None/0 disables ribs.
+    interior_arch_rib_every_bays: Optional[int] = None
 
 
 def building_wall_height_storeys(spec: BuildingSpec) -> float:
@@ -857,6 +873,7 @@ def load_spec(data: dict) -> Tuple[Optional[BuildingSpec], Report]:
                 "building_class",
                 "wall_height_storeys",
                 "level_programs",
+                "interior_arch_rib_every_bays",
             },
             "BuildingSpec",
         )
@@ -901,6 +918,11 @@ def load_spec(data: dict) -> Tuple[Optional[BuildingSpec], Report]:
             building_class=building_class,
             wall_height_storeys=wall_height_storeys,
             level_programs=_parse_level_programs(data.get("level_programs")),
+            interior_arch_rib_every_bays=(
+                None
+                if data.get("interior_arch_rib_every_bays") is None
+                else max(1, int(data["interior_arch_rib_every_bays"]))
+            ),
         )
     except (KeyError, TypeError, ValueError) as exc:
         failures.append(
@@ -2121,4 +2143,5 @@ def school_academy_dict(*, seed: int = 70) -> dict:
             }
             for level in (spec.level_programs or ())
         ],
+        "interior_arch_rib_every_bays": spec.interior_arch_rib_every_bays,
     }
