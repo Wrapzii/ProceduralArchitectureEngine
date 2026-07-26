@@ -219,6 +219,9 @@ def landing_cells_for_stair(st: SolidPlacement) -> List[Tuple[str, Cell, int, Ce
     Uses ``covered_cells`` of the stair (Rule 5.1). Pads follow **yaw ascent**,
     not geometric min/max alone — a yaw-270 flight exits toward south even when
     its covered cells extend north to the exterior wall.
+
+    One-bay (1×1) flights have a single covered cell — pads are still one bay
+    past that cell along the mesh climb axis so exit-into-wall checks can fire.
     """
     cells = sorted(covered_cells_safe(st))
     if not cells:
@@ -246,7 +249,17 @@ def landing_cells_for_stair(st: SolidPlacement) -> List[Tuple[str, Cell, int, Ce
     bdy = bottom_end[1] - top_end[1]
     # Unit step from top toward bottom along the run (then invert for top pad).
     if abs(bdx) + abs(bdy) == 0:
-        return []
+        # Single covered cell — derive pads from mesh climb (+local X, yawed).
+        mesh_ascent = _mesh_climb_delta_from_yaw(st.yaw)
+        if mesh_ascent is None:
+            return []
+        only = cells[0]
+        bottom_pad = (only[0] - mesh_ascent[0], only[1] - mesh_ascent[1])
+        top_pad = (only[0] + mesh_ascent[0], only[1] + mesh_ascent[1])
+        return [
+            ("bottom", bottom_pad, st.level, bottom_pad, only),
+            ("top", top_pad, st.level + 1, only, top_pad),
+        ]
     step = (
         0 if bdx == 0 else (1 if bdx > 0 else -1),
         0 if bdy == 0 else (1 if bdy > 0 else -1),
@@ -258,6 +271,20 @@ def landing_cells_for_stair(st: SolidPlacement) -> List[Tuple[str, Cell, int, Ce
         ("bottom", bottom_pad, st.level, bottom_pad, bottom_end),
         ("top", top_pad, st.level + 1, top_end, top_pad),
     ]
+
+
+def _mesh_climb_delta_from_yaw(yaw: Union[float, int]) -> Optional[Tuple[int, int]]:
+    """Grid step of catalog straight-stair climb (+local X) after *yaw*."""
+    y = _yaw_norm(yaw)
+    if y == 0:
+        return (1, 0)
+    if y == 90:
+        return (0, 1)
+    if y == 180:
+        return (-1, 0)
+    if y == 270:
+        return (0, -1)
+    return None
 
 
 def check_stair_landing_clearance(assembly: Assembly) -> List[Failure]:

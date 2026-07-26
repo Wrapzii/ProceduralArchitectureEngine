@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pae.addon.bpy_bridge import HAS_BPY, sync_assembly_preview
 from pae.addon.operator_utils import (
+    apply_facade_preset_to_props,
     apply_spec_to_props,
     maybe_clear_pae_scene,
     report_operator_exception,
@@ -211,7 +212,7 @@ if HAS_BPY:
     class PAE_OT_reload_pae(bpy.types.Operator):
         bl_idname = "pae.reload_pae"
         bl_label = "Reload PAE"
-        bl_description = "Drop cached pae.* modules so code edits take effect without restart"
+        bl_description = "Reload pae modules and re-register UI so new panels/props appear"
         bl_options = {"REGISTER"}
 
         def execute(self, context):
@@ -220,10 +221,314 @@ if HAS_BPY:
                 from pae.blender_build import reload_pae
 
                 dropped = reload_pae()
-                props.last_pipeline_message = f"Reloaded {len(dropped)} pae module(s)"
+                import importlib
+
+                import pae.addon as addon_pkg
+
+                importlib.reload(addon_pkg)
+                try:
+                    addon_pkg.unregister()
+                except Exception:
+                    pass
+                addon_pkg.register()
+                props = scene_props(context)
+                props.last_pipeline_message = (
+                    f"Reloaded {len(dropped)} module(s); UI re-registered"
+                )
                 props.last_error_message = ""
                 self.report({"INFO"}, props.last_pipeline_message)
                 return {"FINISHED"}
+            except (RuntimeError, ValueError) as exc:
+                report_operator_exception(self, props, exc)
+                return {"CANCELLED"}
+
+    class PAE_OT_load_facade_quick_preset(bpy.types.Operator):
+        bl_idname = "pae.load_facade_quick_preset"
+        bl_label = "Quick Test (10×8)"
+        bl_description = (
+            "10 m × 8 m, 2 storeys, wealth 2, freestanding — safe one-click defaults"
+        )
+        bl_options = {"REGISTER"}
+
+        def execute(self, context):
+            props = scene_props(context)
+            apply_facade_preset_to_props(props, "quick")
+            self.report({"INFO"}, "Facade quick-test preset loaded (10×8, 2/2)")
+            return {"FINISHED"}
+
+    class PAE_OT_load_facade_demo_preset(bpy.types.Operator):
+        bl_idname = "pae.load_facade_demo_preset"
+        bl_label = "User Demo (22×12)"
+        bl_description = (
+            "22 m × 12 m, 4 storeys, wealth 4, end_left — screenshot / showcase preset"
+        )
+        bl_options = {"REGISTER"}
+
+        def execute(self, context):
+            props = scene_props(context)
+            apply_facade_preset_to_props(props, "demo")
+            self.report({"INFO"}, "Facade user-demo preset loaded (22×12, 4/4)")
+            return {"FINISHED"}
+
+    class PAE_OT_build_facade_wealth_sweep(bpy.types.Operator):
+        bl_idname = "pae.build_facade_wealth_sweep"
+        bl_label = "Wealth Sweep (3 seeds)"
+        bl_description = (
+            "Build three shells side-by-side: wealth 1 / 3 / 5 with seeds "
+            "seed, seed+1, seed+2 for comparison"
+        )
+        bl_options = {"REGISTER"}
+
+        def execute(self, context):
+            props = scene_props(context)
+            try:
+                maybe_clear_pae_scene(props)
+                from pae.blender_build import (
+                    CM_TO_M,
+                    assembly_bounds_cm,
+                    clear_pae_scene,
+                    instance_facade_shell,
+                )
+                from pae.building_builder import build_building
+                from pae.facade_grammar import FacadeParams, export_params_json
+
+                base_seed = int(props.facade_seed)
+                coll_name = "PAE_WealthSweep"
+                clear_pae_scene()
+                import bpy
+
+                coll = bpy.data.collections.get(coll_name)
+                if coll is None:
+                    coll = bpy.data.collections.new(coll_name)
+                    bpy.context.scene.collection.children.link(coll)
+
+                offset_x_m = 0.0
+                gap_m = 4.0
+                for idx, wealth in enumerate((1, 3, 5)):
+                    params = FacadeParams(
+                        seed=base_seed + idx,
+                        archetype=str(props.facade_archetype or "georgian_merchant"),
+                        palette_family=str(props.facade_palette_family or "cream_render"),
+                        frontage_m=float(props.facade_frontage_m),
+                        depth_m=float(props.facade_depth_m),
+                        storeys=int(props.facade_storeys) or 3,
+                        wealth=wealth,
+                        weathering=float(props.facade_weathering),
+                        lit_windows=float(props.facade_lit_windows),
+                        row_context=str(props.facade_row_context),
+                    )
+                    _massing, _plan, assembly, report, _out = build_building(
+                        params, validate_assembly=False
+                    )
+                    if assembly is None or not assembly.placements:
+                        continue
+                    bb_min, bb_max = assembly_bounds_cm(assembly)
+                    width_m = (bb_max[0] - bb_min[0]) * CM_TO_M
+                    offset_m = (
+                        offset_x_m - bb_min[0] * CM_TO_M,
+                        -bb_min[1] * CM_TO_M,
+                        -bb_min[2] * CM_TO_M,
+                    )
+                    instance_facade_shell(
+                        assembly,
+                        label=f"wealth{wealth}_s{params.seed}",
+                        target_coll=coll,
+                        offset_m=offset_m,
+                    )
+                    offset_x_m += width_m + gap_m
+                    if idx == 0:
+                        props.facade_params_json = export_params_json(params)
+
+                props.last_pipeline_message = (
+                    f"Wealth sweep OK (3 buildings in {coll_name})"
+                )
+                props.last_error_message = ""
+                self.report({"INFO"}, props.last_pipeline_message)
+                return {"FINISHED"}
+            except (RuntimeError, ValueError) as exc:
+                report_operator_exception(self, props, exc)
+                return {"CANCELLED"}
+
+    class PAE_OT_copy_facade_params_json(bpy.types.Operator):
+        bl_idname = "pae.copy_facade_params_json"
+        bl_label = "Copy Parameters JSON"
+        bl_description = "Copy Procedural Building slider params to the clipboard"
+        bl_options = {"REGISTER"}
+
+        def execute(self, context):
+            props = scene_props(context)
+            try:
+                from pae.facade_grammar import FacadeParams, export_params_json
+
+                params = FacadeParams(
+                    seed=int(props.facade_seed),
+                    archetype=str(props.facade_archetype),
+                    palette_family=str(props.facade_palette_family),
+                    frontage_m=float(props.facade_frontage_m),
+                    depth_m=float(props.facade_depth_m),
+                    storeys=int(props.facade_storeys),
+                    wealth=int(props.facade_wealth),
+                    weathering=float(props.facade_weathering),
+                    lit_windows=float(props.facade_lit_windows),
+                    row_context=str(props.facade_row_context),
+                )
+                text = export_params_json(params)
+                props.facade_params_json = text
+                context.window_manager.clipboard = text
+                props.last_pipeline_message = "Copied facade params JSON"
+                self.report({"INFO"}, "Parameters JSON copied")
+                return {"FINISHED"}
+            except (RuntimeError, ValueError, AttributeError) as exc:
+                report_operator_exception(self, props, exc)
+                return {"CANCELLED"}
+
+    class PAE_OT_generate_facade(bpy.types.Operator):
+        bl_idname = "pae.generate_facade"
+        bl_label = "Generate Building"
+        bl_description = (
+            "Build from Procedural Building sliders only (shell mode). "
+            "Ignores Structure panel stair/style/seed."
+        )
+        bl_options = {"REGISTER"}
+
+        def execute(self, context):
+            props = scene_props(context)
+            try:
+                maybe_clear_pae_scene(props)
+                from pae.blender_build import (
+                    CM_TO_M,
+                    assembly_bounds_cm,
+                    clear_pae_scene,
+                    instance_facade_shell,
+                )
+                from pae.building_builder import build_building
+                from pae.facade_grammar import FacadeParams, export_params_json
+
+                params = FacadeParams(
+                    seed=int(props.facade_seed),
+                    archetype=str(props.facade_archetype or "georgian_merchant"),
+                    palette_family=str(props.facade_palette_family or "cream_render"),
+                    frontage_m=float(props.facade_frontage_m),
+                    depth_m=float(props.facade_depth_m),
+                    storeys=int(props.facade_storeys),
+                    wealth=int(props.facade_wealth),
+                    weathering=float(props.facade_weathering),
+                    lit_windows=float(props.facade_lit_windows),
+                    row_context=str(props.facade_row_context),
+                )
+                props.facade_params_json = export_params_json(params)
+                _massing, _plan, assembly, report, _out = build_building(
+                    params, validate_assembly=False
+                )
+                if assembly is not None and assembly.placements:
+                    import bpy
+
+                    coll_name = "PAE_GeorgianTownhouse"
+                    clear_pae_scene()
+                    coll = bpy.data.collections.get(coll_name)
+                    if coll is None:
+                        coll = bpy.data.collections.new(coll_name)
+                        bpy.context.scene.collection.children.link(coll)
+                    bb_min, _bb_max = assembly_bounds_cm(assembly)
+                    offset_m = (
+                        -bb_min[0] * CM_TO_M,
+                        -bb_min[1] * CM_TO_M,
+                        -bb_min[2] * CM_TO_M,
+                    )
+                    instance_facade_shell(
+                        assembly,
+                        label="facade",
+                        target_coll=coll,
+                        offset_m=offset_m,
+                    )
+                    # Shell is fully instanced above — skip sync_assembly_preview
+                    # (it would duplicate floor_hole / partition cubes as grey slabs).
+                store_validation_report(props, report)
+                n = len(assembly.placements) if assembly else 0
+                ok, _msg = report_validation_result(
+                    self, props, report, prefix="Facade"
+                )
+                props.last_pipeline_message = (
+                    f"Procedural Building OK ({n} placements)"
+                    if ok
+                    else f"Procedural Building — {len(report.critical)} critical"
+                )
+                return {"FINISHED"} if ok else {"CANCELLED"}
+            except (RuntimeError, ValueError) as exc:
+                report_operator_exception(self, props, exc)
+                return {"CANCELLED"}
+
+    class PAE_OT_generate_street_row(bpy.types.Operator):
+        bl_idname = "pae.generate_street_row"
+        bl_label = "Generate Street Row (5)"
+        bl_description = (
+            "Build five Georgian townhouses along +X with party walls "
+            "(end_left / mid / end_right row contexts)"
+        )
+        bl_options = {"REGISTER"}
+
+        count: bpy.props.IntProperty(  # type: ignore[name-defined]
+            name="Count",
+            default=5,
+            min=1,
+            max=12,
+        )
+
+        def execute(self, context):
+            props = scene_props(context)
+            try:
+                maybe_clear_pae_scene(props)
+                from pae.blender_build import (
+                    CM_TO_M,
+                    assembly_bounds_cm,
+                    clear_pae_scene,
+                    instance_facade_shell,
+                )
+                from pae.street_row import build_street_row
+
+                import bpy
+
+                assembly, report, stats = build_street_row(
+                    self.count,
+                    frontage_m=float(props.facade_frontage_m),
+                    depth_m=float(props.facade_depth_m),
+                    storeys=int(props.facade_storeys),
+                    wealth=int(props.facade_wealth),
+                    base_seed=int(props.facade_seed),
+                    archetype=str(props.facade_archetype or "georgian_merchant"),
+                    validate_assembly=False,
+                )
+                if assembly is not None and assembly.placements:
+                    coll_name = "PAE_StreetRow"
+                    clear_pae_scene()
+                    coll = bpy.data.collections.get(coll_name)
+                    if coll is None:
+                        coll = bpy.data.collections.new(coll_name)
+                        bpy.context.scene.collection.children.link(coll)
+                    bb_min, _bb_max = assembly_bounds_cm(assembly)
+                    offset_m = (
+                        -bb_min[0] * CM_TO_M,
+                        -bb_min[1] * CM_TO_M,
+                        -bb_min[2] * CM_TO_M,
+                    )
+                    instance_facade_shell(
+                        assembly,
+                        label="street_row",
+                        target_coll=coll,
+                        offset_m=offset_m,
+                    )
+                store_validation_report(props, report)
+                n = len(assembly.placements) if assembly else 0
+                ok, _msg = report_validation_result(
+                    self, props, report, prefix="StreetRow"
+                )
+                ctxs = [b["row_context"] for b in stats.get("buildings", [])]
+                props.last_pipeline_message = (
+                    f"Street row OK ({self.count} units, {n} placements, {ctxs})"
+                    if ok
+                    else f"Street row — {len(report.critical)} critical"
+                )
+                return {"FINISHED"} if ok else {"CANCELLED"}
             except (RuntimeError, ValueError) as exc:
                 report_operator_exception(self, props, exc)
                 return {"CANCELLED"}
@@ -238,6 +543,12 @@ if HAS_BPY:
         PAE_OT_build_school,
         PAE_OT_build_gallery,
         PAE_OT_reload_pae,
+        PAE_OT_load_facade_quick_preset,
+        PAE_OT_load_facade_demo_preset,
+        PAE_OT_build_facade_wealth_sweep,
+        PAE_OT_copy_facade_params_json,
+        PAE_OT_generate_facade,
+        PAE_OT_generate_street_row,
     )
 else:
     classes = tuple()

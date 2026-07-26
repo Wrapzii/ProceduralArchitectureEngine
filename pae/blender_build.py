@@ -128,9 +128,22 @@ ASSET_MATERIAL_COLORS: Dict[str, Tuple[float, float, float, float]] = {
     "stair_spiral_quarter": (0.78, 0.52, 0.18, 1.0),  # copper spiral
     "spiral_newel": (0.55, 0.48, 0.40, 1.0),  # stone newel pillar
     "floor_hole": (0.12, 0.12, 0.18, 1.0),  # void rim
+    "shell_wall_solid": (0.92, 0.88, 0.78, 1.0),  # cream render exterior
+    "shell_wall_interior": (0.86, 0.84, 0.80, 1.0),  # plaster interior
+    "shell_floor_slab": (0.62, 0.52, 0.40, 1.0),  # floor boards
+    "shell_window_frame": (0.12, 0.12, 0.14, 1.0),  # dark sash sticks
+    "shell_window_glass": (0.62, 0.74, 0.84, 0.28),  # pale glazing — see-through in Workbench
+    "shell_window_muntin": (0.10, 0.10, 0.12, 1.0),  # darker muntin cross
+    "shell_stair_rail": (0.42, 0.36, 0.30, 1.0),  # dark wood handrail
+    "shell_door": (0.18, 0.12, 0.10, 1.0),  # dark Georgian door panel
+    "shell_chimney_stub": (0.55, 0.50, 0.46, 1.0),  # brick chimney stack
+    "shell_roof_slab": (0.26, 0.32, 0.44, 1.0),  # dark blue-grey slate
+    "shell_roof_slope": (0.26, 0.32, 0.44, 1.0),  # dark blue-grey slate
+    "shell_gable_end": (0.26, 0.32, 0.44, 1.0),  # dark blue-grey slate
 }
 _TINTED_ASSET_PREFIXES = ("roof_", "tower_", "stair_", "spire_", "dormer_")
 _TINTED_ASSET_EXACT = frozenset(ASSET_MATERIAL_COLORS.keys())
+_TRANSPARENT_ASSET_IDS = frozenset({"shell_window_glass"})
 
 # Workbench PNGs read ``scene.display.shading`` + material viewport color — not Cycles lights.
 WORKBENCH_SCREENSHOT_VIEW_TRANSFORM = "Standard"
@@ -185,16 +198,27 @@ def configure_workbench_screenshot_scene(scene: Any) -> None:
             shading.type = "SOLID"
         shading.light = "STUDIO"
         shading.color_type = "MATERIAL"
+        if hasattr(shading, "show_transparent_back"):
+            shading.show_transparent_back = True
 
 
 def apply_material_base_color(mat: Any, rgba: Tuple[float, float, float, float]) -> None:
     """Set Principled Base Color and viewport diffuse — Workbench MATERIAL mode uses both."""
     mat.diffuse_color = rgba
+    alpha = float(rgba[3]) if len(rgba) > 3 else 1.0
+    if alpha < 0.999:
+        mat.blend_method = "BLEND"
+        if hasattr(mat, "use_backface_culling"):
+            mat.use_backface_culling = False
     if getattr(mat, "use_nodes", False) and mat.node_tree is not None:
         bsdf = mat.node_tree.nodes.get("Principled BSDF")
         if bsdf is not None:
             bsdf.inputs["Base Color"].default_value = rgba
             bsdf.inputs["Roughness"].default_value = 0.7
+            if "Alpha" in bsdf.inputs:
+                bsdf.inputs["Alpha"].default_value = alpha
+            if alpha < 0.999 and "Transmission Weight" in bsdf.inputs:
+                bsdf.inputs["Transmission Weight"].default_value = 0.35
 
 
 def reload_pae() -> List[str]:
@@ -1048,6 +1072,24 @@ def is_spanning_floor_deck(p) -> bool:
     )
 
 
+def needs_stair_void_punch(p) -> bool:
+    """True when this floor must be meshed with ``floor_hole`` voids cut out.
+
+    Shell assemblies tag spanning decks with ``facade_shell``, which used to send
+    them through the solid shell-box path and left stairs buried under a slab.
+    """
+    if is_spanning_floor_deck(p):
+        return True
+    tags = getattr(p, "tags", frozenset()) or frozenset()
+    if getattr(p, "kind", None) != "floor":
+        return False
+    if "spanning_floor" not in tags:
+        return False
+    from pae.contract import MODULE_CM
+
+    return float(p.size_cm[0]) > MODULE_CM + 0.5 and float(p.size_cm[1]) > MODULE_CM + 0.5
+
+
 def spanning_floor_hole_rects_cm(deck, hole_placements, *, peer_decks=()) -> List[Tuple[float, float, float, float]]:
     """Local hole rectangles for VOID ``floor_hole`` placements on a spanning deck.
 
@@ -1250,6 +1292,192 @@ def _mesh_for_asset(
     return obj
 
 
+def _mesh_for_shell_box(p, *, cache: Dict[str, Any]) -> Any:
+    """Prototype mesh for ``shell_*`` placements — sized box, no catalog stretch."""
+    from pae.primitives import bpy_util
+
+    bpy_util.require_bpy()
+    key = f"shell_box::{p.piece_id}::{tuple(p.size_cm)}"
+    if key in cache:
+        return cache[key]
+    proto_name = f"PAE_Proto_{p.piece_id}"
+    obj = bpy_util.box_mesh(proto_name, tuple(p.size_cm), origin_at_min_corner=True)
+    obj.hide_set(True)
+    obj.hide_render = True
+    cache[key] = obj
+    return obj
+
+
+def _shell_roof_top_fn(asset_id: str, size_cm, tags: frozenset):
+    """Height field for shell pitched roof wedges (single-slope or gable prism)."""
+    sx, sy, sz = (float(v) for v in size_cm)
+    if asset_id == "shell_roof_slope":
+        if "slope_south" in tags:
+            return lambda x, y: sz * min(1.0, max(0.0, y / sy)) if sy > 0 else 0.0
+        if "slope_north" in tags:
+            return lambda x, y: sz * min(1.0, max(0.0, 1.0 - y / sy)) if sy > 0 else 0.0
+        if "slope_west" in tags:
+            return lambda x, y: sz * min(1.0, max(0.0, x / sx)) if sx > 0 else 0.0
+        if "slope_east" in tags:
+            return lambda x, y: sz * min(1.0, max(0.0, 1.0 - x / sx)) if sx > 0 else 0.0
+    if asset_id == "shell_gable_end":
+        if "gable_west" in tags or "gable_east" in tags:
+            return (
+                lambda x, y: sz * max(0.0, 1.0 - abs(2.0 * y / sy - 1.0))
+                if sy > 0
+                else 0.0
+            )
+        return (
+            lambda x, y: sz * max(0.0, 1.0 - abs(2.0 * x / sx - 1.0))
+            if sx > 0
+            else 0.0
+        )
+    return lambda x, y: sz
+
+
+def _shell_wedge_verts_faces(size_cm, top_fn):
+    """Single rectangular panel with sloped top (no voids)."""
+    sx, sy, _ = (float(v) for v in size_cm)
+    z00, z10 = top_fn(0.0, 0.0), top_fn(sx, 0.0)
+    z11, z01 = top_fn(sx, sy), top_fn(0.0, sy)
+    verts = [
+        (0.0, 0.0, 0.0),
+        (sx, 0.0, 0.0),
+        (sx, sy, 0.0),
+        (0.0, sy, 0.0),
+        (0.0, 0.0, z00),
+        (sx, 0.0, z10),
+        (sx, sy, z11),
+        (0.0, sy, z01),
+    ]
+    faces = [
+        (0, 3, 2, 1),
+        (4, 5, 6, 7),
+        (0, 1, 5, 4),
+        (1, 2, 6, 5),
+        (2, 3, 7, 6),
+        (3, 0, 4, 7),
+    ]
+    return verts, faces
+
+
+def _mesh_for_shell_roof(p, *, cache: Dict[str, Any]) -> Any:
+    """Wedge / gable prism for ``shell_roof_slope`` and ``shell_gable_end``."""
+    from pae.primitives import bpy_util
+
+    bpy_util.require_bpy()
+    tags = getattr(p, "tags", frozenset()) or frozenset()
+    key = f"shell_roof::{p.asset_id}::{p.piece_id}::{tuple(p.size_cm)}::{sorted(tags)}"
+    if key in cache:
+        return cache[key]
+    top_fn = _shell_roof_top_fn(p.asset_id, p.size_cm, tags)
+    verts, faces = _shell_wedge_verts_faces(p.size_cm, top_fn)
+    proto_name = f"PAE_Proto_{p.piece_id}"
+    obj = bpy_util.mesh_from_verts_faces(proto_name, verts, faces)
+    obj.hide_set(True)
+    obj.hide_render = True
+    cache[key] = obj
+    return obj
+
+
+def _mesh_for_shell_placement(p, *, cache: Dict[str, Any]) -> Any:
+    """Route shell placements to box, punched wall, or pitched roof wedge."""
+    aid = getattr(p, "asset_id", "") or ""
+    if aid in ("shell_roof_slope", "shell_gable_end"):
+        return _mesh_for_shell_roof(p, cache=cache)
+    return _mesh_for_shell_box(p, cache=cache)
+
+
+def _shell_opening_cutters_by_face_level(assembly) -> Dict[Tuple[str, int], list]:
+    """Index declarative opening cutters for glazed shell wall panels."""
+    out: Dict[Tuple[str, int], list] = {}
+    for p in assembly.placements:
+        if getattr(p, "asset_id", None) != "shell_opening_cutter":
+            continue
+        face = next((t[5:] for t in p.tags if t.startswith("face_")), None)
+        if face is None:
+            continue
+        out.setdefault((face, int(p.level)), []).append(p)
+    return out
+
+
+def _mesh_for_shell_wall_punched(
+    wall_p,
+    cutters: Sequence[Any],
+    *,
+    cache: Dict[str, Any],
+) -> Any:
+    """One cream wall mesh per face/storey — boolean cut, panelize on failure."""
+    from pae.facade_shell import _face_offset_extra, shell_cutter_hole_yz_cm
+    from pae.primitives import bpy_util
+    from pae.primitives.walls import wall_solid_with_yz_holes_verts_faces
+
+    bpy_util.require_bpy()
+    key = f"shell_punch::{wall_p.piece_id}::{len(cutters)}"
+    if key in cache:
+        return cache[key]
+
+    wx, wy, wz = (float(v) for v in wall_p.size_cm)
+    proto_name = f"PAE_Proto_{wall_p.piece_id}"
+    holes = [
+        (y0, z0, y1, z1)
+        for y0, y1, z0, z1 in (
+            shell_cutter_hole_yz_cm(wall_p, cut) for cut in cutters
+        )
+    ]
+
+    obj = None
+    if cutters:
+        try:
+            core = bpy_util.box_mesh(
+                proto_name, (wx, wy, wz), origin_at_min_corner=True
+            )
+            face = next(t[5:] for t in wall_p.tags if t.startswith("face_"))
+            for idx, cut in enumerate(cutters):
+                cut_extra = _face_offset_extra(
+                    cut.offset_cm,
+                    face,
+                    cut.yaw,
+                    cut.size_cm,
+                    panel_size_cm=wall_p.size_cm,
+                )
+                cutter = bpy_util.box_mesh(
+                    f"{proto_name}_cut_{idx}",
+                    tuple(cut.size_cm),
+                    origin_at_min_corner=True,
+                    location=cut_extra,
+                )
+                bpy_util.apply_boolean_difference(core, cutter, solver="EXACT")
+            obj = core
+        except Exception:
+            obj = None
+
+    if obj is None:
+        if holes:
+            verts, faces = wall_solid_with_yz_holes_verts_faces(wx, wy, wz, holes)
+            obj = bpy_util.mesh_from_verts_faces(proto_name, verts, faces)
+        else:
+            obj = bpy_util.box_mesh(proto_name, (wx, wy, wz), origin_at_min_corner=True)
+
+    obj.hide_set(True)
+    obj.hide_render = True
+    cache[key] = obj
+    return obj
+
+
+def instance_facade_shell(
+    assembly,
+    *,
+    label: str = "facade",
+    target_coll=None,
+    offset_m: Tuple[float, float, float] = (0.0, 0.0, 0.0),
+) -> int:
+    """Instance a continuous shell assembly (alias for :func:`instance_assembly`)."""
+    return instance_assembly(
+        assembly, label=label, target_coll=target_coll, offset_m=offset_m
+    )
+
+
 def instance_assembly(
     assembly,
     *,
@@ -1285,33 +1513,36 @@ def instance_assembly(
         dp
         for dp in assembly.placements
         if getattr(dp, "kind", None) == "floor"
-        and getattr(dp, "asset_id", None) == "floor"
+        and (
+            getattr(dp, "asset_id", None) == "floor"
+            or "spanning_floor" in (getattr(dp, "tags", frozenset()) or frozenset())
+        )
+        and float(dp.size_cm[0]) > 1.0
+        and float(dp.size_cm[1]) > 1.0
     ]
     roof_hole_placements = [
         hp
         for hp in assembly.placements
         if getattr(hp, "asset_id", None) == "roof_hole"
     ]
+    shell_cutters = _shell_opening_cutters_by_face_level(assembly)
     for p in assembly.placements:
         # ``floor_hole`` is a declarative void/cutter used above to punch the
         # surrounding floor deck. Instancing its legacy blue frame puts solid
         # geometry back into the opening and blocks the stair.
         # Drum-window wall leaves are likewise logical aperture proxies; the
         # windowed curved arc owns the visible geometry.
-        if p.asset_id in ("floor_hole", "roof_hole") or (
+        if p.asset_id in ("floor_hole", "roof_hole", "shell_opening_cutter") or (
             "non_rendering_aperture_proxy" in p.tags
         ):
             continue
-        notched_roof = (
-            _mesh_for_notched_roof(p, roof_hole_placements, cache=cache)
-            if getattr(p, "kind", None) == "roof" and roof_hole_placements
-            else None
-        )
-        if notched_roof is not None:
-            proto = notched_roof
-            sx = sy = sz = 1.0
-        elif is_spanning_floor_deck(p):
-            # Full-size mesh with VOID openings already cut — uniform cm→m only.
+        from pae.facade_shell import is_shell_placement
+
+        # Real stair meshes + floor VOIDs before any shell-box shortcut.
+        if getattr(p, "kind", None) == "stair":
+            proto = _mesh_for_asset(p.asset_id, tuple(p.size_cm), cache=cache)
+            sx, sy, sz = placement_instance_scale_cm(p)
+        elif needs_stair_void_punch(p):
             peers = [
                 d
                 for d in all_floor_decks
@@ -1321,9 +1552,44 @@ def instance_assembly(
                 p, hole_placements, peer_decks=peers, cache=cache
             )
             sx = sy = sz = 1.0
+        elif is_shell_placement(p):
+            if "boolean_parent" in p.tags:
+                face = next(
+                    (t[5:] for t in p.tags if t.startswith("face_")), None
+                )
+                cutters = (
+                    shell_cutters.get((face, int(p.level)), [])
+                    if face is not None
+                    else []
+                )
+                proto = _mesh_for_shell_wall_punched(
+                    p, cutters, cache=cache
+                )
+            else:
+                proto = _mesh_for_shell_placement(p, cache=cache)
+            sx = sy = sz = 1.0
         else:
-            proto = _mesh_for_asset(p.asset_id, tuple(p.size_cm), cache=cache)
-            sx, sy, sz = placement_instance_scale_cm(p)
+            notched_roof = (
+                _mesh_for_notched_roof(p, roof_hole_placements, cache=cache)
+                if getattr(p, "kind", None) == "roof" and roof_hole_placements
+                else None
+            )
+            if notched_roof is not None:
+                proto = notched_roof
+                sx = sy = sz = 1.0
+            elif is_spanning_floor_deck(p):
+                peers = [
+                    d
+                    for d in all_floor_decks
+                    if d.level == p.level and d.piece_id != p.piece_id
+                ]
+                proto = _mesh_for_spanning_floor_deck(
+                    p, hole_placements, peer_decks=peers, cache=cache
+                )
+                sx = sy = sz = 1.0
+            else:
+                proto = _mesh_for_asset(p.asset_id, tuple(p.size_cm), cache=cache)
+                sx, sy, sz = placement_instance_scale_cm(p)
         loc_cm = placement_loc_cm(p)
         loc_m = (
             loc_cm[0] * CM_TO_M + ox,

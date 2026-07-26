@@ -115,6 +115,34 @@ if HAS_BPY:
         for key, value in ui_values_from_spec(spec).items():
             setattr(props, key, value)
 
+    def apply_facade_preset_to_props(props, preset: str) -> None:
+        """Load a documented facade slider preset into the Procedural Building panel."""
+        presets = {
+            "quick": {
+                "facade_seed": 1812,
+                "facade_archetype": "georgian_merchant",
+                "facade_frontage_m": 10.0,
+                "facade_depth_m": 8.0,
+                "facade_storeys": 2,
+                "facade_wealth": 2,
+                "facade_row_context": "freestanding",
+            },
+            "demo": {
+                "facade_seed": 1812,
+                "facade_archetype": "georgian_merchant",
+                "facade_frontage_m": 22.0,
+                "facade_depth_m": 12.0,
+                "facade_storeys": 4,
+                "facade_wealth": 4,
+                "facade_row_context": "end_left",
+            },
+        }
+        values = presets.get(preset)
+        if values is None:
+            raise ValueError(f"unknown facade preset {preset!r}")
+        for key, value in values.items():
+            setattr(props, key, value)
+
     def report_operator_exception(operator, props, exc: BaseException) -> None:
         """Surface RuntimeError / critical failures in the UI status line."""
         msg = str(exc).strip() or exc.__class__.__name__

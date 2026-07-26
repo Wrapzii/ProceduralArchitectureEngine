@@ -844,3 +844,5 @@ Gates: real_meshes=yes pieces=36 fbx=36 board_png=yes images_only=no ram_safe=ye
 Before: board/close-ups flat gray (wall ~0.72 on bg ~0.55, weak EEVEE sun, ortho). After: dark world bg (0.18), high-contrast slot palette (cream wall / terracotta roof / cyan glass / dark trim), 3/4 PERSP camera, key+fill+rim lights, EEVEE GTAO, 1.2m board gaps, close-up repack at origin for Walls/Openings/Floors_Stairs/Roofs.
 Outputs: Saved/Screenshots/modular_kit_v1_board.png (1280, std=0.207), modular_kit_v1_walls.png, modular_kit_v1_openings.png, modular_kit_v1_floors_stairs.png, modular_kit_v1_roofs.png (640). Visual QA pass on all five. No commit.
 Gates: visual_qa=pass board_readable=yes openings_ok=yes
+
+2026-07-26 - >>> DONE @SHELL_GRAMMAR_SWARM - Continuous facade shell default (`pae.facade_shell`); grammar-cut door/window openings (no modular `wall_window_*` kits on exterior); opening punch + swarm docs (`Docs/FACADE_GRAMMAR.md`); addon 0.2.1; reload PAE before Generate after pull.

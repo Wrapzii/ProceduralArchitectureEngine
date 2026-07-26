@@ -909,6 +909,21 @@ def apply_style_shell(
     """Remap apertures + attach style-shell entities. Idempotent via tag."""
     if not enabled:
         return assembly, Report.from_failures([])
+    from pae.facade_shell import is_facade_shell_assembly
+
+    if is_facade_shell_assembly(assembly):
+        return assembly, Report.from_failures(
+            [
+                Failure(
+                    check="style_apply_shell_skip",
+                    message=(
+                        "facade_shell assembly — style_apply / K2 dress skipped "
+                        "(use Procedural Building → Generate Building)"
+                    ),
+                    critical=False,
+                )
+            ]
+        )
     if any(STYLE_APPLY_TAG in p.tags for p in assembly.placements):
         return assembly, Report.from_failures(
             [

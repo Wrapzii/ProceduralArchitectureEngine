@@ -15,11 +15,19 @@ if HAS_BPY:
         bl_space_type = "VIEW_3D"
         bl_region_type = "UI"
         bl_category = "PAE"
-        bl_order = 0
+        bl_options = {"DEFAULT_CLOSED"}
+        bl_order = 1
 
         def draw(self, context):
             props = context.scene.pae
             layout = self.layout
+
+            warn = layout.box()
+            warn.alert = True
+            warn.label(text="Legacy modular — NOT Procedural Building", icon="ERROR")
+            warn.label(text="Use Procedural Building panel above.")
+            warn.label(text="Structure stair/style/seed are ignored there.")
+
             layout.prop(props, "building_name", text="Name")
             layout.prop(props, "style")
             layout.prop(props, "seed")
@@ -39,7 +47,11 @@ if HAS_BPY:
             row.operator("pae.export_structure_yaml", icon="EXPORT")
             row = layout.row(align=True)
             row.operator("pae.load_gatehouse_preset", icon="PRESET")
-            row.operator("pae.generate_from_structure", icon="MOD_BUILD")
+            row.operator(
+                "pae.generate_from_structure",
+                text="Generate Structure (Legacy)",
+                icon="MOD_BUILD",
+            )
             layout.operator("pae.run_validate", icon="CHECKMARK")
 
     class PAE_PT_levels(bpy.types.Panel):
@@ -48,7 +60,8 @@ if HAS_BPY:
         bl_space_type = "VIEW_3D"
         bl_region_type = "UI"
         bl_category = "PAE"
-        bl_order = 1
+        bl_options = {"DEFAULT_CLOSED"}
+        bl_order = 2
 
         def draw(self, context):
             props = context.scene.pae
@@ -79,6 +92,72 @@ if HAS_BPY:
             box.prop(level, "wall_style")
             box.prop(level, "sketch", text="")
 
+    class PAE_PT_procedural_building(bpy.types.Panel):
+        """CITY&BEYOND-style Procedural Building parameters (primary generate path)."""
+
+        bl_label = "Procedural Building"
+        bl_idname = "PAE_PT_procedural_building"
+        bl_space_type = "VIEW_3D"
+        bl_region_type = "UI"
+        bl_category = "PAE"
+        bl_order = 0
+
+        def draw(self, context):
+            props = context.scene.pae
+            layout = self.layout
+
+            box = layout.box()
+            box.label(text="Lot-driven facade grammar", icon="HOME")
+            box.label(text="Shell + openings + shared interior IDs")
+
+            col = layout.column(align=True)
+            col.prop(props, "facade_seed", text="Seed")
+            col.prop(props, "facade_archetype", text="Archetype")
+            col.prop(props, "facade_palette_family", text="Palette Family")
+            col.separator()
+            col.prop(props, "facade_frontage_m")
+            col.prop(props, "facade_depth_m")
+            storey_label = (
+                "Storeys (Auto→3)" if int(props.facade_storeys) == 0 else "Storeys"
+            )
+            col.prop(props, "facade_storeys", text=storey_label)
+            col.prop(props, "facade_wealth")
+            col.prop(props, "facade_weathering")
+            col.prop(props, "facade_lit_windows")
+            col.prop(props, "facade_row_context")
+            col.prop(props, "facade_grit_district")
+
+            layout.separator()
+            row = layout.row(align=True)
+            row.operator(
+                "pae.load_facade_quick_preset",
+                text="Quick Test",
+                icon="PRESET",
+            )
+            row.operator(
+                "pae.load_facade_demo_preset",
+                text="User Demo",
+                icon="PRESET",
+            )
+            row.operator(
+                "pae.build_facade_wealth_sweep",
+                text="Wealth Sweep",
+                icon="MOD_ARRAY",
+            )
+
+            layout.separator()
+            row = layout.row(align=True)
+            row.scale_y = 1.4
+            row.operator("pae.generate_facade", text="Generate Building", icon="MOD_BUILD")
+            layout.operator(
+                "pae.generate_street_row",
+                text="Generate Street Row (5)",
+                icon="OUTLINER_OB_GROUP_INSTANCE",
+            )
+            layout.operator("pae.copy_facade_params_json", text="Copy Parameters JSON", icon="COPYDOWN")
+            if props.facade_params_json:
+                layout.label(text="JSON copied to clipboard / property", icon="INFO")
+
     class PAE_PT_spec(bpy.types.Panel):
         bl_label = "Spec (Legacy)"
         bl_idname = "PAE_PT_spec"
@@ -86,7 +165,7 @@ if HAS_BPY:
         bl_region_type = "UI"
         bl_category = "PAE"
         bl_options = {"DEFAULT_CLOSED"}
-        bl_order = 2
+        bl_order = 3
 
         def draw(self, context):
             props = context.scene.pae
@@ -155,12 +234,15 @@ if HAS_BPY:
             layout = self.layout
             layout.prop(props, "clear_scene_before_build")
             layout.separator()
+            row = layout.row(align=True)
+            row.scale_y = 1.3
+            row.operator("pae.generate_facade", text="Generate Procedural Building", icon="HOME")
             layout.operator("pae.generate_current_spec", icon="MOD_BUILD")
             row = layout.row(align=True)
             row.operator("pae.build_fortress", icon="HOME")
             row.operator("pae.build_school", icon="COMMUNITY")
             layout.operator("pae.build_gallery", icon="IMAGE")
-            layout.operator("pae.reload_pae", icon="FILE_REFRESH")
+            layout.operator("pae.reload_pae", text="Reload PAE (pick up UI)", icon="FILE_REFRESH")
             layout.separator()
             layout.label(text="Stage stepping (debug)", icon="SETTINGS")
             layout.prop(props, "pipeline_stage")
@@ -251,6 +333,7 @@ if HAS_BPY:
             col.operator("pae.export_manifest", icon="FILE_TEXT")
 
     classes = (
+        PAE_PT_procedural_building,
         PAE_PT_structure,
         PAE_PT_levels,
         PAE_PT_spec,

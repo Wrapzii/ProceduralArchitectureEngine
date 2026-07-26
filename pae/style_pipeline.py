@@ -15,7 +15,7 @@ from typing import Optional, Tuple
 
 from pae.assembly_types import Assembly
 from pae.plan import FloorPlan
-from pae.report import Report
+from pae.report import Failure, Report
 from pae.solver import Massing
 
 
@@ -44,6 +44,20 @@ def apply_style_then_detail(
 
     reports: list[Report] = []
     current = assembly
+    from pae.facade_shell import is_facade_shell_assembly
+
+    if is_facade_shell_assembly(current):
+        return current, Report.from_failures(
+            [
+                Failure(
+                    check="style_pipeline_shell_skip",
+                    message=(
+                        "facade_shell assembly — modular style/detail dress skipped"
+                    ),
+                    critical=False,
+                )
+            ]
+        )
     # Clear assemble stair/wall kisses even when shell is opted out.
     current = reconcile_stair_wall_clearance(current)
     if apply_style_shell and style_id:

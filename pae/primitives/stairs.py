@@ -203,32 +203,59 @@ def switchback_stair_verts_faces(
     *,
     steps_per_flight: Optional[int] = None,
 ) -> Tuple[List[Vec3], List[Face]]:
-    """U / dog-leg: up one side, mid landing, up the other (school stairwell)."""
+    """U / dog-leg school stairwell — walkable turn sequence:
+
+    ``stair → flat → turn 90° → flat → turn 90° → stair``
+
+    Layout (min-corner origin, +Y = "up the first flight")::
+
+        y=sy ┌──────────┬──────────┐
+             │ land NW  │ land NE  │  two mid flats (half storey)
+             │  (flat)  │  (flat)  │
+             ├──────────┼──────────┤
+             │ flight 2 │ flight 1 │
+             │  south ↑ │  north ↑ │  f2 leaves NW flat climbing south
+        y=0  └──────────┴──────────┘
+            x=0                x=sx
+
+    Earlier code placed flight 2 *on top of* the north landing (same XY as the
+    flats, rising the upper half). That read as: stair, flat, then a stair
+    facing the wrong way / a vertical wall into the landing.
+    """
     n = steps_per_flight if steps_per_flight is not None else _SWITCHBACK_FLIGHT_STEPS
     half_z = sz * 0.5
     half_x = sx * 0.5
     half_y = sy * 0.5
     land_t = max(FLOOR_T_CM, half_z * 0.08)
+    land_z = half_z - land_t
 
+    # Flight 1 — east / south bay: climb +Y into the NE flat.
     f1_v, f1_f = straight_stair_verts_faces(
         half_x, half_y, half_z, steps=n, along="y"
     )
     f1_shift = [(v[0] + half_x, v[1], v[2]) for v in f1_v]
 
-    land_v, land_f = _box_verts_faces(
-        0.0, half_y, half_z - land_t, sx, half_y, land_t
+    # Two mid flats (NE then NW) — the 90° / 90° walk across the well head.
+    land_ne_v, land_ne_f = _box_verts_faces(
+        half_x, half_y, land_z, half_x, half_y, land_t
+    )
+    land_nw_v, land_nw_f = _box_verts_faces(
+        0.0, half_y, land_z, half_x, half_y, land_t
     )
 
-    f2_local_v, f2_local_f = straight_stair_verts_faces(
+    # Flight 2 — west / south bay: leave the NW flat climbing −Y (south).
+    # Must share the south Y-band with flight 1 — never the landing band.
+    f2_v, f2_f = straight_stair_verts_faces(
         half_x, half_y, half_z, steps=n, along="-y"
     )
-    f2_shift = [(v[0], v[1] + half_y, v[2] + half_z) for v in f2_local_v]
+    f2_shift = [(v[0], v[1], v[2] + half_z) for v in f2_v]
 
     return _merge_verts_faces(
         [
             (f1_shift, f1_f),
-            (land_v, land_f),
-            (f2_shift, f2_local_f),
+            (land_ne_v, land_ne_f),
+            (land_nw_v, land_nw_f),
+            (f2_shift, f2_f),
         ]
     )
 
@@ -384,7 +411,7 @@ def stair_switchback() -> PrimitiveDescriptor:
         ),
         SocketDesc(
             "top",
-            (sx * 0.25, sy * 0.5, sz),
+            (sx * 0.25, 0.0, sz),
             (0.0, -1.0, 0.0),
             "stair_top",
             tag,
@@ -399,7 +426,10 @@ def stair_switchback() -> PrimitiveDescriptor:
         sockets=sockets,
         tags=tag,
         origin="min_corner",
-        notes="Dog-leg: east flight up, north landing, west flight up. VOID 2×2 above.",
+        notes=(
+            "Dog-leg: east flight → NE flat → NW flat → west flight south. "
+            "VOID 2×2 above."
+        ),
     )
 
 

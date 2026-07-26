@@ -154,6 +154,104 @@ if HAS_BPY:
             subtype="FILE_PATH",
             default="//structure.yaml",
         )
+        # --- Procedural Building / facade grammar (CITY&BEYOND-style sliders) -
+        facade_seed: IntProperty(  # type: ignore
+            name="Seed",
+            description="Deterministic variation seed",
+            default=1812,
+            min=0,
+        )
+        facade_archetype: EnumProperty(  # type: ignore
+            name="Archetype",
+            description="Building style grammar pack",
+            items=(
+                ("georgian_merchant", "Georgian Merchant", "Cream-render Georgian townhouse"),
+                ("townhouse", "Townhouse", "Base townhouse pack"),
+                ("manor", "Manor", "Manor pack"),
+                ("civic", "Civic", "Civic pack"),
+                ("rustic", "Rustic", "Rustic timber / thatch pack"),
+                ("medieval", "Medieval", "Medieval stone pack"),
+            ),
+            default=0,
+        )
+        facade_palette_family: EnumProperty(  # type: ignore
+            name="Palette Family",
+            description="Exterior material family (auto maps interior plaster)",
+            items=(
+                ("cream_render", "Cream Render", "mat_cream_render → mat_plaster_interior"),
+                ("stone_ashlar", "Stone Ashlar", "Stone wall palette"),
+                ("timber_plaster", "Timber / Plaster", "Timber-frame palette"),
+            ),
+            default=0,
+        )
+        facade_frontage_m: FloatProperty(  # type: ignore
+            name="Frontage (m, 0=Auto)",
+            description="Street frontage in metres; 0 = auto (~3 bays)",
+            default=10.0,
+            min=0.0,
+            max=48.0,
+        )
+        facade_depth_m: FloatProperty(  # type: ignore
+            name="Depth (m, 0=Auto)",
+            description="Plot depth in metres; 0 = auto (~2 bays)",
+            default=8.0,
+            min=0.0,
+            max=48.0,
+        )
+        facade_storeys: IntProperty(  # type: ignore
+            name="Storeys (0=Auto)",
+            description="Storey count; 0 = auto → 3. Default 2 fits 10×8 m quick test",
+            default=2,
+            min=0,
+            max=12,
+        )
+        facade_wealth: IntProperty(  # type: ignore
+            name="Wealth (-1=Auto)",
+            description="Tier 1–5 richness; -1 = auto → 2. Wealth ≥3 needs wider plots for switchback stairs",
+            default=2,
+            min=-1,
+            max=5,
+        )
+        facade_weathering: FloatProperty(  # type: ignore
+            name="Weathering (-1=Auto)",
+            description="Surface wear 0–1; -1 = auto from wealth",
+            default=-1.0,
+            min=-1.0,
+            max=1.0,
+        )
+        facade_lit_windows: FloatProperty(  # type: ignore
+            name="Lit Windows",
+            description="Fraction of windows lit at night (metadata)",
+            default=0.4,
+            min=0.0,
+            max=1.0,
+        )
+        facade_row_context: EnumProperty(  # type: ignore
+            name="Row Context",
+            description="Party-wall / end-bay placement in a terrace",
+            items=(
+                ("freestanding", "Freestanding", "All four faces open"),
+                ("end_left", "End-Left", "Blind west party wall"),
+                ("end_right", "End-Right", "Blind east party wall"),
+                ("mid", "Mid", "Blind east + west party walls"),
+            ),
+            default=0,
+        )
+        facade_grit_district: EnumProperty(  # type: ignore
+            name="Grit District (NF)",
+            description="Not finished — reserved district grit override",
+            items=(
+                ("off", "Off", ""),
+                ("low", "Low", ""),
+                ("high", "High", ""),
+            ),
+            default=0,
+        )
+        facade_params_json: StringProperty(  # type: ignore
+            name="Params JSON",
+            description="Last exported facade parameters JSON",
+            default="",
+        )
 
     classes = (PAELevelSpecItem, PAESceneProperties,)
 

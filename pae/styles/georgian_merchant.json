@@ -1,0 +1,64 @@
+{
+  "id": "georgian_merchant",
+  "extends": "townhouse",
+  "geometry": {
+    "roof_pitch": 1.08,
+    "storey_height_cm": 335
+  },
+  "roof": {
+    "kind_default": "pitched",
+    "eave_overhang_cm": 48
+  },
+  "window": {
+    "tag": "window_sash_6over6",
+    "per_bay": 1,
+    "skip_ground": false
+  },
+  "door": {"tag": "door_georgian"},
+  "wall_bands": {"plinth_cm": 60, "cornice_cm": 36, "string_cm": 30},
+  "tower": {"cap": "flat", "crown": false, "finial": false},
+  "shell": {
+    "forecourt": true,
+    "doorcase": "plain",
+    "porch_posts": false,
+    "porch_roof": false,
+    "shop_platform": false,
+    "bargeboard": false,
+    "chimney_stub": true,
+    "buttress_corners": false,
+    "stoop": true,
+    "jetty": false,
+    "pilasters": true,
+    "coping": false,
+    "window_sills": true,
+    "window_hoods": false,
+    "window_boxes": false,
+    "ground_planters": false,
+    "patio": false,
+    "balcony": false
+  },
+  "detail": {
+    "opening_accent": "sill_lintel",
+    "density": 0.72,
+    "mid_string": true,
+    "jettied_mid": false,
+    "verticals_every_bays": 1,
+    "corners_only": false,
+    "coping": false,
+    "ridge_accent": false,
+    "weathering": false
+  },
+  "materials": {
+    "wall": "mat_cream_render",
+    "roof": "mat_slate",
+    "trim": "mat_timber_oak"
+  },
+  "substitutions": {
+    "window_sash_6over6": "wall_window_mullioned",
+    "window_sash_ground": "wall_window",
+    "window_cross": "wall_window_cross",
+    "door_georgian": "wall_door_double",
+    "door_plain": "wall_door",
+    "door_service": "wall_door_plain"
+  }
+}

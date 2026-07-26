@@ -722,6 +722,20 @@ def apply_detail_layer(
     """Additive Stage K pass. Deterministic; bounded; does not mutate *assembly*."""
     if not enabled:
         return assembly, Report.from_failures([])
+    from pae.facade_shell import is_facade_shell_assembly
+
+    if is_facade_shell_assembly(assembly):
+        return assembly, Report.from_failures(
+            [
+                Failure(
+                    check="detail_layer_shell_skip",
+                    message=(
+                        "facade_shell assembly — jettied_mid / band dress skipped"
+                    ),
+                    critical=False,
+                )
+            ]
+        )
 
     # Idempotent — do not stack detail on an already-detailed assembly.
     if any(DETAIL_TAG in p.tags or DETAIL_META_TAG in p.tags for p in assembly.placements):

@@ -84,7 +84,7 @@ def test_wizard_academy_steep_pitch_and_inheritance():
     [
         ("rustic", "pitched", "window_simple", 1.3),
         ("medieval", "hip", "window_mullioned", 0.8),
-        ("manor", "pitched", "window_bay_wide", 1.0),
+        ("manor", "pitched", "window_cross", 1.0),
         ("civic", "flat", "window_round", 0.5),
     ],
 )
@@ -266,9 +266,9 @@ def test_m1_townhouse_still_validates():
     assert preport.ok is True
     style, sreport = load_style(spec.style)
     assert sreport.ok is True
-    assert resolve_piece_id(style, role="window") == "wall_window"
+    assert resolve_piece_id(style, role="window") == "wall_window_cross"
     assembly, areport = assemble(floor_plan, None, style)
     assert areport.ok is True, [f.message for f in areport.failures]
     windows = [p for p in assembly.placements if "window" in p.asset_id]
     assert len(windows) == 2
-    assert {p.asset_id for p in windows} == {"wall_window"}
+    assert {p.asset_id for p in windows} == {"wall_window_cross"}
