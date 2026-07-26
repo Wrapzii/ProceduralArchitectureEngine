@@ -5,10 +5,14 @@ from __future__ import annotations
 from pae.contract import MODULE_CM, placement_world_aabb
 from pae.facade_grammar import FacadeParams, build_from_params
 from pae.facade_shell import (
+    SHELL_DOOR_ASSET,
     SHELL_WALL_ASSET,
     build_shell_assembly,
+    count_chimney_stubs,
     count_exterior_shell_walls,
     count_modular_window_kits,
+    count_muntin_placements,
+    count_shell_doors,
     count_window_placements,
 )
 
@@ -62,9 +66,14 @@ def test_party_wall_face_has_no_windows():
     ]
     assert west_walls
     assert all("party_wall" in p.tags or "blind" in p.tags for p in west_walls)
-    # Blind party wall is ONE continuous panel per storey (not pier grid).
-    assert len(west_walls) == 3
-    assert all(p.size_cm[1] >= 2 * MODULE_CM - 1.0 for p in west_walls)
+    # Blind party wall: plinth + mid + cornice per storey (no pier grid).
+    mid_panels = [
+        p
+        for p in west_walls
+        if "plinth" not in p.tags and "cornice" not in p.tags
+    ]
+    assert len(mid_panels) == 3
+    assert all(p.size_cm[1] >= 2 * MODULE_CM - 1.0 for p in mid_panels)
 
 
 def test_stair_inside_footprint():
@@ -127,3 +136,25 @@ def test_build_from_params_defaults_to_shell_mode():
     assert count_exterior_shell_walls(assembly) > 0
     assert count_modular_window_kits(assembly) == 0
     assert not report.critical
+
+
+def test_shell_door_is_inset_slab_not_kit():
+    params = _default_params(storeys=2, wealth=4)
+    assembly, _ = build_shell_assembly(params)
+    assert count_shell_doors(assembly, "south") == 1
+    doors = [p for p in assembly.placements if p.asset_id == SHELL_DOOR_ASSET]
+    assert len(doors) == 1
+    assert doors[0].kind == "prop"
+    assert count_modular_window_kits(assembly) == 0
+
+
+def test_chimney_stubs_when_wealthy():
+    params = _default_params(wealth=4, storeys=3)
+    assembly, _ = build_shell_assembly(params)
+    assert count_chimney_stubs(assembly) >= 1
+
+
+def test_window_muntins_on_glazed_faces():
+    params = _default_params(storeys=2)
+    assembly, _ = build_shell_assembly(params)
+    assert count_muntin_placements(assembly) >= 4
