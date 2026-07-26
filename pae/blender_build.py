@@ -128,6 +128,9 @@ ASSET_MATERIAL_COLORS: Dict[str, Tuple[float, float, float, float]] = {
     "stair_spiral_quarter": (0.78, 0.52, 0.18, 1.0),  # copper spiral
     "spiral_newel": (0.55, 0.48, 0.40, 1.0),  # stone newel pillar
     "floor_hole": (0.12, 0.12, 0.18, 1.0),  # void rim
+    "shell_wall_solid": (0.92, 0.88, 0.78, 1.0),  # cream render exterior
+    "shell_wall_interior": (0.86, 0.84, 0.80, 1.0),  # plaster interior
+    "shell_floor_slab": (0.62, 0.52, 0.40, 1.0),  # floor boards
 }
 _TINTED_ASSET_PREFIXES = ("roof_", "tower_", "stair_", "spire_", "dormer_")
 _TINTED_ASSET_EXACT = frozenset(ASSET_MATERIAL_COLORS.keys())
@@ -1250,6 +1253,35 @@ def _mesh_for_asset(
     return obj
 
 
+def _mesh_for_shell_box(p, *, cache: Dict[str, Any]) -> Any:
+    """Prototype mesh for ``shell_*`` placements — sized box, no catalog stretch."""
+    from pae.primitives import bpy_util
+
+    bpy_util.require_bpy()
+    key = f"shell_box::{p.piece_id}::{tuple(p.size_cm)}"
+    if key in cache:
+        return cache[key]
+    proto_name = f"PAE_Proto_{p.piece_id}"
+    obj = bpy_util.box_mesh(proto_name, tuple(p.size_cm), origin_at_min_corner=True)
+    obj.hide_set(True)
+    obj.hide_render = True
+    cache[key] = obj
+    return obj
+
+
+def instance_facade_shell(
+    assembly,
+    *,
+    label: str = "facade",
+    target_coll=None,
+    offset_m: Tuple[float, float, float] = (0.0, 0.0, 0.0),
+) -> int:
+    """Instance a continuous shell assembly (alias for :func:`instance_assembly`)."""
+    return instance_assembly(
+        assembly, label=label, target_coll=target_coll, offset_m=offset_m
+    )
+
+
 def instance_assembly(
     assembly,
     *,
@@ -1302,28 +1334,34 @@ def instance_assembly(
             "non_rendering_aperture_proxy" in p.tags
         ):
             continue
-        notched_roof = (
-            _mesh_for_notched_roof(p, roof_hole_placements, cache=cache)
-            if getattr(p, "kind", None) == "roof" and roof_hole_placements
-            else None
-        )
-        if notched_roof is not None:
-            proto = notched_roof
-            sx = sy = sz = 1.0
-        elif is_spanning_floor_deck(p):
-            # Full-size mesh with VOID openings already cut — uniform cm→m only.
-            peers = [
-                d
-                for d in all_floor_decks
-                if d.level == p.level and d.piece_id != p.piece_id
-            ]
-            proto = _mesh_for_spanning_floor_deck(
-                p, hole_placements, peer_decks=peers, cache=cache
-            )
+        from pae.facade_shell import is_shell_placement
+
+        if is_shell_placement(p):
+            proto = _mesh_for_shell_box(p, cache=cache)
             sx = sy = sz = 1.0
         else:
-            proto = _mesh_for_asset(p.asset_id, tuple(p.size_cm), cache=cache)
-            sx, sy, sz = placement_instance_scale_cm(p)
+            notched_roof = (
+                _mesh_for_notched_roof(p, roof_hole_placements, cache=cache)
+                if getattr(p, "kind", None) == "roof" and roof_hole_placements
+                else None
+            )
+            if notched_roof is not None:
+                proto = notched_roof
+                sx = sy = sz = 1.0
+            elif is_spanning_floor_deck(p):
+                # Full-size mesh with VOID openings already cut — uniform cm→m only.
+                peers = [
+                    d
+                    for d in all_floor_decks
+                    if d.level == p.level and d.piece_id != p.piece_id
+                ]
+                proto = _mesh_for_spanning_floor_deck(
+                    p, hole_placements, peer_decks=peers, cache=cache
+                )
+                sx = sy = sz = 1.0
+            else:
+                proto = _mesh_for_asset(p.asset_id, tuple(p.size_cm), cache=cache)
+                sx, sy, sz = placement_instance_scale_cm(p)
         loc_cm = placement_loc_cm(p)
         loc_m = (
             loc_cm[0] * CM_TO_M + ox,

@@ -5,6 +5,11 @@ townhouses. Metres compile through `pae.contract.MODULE_CM` (400 cm per bay).
 Door and stair piece ids come from `pae.shared_ids` so exterior openings and
 interior circulation stay aligned.
 
+**Default build path:** continuous exterior shell via `pae.facade_shell` (solid
+panels per face × storey, grammar-cut door/window kit pieces on street faces).
+Legacy per-cell modular assembly remains available as `build_from_params(...,
+mode="modular")` for debugging.
+
 ## Quick test (no Blender)
 
 ```powershell
@@ -91,11 +96,11 @@ If the panel is missing after a code pull: **Generate → Reload PAE (pick up UI
 from pae.facade_grammar import FacadeParams, build_from_params
 
 params = FacadeParams(seed=42, frontage_m=10, depth_m=8, storeys=4, wealth=3)
-massing, plan, assembly, report, params = build_from_params(params)
+massing, plan, assembly, report, params = build_from_params(params)  # mode="shell"
 ```
 
 ## Tests
 
 ```powershell
-pytest pae/tests/unit/test_facade_grammar.py pae/tests/unit/test_georgian_blender_tool.py -q
+pytest pae/tests/unit/test_facade_grammar.py pae/tests/unit/test_facade_shell.py pae/tests/unit/test_georgian_blender_tool.py -q
 ```

@@ -220,31 +220,44 @@ def params_from_json(text: str) -> FacadeParams:
 def build_from_params(
     params: FacadeParams,
     *,
+    mode: str = "shell",
     validate_assembly: bool = True,
     apply_style_shell: bool = True,
     apply_detail: bool = True,
     **kwargs: Any,
 ) -> Tuple[Any, Any, Any, Report, FacadeParams]:
-    """Run assemble → style shell → detail for compiled facade params.
+    """Build facade assembly from slider params.
+
+    ``mode="shell"`` (default) emits a continuous exterior shell via
+    :mod:`pae.facade_shell`. ``mode="modular"`` keeps the legacy per-cell
+    assemble → style shell → detail pipeline for debugging.
 
     Returns ``(massing, floor_plan, assembly, report, params)``.
-
-    Per-slider style overrides from :func:`params_to_style_overrides` are resolved
-    for tooling; assembly consumes the authored ``georgian_merchant`` pack on disk.
     """
-    from pae.style_pipeline import assemble_with_style_shell_and_detail
+    if mode == "modular":
+        from pae.style_pipeline import assemble_with_style_shell_and_detail
+
+        spec = params_to_spec(params)
+        massing, floor_plan, assembly, report = assemble_with_style_shell_and_detail(
+            spec,
+            seed=params.seed,
+            validate_assembly=validate_assembly,
+            apply_style_shell=apply_style_shell,
+            apply_detail=apply_detail,
+            **kwargs,
+        )
+        return massing, floor_plan, assembly, report, params
+
+    from pae.facade_shell import build_shell_assembly
 
     spec = params_to_spec(params)
+    assembly, report = build_shell_assembly(params, spec)
+    if validate_assembly:
+        from pae.validate import validate
 
-    massing, floor_plan, assembly, report = assemble_with_style_shell_and_detail(
-        spec,
-        seed=params.seed,
-        validate_assembly=validate_assembly,
-        apply_style_shell=apply_style_shell,
-        apply_detail=apply_detail,
-        **kwargs,
-    )
-    return massing, floor_plan, assembly, report, params
+        vreport = validate(assembly)
+        report = Report.from_failures(list(report.failures) + list(vreport.failures))
+    return None, None, assembly, report, params
 
 
 __all__ = [

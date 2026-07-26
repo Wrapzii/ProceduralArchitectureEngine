@@ -291,7 +291,7 @@ if HAS_BPY:
                     CM_TO_M,
                     assembly_bounds_cm,
                     clear_pae_scene,
-                    instance_assembly,
+                    instance_facade_shell,
                 )
                 from pae.facade_grammar import (
                     FacadeParams,
@@ -330,7 +330,7 @@ if HAS_BPY:
                         -bb_min[1] * CM_TO_M,
                         -bb_min[2] * CM_TO_M,
                     )
-                    instance_assembly(
+                    instance_facade_shell(
                         assembly,
                         label="facade",
                         target_coll=coll,

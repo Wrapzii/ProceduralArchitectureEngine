@@ -127,8 +127,6 @@ def test_build_from_params_returns_assembly():
         validate_assembly=False,
     )
     assert out_params is params
-    assert massing is not None
-    assert floor_plan is not None
     assert assembly is not None
     assert len(assembly.placements) > 0
     # Report may carry non-critical warnings; no critical assembly failures expected.
