@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import math
+import random
 from dataclasses import asdict, dataclass, fields
 from typing import Any, Dict, FrozenSet, Optional, Tuple
 
@@ -25,6 +26,36 @@ from pae.spec import (
 )
 
 _ROW_CONTEXTS = frozenset({"freestanding", "end_left", "end_right", "mid"})
+
+# Archetypes wired to the continuous shell path (style JSON under pae/styles/).
+SHELL_ARCHETYPES: Tuple[str, ...] = (
+    "georgian_merchant",
+    "townhouse",
+    "civic",
+    "manor",
+    "rustic",
+    "medieval",
+)
+
+# Default wealth tier per archetype when slider is -1 (auto).
+_ARCHETYPE_DEFAULT_WEALTH: Dict[str, int] = {
+    "georgian_merchant": 3,
+    "townhouse": 2,
+    "civic": 4,
+    "manor": 5,
+    "rustic": 1,
+    "medieval": 2,
+}
+
+# Palette family hints per archetype (overridden by explicit slider).
+_ARCHETYPE_DEFAULT_PALETTE: Dict[str, str] = {
+    "georgian_merchant": "cream_render",
+    "townhouse": "timber_plaster",
+    "civic": "stone_ashlar",
+    "manor": "stone_ashlar",
+    "rustic": "timber_plaster",
+    "medieval": "stone_ashlar",
+}
 
 # Default bay counts when metre sliders are zero (auto).
 _DEFAULT_FRONTAGE_BAYS = 3
@@ -47,11 +78,80 @@ class FacadeParams:
     row_context: str = "freestanding"  # freestanding|end_left|end_right|mid
 
 
-def resolve_wealth(wealth: int) -> int:
-    """Wealth tier used by grammar — ``-1`` auto-selects 2."""
+def resolve_wealth(wealth: int, *, archetype: str = "georgian_merchant") -> int:
+    """Wealth tier used by grammar — ``-1`` auto-selects per archetype."""
     if wealth < 0:
-        return 2
+        arch = (archetype or "georgian_merchant").strip().lower()
+        return _ARCHETYPE_DEFAULT_WEALTH.get(arch, 2)
     return max(1, min(5, int(wealth)))
+
+
+def facade_rng(seed: int, *tags: str) -> random.Random:
+    """Deterministic RNG for shell variation — ``(seed, archetype, …)``."""
+    h = int(seed) & 0xFFFFFFFF
+    for tag in tags:
+        h = (h * 1_000_003) ^ (hash(tag) & 0xFFFFFFFF)
+    return random.Random(h)
+
+
+@dataclass(frozen=True)
+class ShellStyleConfig:
+    """Archetype style-pack hints consumed by the continuous shell builder."""
+
+    archetype: str
+    roof_pitch: float
+    roof_kind: str
+    window_w_frac: float
+    window_h_frac: float
+    window_sill_frac: float
+    default_wealth: int
+    palette_family: str
+
+
+def load_archetype_shell_config(
+    archetype: str,
+    *,
+    wealth: int = -1,
+    palette_family: str = "",
+) -> ShellStyleConfig:
+    """Load palette, roof pitch, and window fractions from the style pack."""
+    from pae.style_pack import load_style_pack, resolve_roof_kind, resolve_roof_pitch
+
+    arch = (archetype or "georgian_merchant").strip().lower()
+    if arch not in SHELL_ARCHETYPES:
+        arch = "georgian_merchant"
+    pack, _report = load_style_pack(arch)
+    pitch = resolve_roof_pitch(pack)
+    roof_kind = resolve_roof_kind(pack)
+    per_bay = max(1, int(pack.window.per_bay))
+    # Window ratio scales with pack density and pitch (S-008 proportion hook).
+    w_frac = min(0.72, 0.44 + per_bay * 0.05 + (pitch - 1.0) * 0.04)
+    h_frac = min(0.68, 0.48 + per_bay * 0.04)
+    sill_frac = 0.20 if arch in ("civic", "medieval") else 0.22
+    if arch == "rustic":
+        w_frac = 0.42
+        h_frac = 0.50
+        sill_frac = 0.18
+    elif arch == "civic":
+        w_frac = 0.50
+        h_frac = 0.40
+    elif arch == "manor":
+        w_frac = 0.58
+        h_frac = 0.55
+    resolved_wealth = resolve_wealth(wealth, archetype=arch)
+    pal = (palette_family or "").strip().lower()
+    if not pal:
+        pal = _ARCHETYPE_DEFAULT_PALETTE.get(arch, "cream_render")
+    return ShellStyleConfig(
+        archetype=arch,
+        roof_pitch=pitch,
+        roof_kind=roof_kind,
+        window_w_frac=w_frac,
+        window_h_frac=h_frac,
+        window_sill_frac=sill_frac,
+        default_wealth=resolved_wealth,
+        palette_family=pal,
+    )
 
 
 def resolve_storeys(storeys: int) -> int:
@@ -136,7 +236,12 @@ def _stair_kind(wealth: int, bays_x: int, bays_y: int, *, storeys: int = 1) -> s
 
 def params_to_spec(params: FacadeParams) -> BuildingSpec:
     """Compile slider params → declarative BuildingSpec (bays/modules only)."""
-    wealth = resolve_wealth(params.wealth)
+    shell_cfg = load_archetype_shell_config(
+        params.archetype,
+        wealth=params.wealth,
+        palette_family=params.palette_family,
+    )
+    wealth = resolve_wealth(params.wealth, archetype=shell_cfg.archetype)
     storeys = resolve_storeys(params.storeys)
     bays_x = metres_to_bays(params.frontage_m) or _DEFAULT_FRONTAGE_BAYS
     bays_y = metres_to_bays(params.depth_m) or _DEFAULT_DEPTH_BAYS
@@ -150,14 +255,15 @@ def params_to_spec(params: FacadeParams) -> BuildingSpec:
         entrances.append(EntranceSpec(role="service", facade="north"))
 
     building_class = "house" if storeys <= 3 and max(bays_x, bays_y) <= 6 else "generic"
+    roof_kind = shell_cfg.roof_kind if wealth >= 2 else "flat"
 
     return BuildingSpec(
         name=f"{params.archetype}_{params.seed}",
-        style=params.archetype,
+        style=shell_cfg.archetype,
         footprint=FootprintSpec(kind="rect", bays_x=bays_x, bays_y=bays_y),
         storeys=storeys,
         storey_use=["hall"] * storeys,
-        roof=RoofSpec(kind="auto", pitch=1.05),
+        roof=RoofSpec(kind=roof_kind, pitch=shell_cfg.roof_pitch),
         circulation=CirculationSpec(stair_kind=stair_kind, stair_cells=[]),
         openings=OpeningPolicy(
             windows_per_bay=windows_per_bay,
@@ -181,24 +287,40 @@ def _palette_wall(palette_family: str, wealth: int) -> str:
 
 def params_to_style_overrides(params: FacadeParams) -> Dict[str, Any]:
     """Style-pack overrides for materials, weathering, and shell detail by wealth."""
-    wealth = resolve_wealth(params.wealth)
+    shell_cfg = load_archetype_shell_config(
+        params.archetype,
+        wealth=params.wealth,
+        palette_family=params.palette_family,
+    )
+    wealth = resolve_wealth(params.wealth, archetype=shell_cfg.archetype)
     wear = resolve_weathering(params.weathering, wealth=wealth)
     window_tag = resolve_shared("window", wealth, "exterior")
     door_tag = resolve_shared("door", wealth, "main")
 
+    from pae.style_pack import load_style_pack
+
+    pack, _ = load_style_pack(shell_cfg.archetype)
+    pack_shell = asdict(pack.shell) if pack.shell else {}
+
     shell: Dict[str, Any] = {
-        "stoop": True,
-        "doorcase": "plain" if wealth < 3 else "grand",
-        "chimney_stub": wealth >= 3,
-        "window_sills": True,
-        "pilasters": wealth >= 3,
+        "stoop": bool(pack_shell.get("stoop", True)),
+        "doorcase": "plain" if wealth < 3 else str(pack_shell.get("doorcase", "grand")),
+        "chimney_stub": wealth >= 3 and bool(pack_shell.get("chimney_stub", True)),
+        "window_sills": bool(pack_shell.get("window_sills", True)),
+        "pilasters": wealth >= 5 or (wealth >= 3 and bool(pack_shell.get("pilasters", False))),
         "forecourt": False,
         "balcony": False,
         "patio": False,
         "jetty": False,
+        "cornice_band": wealth >= 3,
+        "doorcase_surround": wealth >= 3,
+        "corner_pilasters": wealth >= 5,
+        "shop_window_wide": wealth >= 3,
     }
 
     return {
+        "archetype": shell_cfg.archetype,
+        "shell_style": asdict(shell_cfg),
         "materials": {
             "wall": _palette_wall(params.palette_family, wealth),
             "roof": resolve_shared("material", wealth, "roof"),
@@ -289,9 +411,13 @@ def build_from_params(
 
 __all__ = [
     "FacadeParams",
+    "SHELL_ARCHETYPES",
+    "ShellStyleConfig",
     "build_from_params",
     "export_params_json",
+    "facade_rng",
     "footprint_allows_switchback",
+    "load_archetype_shell_config",
     "metres_to_bays",
     "params_from_json",
     "params_to_spec",

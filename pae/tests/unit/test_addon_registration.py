@@ -48,6 +48,7 @@ def test_expected_operator_ids_registered_in_source():
         "pae.load_school_preset",
         "pae.load_facade_quick_preset",
         "pae.load_facade_demo_preset",
+        "pae.build_facade_wealth_sweep",
         "pae.generate_facade",
         "pae.copy_facade_params_json",
     }

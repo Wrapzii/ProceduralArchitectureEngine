@@ -69,7 +69,8 @@ def test_party_wall_faces_rejects_unknown():
 
 
 def test_shared_ids_wealth_picks_richer_pieces():
-    assert resolve_wealth(-1) == 2
+    assert resolve_wealth(-1, archetype="townhouse") == 2
+    assert resolve_wealth(-1, archetype="georgian_merchant") == 3
     low = resolve_shared("door", 1, "main")
     high = resolve_shared("door", 5, "main")
     assert low == "door_plain"

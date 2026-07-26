@@ -139,11 +139,21 @@ if HAS_BPY:
                 text="User Demo",
                 icon="PRESET",
             )
+            row.operator(
+                "pae.build_facade_wealth_sweep",
+                text="Wealth Sweep",
+                icon="MOD_ARRAY",
+            )
 
             layout.separator()
             row = layout.row(align=True)
             row.scale_y = 1.4
             row.operator("pae.generate_facade", text="Generate Building", icon="MOD_BUILD")
+            layout.operator(
+                "pae.generate_street_row",
+                text="Generate Street Row (5)",
+                icon="OUTLINER_OB_GROUP_INSTANCE",
+            )
             layout.operator("pae.copy_facade_params_json", text="Copy Parameters JSON", icon="COPYDOWN")
             if props.facade_params_json:
                 layout.label(text="JSON copied to clipboard / property", icon="INFO")

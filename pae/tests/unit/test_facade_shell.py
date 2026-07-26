@@ -4,7 +4,13 @@ from __future__ import annotations
 
 from pae.contract import EAVE_OVERHANG_CM, MODULE_CM, STOREY_CM, WALL_T_CM, placement_world_aabb
 from pae.export.manifest import placement_loc_cm
-from pae.facade_grammar import FacadeParams, build_from_params
+from pae.facade_grammar import (
+    FacadeParams,
+    build_from_params,
+    load_archetype_shell_config,
+    params_to_spec,
+    params_to_style_overrides,
+)
 from pae.facade_shell import (
     SHELL_DOOR_ASSET,
     SHELL_INTERIOR_WALL_ASSET,
@@ -30,6 +36,8 @@ from pae.facade_shell import (
     count_window_frame_bars,
     count_window_glass_placements,
     count_window_placements,
+    derive_shell_variation,
+    shell_roof_placements,
 )
 
 
@@ -380,11 +388,113 @@ def test_south_window_frames_along_frontage_not_depth():
         assert loc[1] <= WALL_T_CM + 5.0, bar.piece_id
 
 
-def test_shell_roof_uses_shell_assets_not_catalog_slope():
+def test_shell_roof_is_pitched_shell_not_catalog_slope():
     params = _demo_user_params()
     assembly, _ = build_shell_assembly(params)
-    roofs = [p for p in assembly.placements if p.kind == "roof"]
-    assert roofs
-    shell_roof_ids = {"shell_roof_slab", "shell_roof_slope", "shell_gable_end"}
-    assert all(p.asset_id in shell_roof_ids for p in roofs)
+    assert count_shell_roof_slopes(assembly) == 2
+    assert count_shell_gable_ends(assembly) == 1  # end_left — east gable only
     assert not any(p.asset_id == "roof_pitched_slope" for p in assembly.placements)
+
+
+def test_wealth_one_flat_roof_no_chimney():
+    params = _default_params(wealth=1, storeys=3, archetype="georgian_merchant")
+    assembly, _ = build_shell_assembly(params)
+    assert count_chimney_stubs(assembly) == 0
+    slabs = [p for p in assembly.placements if p.asset_id == "shell_roof_slab"]
+    assert slabs
+    assert count_shell_roof_slopes(assembly) == 0
+
+
+def test_wealth_five_twin_chimneys():
+    params = _default_params(wealth=5, storeys=3, seed=9001)
+    assembly, _ = build_shell_assembly(params)
+    assert count_chimney_stubs(assembly) == 2
+
+
+def test_seed_determinism_same_placement_counts():
+    p1 = _default_params(seed=4242, wealth=3)
+    p2 = FacadeParams(**{**p1.__dict__})
+    a1, _ = build_shell_assembly(p1)
+    a2, _ = build_shell_assembly(p2)
+    assert count_opening_cutters(a1, "south") == count_opening_cutters(a2, "south")
+    assert count_chimney_stubs(a1) == count_chimney_stubs(a2)
+
+
+def test_seed_variation_differs_door_or_chimneys():
+    params_a = _default_params(seed=100, wealth=5, storeys=3)
+    params_b = _default_params(seed=999, wealth=5, storeys=3)
+    spec = params_to_spec(params_a)
+    cfg = load_archetype_shell_config(params_a.archetype, wealth=5)
+    overrides = params_to_style_overrides(params_a)
+    var_a = derive_shell_variation(
+        params_a,
+        bays_x=spec.footprint.bays_x,
+        bays_y=spec.footprint.bays_y,
+        storeys=spec.storeys,
+        glazed_faces=("south", "north", "east", "west"),
+        style_overrides=overrides,
+        shell_cfg=cfg,
+    )
+    var_b = derive_shell_variation(
+        params_b,
+        bays_x=spec.footprint.bays_x,
+        bays_y=spec.footprint.bays_y,
+        storeys=spec.storeys,
+        glazed_faces=("south", "north", "east", "west"),
+        style_overrides=params_to_style_overrides(params_b),
+        shell_cfg=cfg,
+    )
+    a_asm, _ = build_shell_assembly(params_a)
+    b_asm, _ = build_shell_assembly(params_b)
+    differs = (
+        var_a.door_bay != var_b.door_bay
+        or var_a.window_skip != var_b.window_skip
+        or var_a.chimney_anchors != var_b.chimney_anchors
+        or count_opening_cutters(a_asm) != count_opening_cutters(b_asm)
+    )
+    assert differs
+
+
+def test_wealth_one_fewer_south_windows_than_five():
+    low, _ = build_shell_assembly(_default_params(wealth=1, seed=55))
+    high, _ = build_shell_assembly(_default_params(wealth=5, seed=55))
+    assert count_window_placements(low, "south") < count_window_placements(high, "south")
+
+
+def test_mid_terrace_party_walls_blind():
+    params = _default_params(row_context="mid", storeys=3)
+    assembly, _ = build_shell_assembly(params)
+    assert count_window_placements(assembly, "west") == 0
+    assert count_window_placements(assembly, "east") == 0
+    assert count_window_placements(assembly, "south") > 0
+    assert count_window_placements(assembly, "north") > 0
+
+
+def test_archetype_civic_loads_distinct_window_frac():
+    civic = load_archetype_shell_config("civic")
+    manor = load_archetype_shell_config("manor")
+    assert civic.roof_kind == "flat"
+    assert civic.window_w_frac != manor.window_w_frac
+
+def test_shell_roof_aabb_within_footprint_overhang():
+    params = _demo_user_params()
+    assembly, _ = build_shell_assembly(params)
+    width = int(round(22.0 / (MODULE_CM / 100.0))) * MODULE_CM
+    depth = int(round(12.0 / (MODULE_CM / 100.0))) * MODULE_CM
+    oh = EAVE_OVERHANG_CM
+    tol = 1.0
+    for roof in shell_roof_placements(assembly):
+        if roof.asset_id not in ("shell_roof_slope", "shell_gable_end"):
+            continue
+        pmin, pmax = placement_world_aabb(
+            roof.cell[0],
+            roof.cell[1],
+            roof.level,
+            roof.yaw,
+            roof.size_cm,
+            roof.offset_cm,
+        )
+        assert pmin[0] >= -oh - tol, roof.piece_id
+        assert pmin[1] >= -oh - tol, roof.piece_id
+        assert pmax[0] <= width + oh + tol, roof.piece_id
+        assert pmax[1] <= depth + oh + tol, roof.piece_id

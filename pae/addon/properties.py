@@ -169,6 +169,8 @@ if HAS_BPY:
                 ("townhouse", "Townhouse", "Base townhouse pack"),
                 ("manor", "Manor", "Manor pack"),
                 ("civic", "Civic", "Civic pack"),
+                ("rustic", "Rustic", "Rustic timber / thatch pack"),
+                ("medieval", "Medieval", "Medieval stone pack"),
             ),
             default=0,
         )
