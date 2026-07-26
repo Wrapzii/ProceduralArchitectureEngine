@@ -17,6 +17,7 @@ from pae.addon.helpers import (
     list_style_ids,
     object_name_to_piece_id,
     piece_id_to_object_name,
+    ui_values_from_spec,
 )
 from pae.addon.session import failure_from_dict, failure_to_dict, report_from_json, report_to_json
 from pae.contract import MODULE_CM, STOREY_CM
@@ -109,3 +110,60 @@ def test_build_spec_from_ui():
 def test_list_style_ids_non_empty():
     ids = list_style_ids()
     assert "townhouse" in ids
+
+
+def test_build_spec_from_ui_extended_fields():
+    spec = build_spec_from_ui(
+        name="extended",
+        style="keep",
+        storeys=3,
+        bays_x=8,
+        bays_y=6,
+        footprint_kind="rect",
+        seed=11,
+        roof_kind="pitched",
+        roof_pitch=1.2,
+        stair_kind="switchback",
+        wall_height_storeys=2.5,
+        doors_ground=2,
+        windows_per_bay=1,
+        entrance_enabled=True,
+        entrance_role="grand",
+        entrance_facade="south",
+        entrance_ensemble=True,
+    )
+    assert spec.roof.kind == "pitched"
+    assert spec.circulation.stair_kind == "switchback"
+    assert spec.wall_height_storeys == 2.5
+    assert len(spec.entrances) == 1
+    assert spec.entrances[0].ensemble is True
+
+
+def test_ui_values_from_spec_roundtrip():
+    from pae.spec import m3_keep_tower_spec
+
+    spec = m3_keep_tower_spec()
+    values = ui_values_from_spec(spec)
+    rebuilt = build_spec_from_ui(
+        name=str(values["building_name"]),
+        style=str(values["style"]),
+        storeys=int(values["storeys"]),
+        bays_x=int(values["bays_x"]),
+        bays_y=int(values["bays_y"]),
+        footprint_kind=str(values["footprint_kind"]),
+        seed=int(values["seed"]),
+        wing_depth=int(values["wing_depth"]),
+        courtyard=bool(values["courtyard"]),
+        roof_kind=str(values["roof_kind"]),
+        roof_pitch=float(values["roof_pitch"]),
+        stair_kind=str(values["stair_kind"]),
+        wall_height_storeys=float(values["wall_height_storeys"]),
+        doors_ground=int(values["doors_ground"]),
+        windows_per_bay=int(values["windows_per_bay"]),
+        entrance_enabled=bool(values["entrance_enabled"]),
+        entrance_role=str(values["entrance_role"]),
+        entrance_facade=str(values["entrance_facade"]),
+        entrance_ensemble=bool(values["entrance_ensemble"]),
+    )
+    assert rebuilt.footprint.bays_x == spec.footprint.bays_x
+    assert rebuilt.roof.kind == spec.roof.kind

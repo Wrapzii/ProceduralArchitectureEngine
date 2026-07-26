@@ -1,0 +1,15 @@
+{
+  "id": "rustic",
+  "geometry": {
+    "roof_pitch": 1.35,
+    "storey_height_cm": 320
+  },
+  "roof": {
+    "kind_default": "pitched"
+  },
+  "window": {"tag": "window_simple", "per_bay": 1, "skip_ground": false},
+  "door": {"tag": "door_plain"},
+  "wall_bands": {"plinth_cm": 20, "cornice_cm": 12},
+  "tower": {"cap": "flat", "crown": false, "finial": false},
+  "materials": {"wall": "cob_whitewash", "roof": "thatch_wheat", "trim": "timber_oak"}
+}

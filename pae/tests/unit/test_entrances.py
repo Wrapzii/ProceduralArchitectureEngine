@@ -39,7 +39,7 @@ def _assemble_spec(spec: BuildingSpec):
 
 def test_door_asset_for_role_mapping():
     assert _door_asset_for_role("grand", None) == "wall_gate_arch"
-    assert _door_asset_for_role("gate", None) == "wall_gate_arch"
+    assert _door_asset_for_role("gate", None) == "wall_gate_arch_grand"
     assert _door_asset_for_role("main", None) == "wall_door"
     assert _door_asset_for_role("side", None) == "wall_door"
     assert _door_asset_for_role("service", None) == "wall_door_plain"

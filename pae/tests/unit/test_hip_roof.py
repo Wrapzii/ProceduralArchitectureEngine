@@ -235,3 +235,15 @@ def test_l_plan_pitched_places_per_wing_and_valley():
     valleys = [p for p in assembly.placements if p.asset_id == "roof_valley"]
     assert len(slopes) >= 2
     assert len(valleys) == 1
+
+
+def test_fortress_compound_hip_roofs_no_gable_stack():
+    """Fortress keep + cloisters use one hip per wing — no gable infill overlap."""
+    from pae.compound import build_fortress_compound
+
+    assembly, _, report = build_fortress_compound()
+    assert report.ok, [f.message for f in report.failures]
+    hips = [p for p in assembly.placements if p.asset_id == "roof_hip"]
+    gables = [p for p in assembly.placements if p.asset_id == "roof_gable_infill"]
+    assert len(hips) >= 3
+    assert not gables

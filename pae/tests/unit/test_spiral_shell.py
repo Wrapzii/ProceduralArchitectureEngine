@@ -67,18 +67,16 @@ def test_designed_door_bay_exempts_drum_gap():
     assert not check_spiral_shell(ok)
 
 
-def test_healthy_spiral_emits_newel_and_closed_drum():
+def test_healthy_open_well_spiral_omits_disconnected_newel_and_closes_drum():
     _, _, assembly, areport = run_through_assemble(m_spiral_tower_spec())
     assert areport.ok, [f.message for f in areport.failures]
 
     newels = [p for p in assembly.placements if p.asset_id == SPIRAL_NEWEL_ASSET]
     spirals = [p for p in assembly.placements if p.asset_id == "stair_spiral_quarter"]
     assert spirals, "expected spiral quarters"
-    spiral_levels = {(p.cell, p.level) for p in spirals}
-    newel_levels = {(p.cell, p.level) for p in newels}
-    assert spiral_levels <= newel_levels, (
-        f"newel missing on spiral levels: {spiral_levels - newel_levels}"
-    )
+    # The standard stair's inner edge is well outside the fixed-size pole.
+    # A disconnected pole would only obstruct the open well.
+    assert not newels
 
     shell_hits = check_spiral_shell(assembly)
     assert not shell_hits, [f.message for f in shell_hits]
@@ -104,5 +102,5 @@ def test_spiral_trim_still_green_with_shell():
         if f.check in ("spiral_newel_exists", "spiral_drum_enclosure")
     ]
     assert not shell, [f.message for f in shell]
-    # Newels survive trim.
-    assert any(p.asset_id == SPIRAL_NEWEL_ASSET for p in assembly.placements)
+    # Trim must not re-introduce a disconnected pole into the open well.
+    assert not any(p.asset_id == SPIRAL_NEWEL_ASSET for p in assembly.placements)

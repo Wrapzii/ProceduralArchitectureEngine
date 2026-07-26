@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import replace
 
 from pae.assembly_types import Assembly, SolidPlacement
-from pae.compound import build_castle_curtain_compound
+from pae.compound import build_castle_curtain_compound, build_fortress_compound
 from pae.contract import (
     FLOOR_T_CM,
     MODULE_CM,
@@ -24,6 +24,7 @@ from pae.fortress_validate import (
     FORTRESS_MIN_TOWERS_TAG_PREFIX,
     GRAND_APPROACH_TAG,
     assembly_is_fortress,
+    assembly_requires_grand_approach,
     check_buttress_outward,
     check_curtain_battlement_continuity,
     check_fortress_gate_exists,
@@ -32,7 +33,8 @@ from pae.fortress_validate import (
     check_spire_freestanding,
 )
 from pae.pipeline import run_through_assemble
-from pae.spec import m1_box_house_spec, m3_keep_tower_spec
+from pae.spec import fortress_bailey_compound_spec, m1_box_house_spec, m3_keep_tower_spec
+from pae.trim import covered_cells
 from pae.validate import validate
 
 
@@ -459,3 +461,183 @@ def test_spire_style_tag_alone_does_not_mark_fortress():
         aperture_policy=base.aperture_policy,
     )
     assert not assembly_is_fortress(asm)
+
+
+# --- Real fortress compound (build_fortress_compound) -----------------------
+
+
+def _copy_asm(assembly: Assembly, placements: list[SolidPlacement]) -> Assembly:
+    return Assembly(
+        placements=placements,
+        floor_plan=assembly.floor_plan,
+        circulation=assembly.circulation,
+        wall_runs=assembly.wall_runs,
+        apertures=assembly.apertures,
+        storeys=assembly.storeys,
+        aperture_policy=assembly.aperture_policy,
+        building_class=getattr(assembly, "building_class", "castle"),
+        stair_kind=getattr(assembly, "stair_kind", "switchback"),
+        wide_stair_well_available=getattr(
+            assembly, "wide_stair_well_available", False
+        ),
+    )
+
+
+def test_real_fortress_has_validate_tags():
+    """Massing stamps fortress_compound + grand_approach for existence checks."""
+    assembly, layout, report = build_fortress_compound()
+    assert report.ok, [f.message for f in report.failures]
+    assert "north_keep" in layout.ranges
+    tags = set()
+    for p in assembly.placements:
+        tags |= set(p.tags)
+    assert FORTRESS_COMPOUND_TAG in tags, (
+        "build_fortress_compound must stamp fortress_compound "
+        "(minimal tag wiring for fortress_validate)"
+    )
+    assert GRAND_APPROACH_TAG in tags, (
+        "approach causeway must carry grand_approach "
+        f"(bailey.approach_rows={fortress_bailey_compound_spec().approach_rows})"
+    )
+    assert assembly_is_fortress(assembly)
+    assert assembly_requires_grand_approach(assembly)
+
+
+def test_real_fortress_passes_fortress_criticals():
+    """Live fortress output clears tower/gate/spire/approach/buttress criticals."""
+    assembly, _, report = build_fortress_compound()
+    assert report.ok, [f.message for f in report.failures]
+
+    assert check_fortress_tower_capped(assembly) == []
+    assert check_fortress_gate_exists(assembly) == []
+    assert check_spire_freestanding(assembly) == []
+    assert check_fortress_grand_approach(assembly) == []
+    assert check_buttress_outward(assembly) == []
+
+    _, vreport = validate(assembly)
+    fortress_crit = [
+        f
+        for f in vreport.critical
+        if f.check
+        in (
+            "fortress_tower_capped",
+            "fortress_gate_exists",
+            "fortress_grand_approach",
+            "spire_freestanding",
+            "buttress_outward",
+        )
+    ]
+    assert fortress_crit == [], [f"{f.check}: {f.message}" for f in fortress_crit]
+
+
+def test_real_fortress_poison_strips_gate_fires():
+    assembly, _, report = build_fortress_compound()
+    assert report.ok
+    stripped = [
+        p
+        for p in assembly.placements
+        if "gate" not in (p.asset_id or "").lower()
+        and entrance_role_tag("gate") not in p.tags
+    ]
+    broken = _copy_asm(assembly, stripped)
+    fails = check_fortress_gate_exists(broken)
+    assert fails, "stripping gate leaves must fire fortress_gate_exists"
+    assert fails[0].critical
+    _, vreport = validate(broken)
+    assert any(f.check == "fortress_gate_exists" for f in vreport.critical)
+
+
+def test_real_fortress_poison_strips_caps_and_spires_fires():
+    assembly, _, report = build_fortress_compound()
+    assert report.ok
+    stripped = [
+        p
+        for p in assembly.placements
+        if p.kind != "tower_cap"
+        and not (p.asset_id or "").startswith("spire_")
+    ]
+    broken = _copy_asm(assembly, stripped)
+    fails = check_fortress_tower_capped(broken)
+    assert fails, "no caps/spires must fire fortress_tower_capped"
+    assert fails[0].critical
+    assert "need" in fails[0].message
+
+
+def test_real_fortress_poison_detached_spire_fires():
+    assembly, _, report = build_fortress_compound()
+    assert report.ok
+    spires = [
+        p
+        for p in assembly.placements
+        if (p.asset_id or "").startswith("spire_")
+    ]
+    assert spires, "fortress massing must place spires for this poison"
+    target = spires[0]
+    ox, oy, oz = target.offset_cm
+    poisoned = []
+    for p in assembly.placements:
+        if p.piece_id == target.piece_id:
+            poisoned.append(
+                replace(p, offset_cm=(ox + MODULE_CM * 40.0, oy, oz))
+            )
+        else:
+            poisoned.append(p)
+    broken = _copy_asm(assembly, poisoned)
+    fails = check_spire_freestanding(broken)
+    assert fails, "shifted spire must fire spire_freestanding"
+    assert any(f.piece_id == target.piece_id for f in fails)
+    assert all(f.critical for f in fails)
+
+
+def test_real_fortress_poison_inward_buttress_fires():
+    """Inject an interior pier on live fortress — buttress_outward must fire."""
+    assembly, _, report = build_fortress_compound()
+    assert report.ok
+    wall = next(
+        p
+        for p in assembly.placements
+        if p.kind == "wall" and p.level == 0 and "north_keep" in p.tags
+    )
+    # Prefer a floor whose covered_cells include the wall anchor (Rule 5.1).
+    floor = next(
+        (
+            p
+            for p in assembly.placements
+            if p.kind == "floor"
+            and p.level == 0
+            and wall.cell in covered_cells(p)
+        ),
+        None,
+    )
+    assert floor is not None or any(
+        p.kind == "floor" for p in assembly.placements
+    ), "fortress keep needs a floor deck for interior-cell poison"
+    butt = _buttress(
+        "poison_inward_butt",
+        wall.cell,
+        offset_cm=(MODULE_CM * 0.4, MODULE_CM * 0.4, 0.0),
+        yaw=0,
+    )
+    broken = _copy_asm(assembly, list(assembly.placements) + [butt])
+    fails = check_buttress_outward(broken)
+    assert fails, "inward buttress on real fortress must fire buttress_outward"
+    assert any(f.piece_id == "poison_inward_butt" for f in fails)
+    assert all(f.critical for f in fails)
+
+
+def test_real_fortress_live_buttresses_pass_outward():
+    """Live fortress buttresses must bear outward (massing enabled 64 piers)."""
+    assembly, _, report = build_fortress_compound()
+    assert report.ok
+    butts = [
+        p
+        for p in assembly.placements
+        if p.asset_id == "buttress" or "buttress" in p.tags
+    ]
+    assert len(butts) >= 1, "fortress massing must place live buttresses"
+    fails = check_buttress_outward(assembly)
+    assert fails == [], [f.message for f in fails]
+    _, vreport = validate(assembly)
+    assert not any(
+        f.check == "buttress_outward" for f in vreport.critical
+    ), [f.message for f in vreport.critical if f.check == "buttress_outward"]

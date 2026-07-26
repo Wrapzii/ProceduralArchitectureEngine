@@ -42,9 +42,9 @@ _BUTTRESS_BATTER = 0.62  # top depth / bottom depth — sloped weathering
 # Two set-offs, not four. Four coarse steps over one storey made a zigzag stack of
 # blocks rather than a batter; stacked up three storeys that read as twelve blocks.
 _BUTTRESS_STEPS = 2
-_ARCH_PIER_FRAC = 0.16  # of MODULE, each side of a free-standing arch
-_ARCH_SPRING_FRAC = 0.55  # of STOREY
-_ARCH_BANDS = 12
+_ARCH_PIER_FRAC = 0.11  # of MODULE — slim pier, wide clear opening
+_ARCH_SPRING_FRAC = 0.10  # of STOREY — low spring = monumental headroom
+_ARCH_BANDS = 24  # smooth semicircle, not stepped blocks
 _COLUMN_SEGMENTS = 24
 # Spiral tower newel — thicker than a colonnade shaft; greybox cylinder/box.
 _NEWEL_D_FRAC = 0.22  # of MODULE (diameter)

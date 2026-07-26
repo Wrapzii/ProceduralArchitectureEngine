@@ -25,9 +25,20 @@ from pae.style_pack import (
 
 _STYLES_DIR = Path(__file__).resolve().parents[2] / "styles"
 
+_ALL_BUILTIN_STYLE_IDS = (
+    "townhouse",
+    "keep",
+    "gothic_academy",
+    "wizard_academy",
+    "rustic",
+    "medieval",
+    "manor",
+    "civic",
+)
 
-@pytest.mark.parametrize("style_id", ["townhouse", "gothic_academy", "keep"])
-def test_legacy_style_packs_load(style_id: str):
+
+@pytest.mark.parametrize("style_id", _ALL_BUILTIN_STYLE_IDS)
+def test_builtin_style_packs_load(style_id: str):
     pack, report = load_style_pack(style_id)
     assert report.ok is True, [f.message for f in report.failures]
     assert pack is not None
@@ -39,6 +50,14 @@ def test_legacy_style_packs_load(style_id: str):
     assert legacy["id"] == style_id
     assert legacy["roof_pitch"] == pack.geometry.roof_pitch
     assert legacy["window"]["tag"] == pack.window.tag
+
+
+def test_keep_style_defaults_to_hip():
+    pack, report = load_style_pack("keep")
+    assert report.ok is True, [f.message for f in report.failures]
+    assert pack is not None
+    assert pack.roof.kind_default == "hip"
+    assert resolve_roof_kind(pack, spec_kind="auto") == "hip"
 
 
 def test_wizard_academy_steep_pitch_and_inheritance():
@@ -58,6 +77,52 @@ def test_wizard_academy_steep_pitch_and_inheritance():
     # Inherited from gothic_academy
     assert pack.materials.wall == "stone_ashlar"
     assert pack.tower.finial is True
+
+
+@pytest.mark.parametrize(
+    "style_id,roof_kind,window_tag,roof_pitch_min",
+    [
+        ("rustic", "pitched", "window_simple", 1.3),
+        ("medieval", "hip", "window_mullioned", 0.8),
+        ("manor", "pitched", "window_mullioned", 1.0),
+        ("civic", "flat", "window_round", 0.7),
+    ],
+)
+def test_stage_i_style_packs_distinct(
+    style_id: str, roof_kind: str, window_tag: str, roof_pitch_min: float
+):
+    pack, report = load_style_pack(style_id)
+    assert report.ok is True, [f.message for f in report.failures]
+    assert pack is not None
+    assert pack.id == style_id
+    assert resolve_roof_kind(pack, spec_kind="auto") == roof_kind
+    assert pack.window.tag == window_tag
+    assert pack.geometry.roof_pitch >= roof_pitch_min
+    assert pack.geometry.storey_height_cm is not None
+
+
+def test_manor_has_generous_window_density():
+    pack, report = load_style_pack("manor")
+    assert report.ok and pack is not None
+    assert pack.window.per_bay == 2
+    assert pack.wall_bands.cornice_cm >= 40
+
+
+def test_civic_has_grand_plinth():
+    pack, report = load_style_pack("civic")
+    assert report.ok and pack is not None
+    assert pack.wall_bands.plinth_cm >= 65
+    assert resolve_piece_id(pack.to_legacy_dict(), role="window") == "wall_window_round"
+
+
+def test_medieval_tower_finial():
+    pack, report = load_style_pack("medieval")
+    assert report.ok and pack is not None
+    assert pack.tower.cap == "cone_steep"
+    assert pack.tower.finial is True
+    assert resolve_piece_id(pack.to_legacy_dict(), role="window", tag="window_mullioned") == (
+        "wall_window_mullioned"
+    )
 
 
 def test_wizard_academy_substitutes_lancet():

@@ -34,7 +34,9 @@ Enable **Procedural Architecture Engine** from **User Default** in
 
 | Panel | Purpose |
 |---|---|
-| **Spec** | Style, footprint, seed, roof, stair, wall height, optional entrance |
+| **Structure** | Name, style, seed, optional foundation, roof/stair, YAML load/export, **Generate Structure**, Validate |
+| **Levels** | Level stack list (add/remove), per-level `height_units`, wall style, sketch text |
+| **Spec (Legacy)** | Classic rectangle + storeys footprint UI |
 | **Generate** | Primary actions + scene clear checkbox |
 | **Validate** | Cached report; click defect → select + frame |
 | **Export** | Blend / FBX / UE manifest (validation gate) |
@@ -42,9 +44,13 @@ Enable **Procedural Architecture Engine** from **User Default** in
 
 ## Workflow (in Blender)
 
-1. **Spec** — set fields or **Load M1 Box House** / **Load School Preset**.
-2. **Generate → Generate Current Spec** — runs the same `run_full_pipeline` /
-   `validate` path as CLI (placeholder cubes in `PAE_Building`).
+1. **Structure** — set name/style/seed or **Load Gatehouse Preset** / **Load Structure YAML**.
+2. **Levels** — add/remove levels; edit sketch text and `height_units` per level.
+3. **Generate Structure** — runs `StructureSpec` → `run_through_assemble` → `validate`
+   (placeholder cubes in `PAE_Building`).
+4. **Spec (Legacy)** — classic rectangle path via **Generate Current Spec** (unchanged).
+5. **Generate → Generate Fortress / Generate School / Build Gallery** — compound builders.
+6. **Export Structure YAML** — round-trip §3.1 YAML from the current UI state.
 3. **Generate → Generate Fortress / Generate School / Build Gallery** — call
    `pae.blender_build` compound/gallery builders (real meshes in named collections).
 4. **Clear PAE Scene First** — when checked, removes prior `PAE_*` collections
@@ -57,7 +63,10 @@ Enable **Procedural Architecture Engine** from **User Default** in
 
 | Button | Core API |
 |---|---|
-| Generate Current Spec | `pipeline.run_through_assemble` + `validate` |
+| Generate Structure | `StructureSpec` → `pipeline.run_through_assemble` + `validate` |
+| Generate Current Spec | `BuildingSpec` → `pipeline.run_through_assemble` + `validate` |
+| Load / Export Structure YAML | `load_structure_yaml` / `StructureSpec.to_yaml()` |
+| Load Gatehouse Preset | §3.1 example from `structure_helpers.GATEHOUSE_PRESET_YAML` |
 | Generate Fortress | `compound.build_fortress_compound` via `build_fortress_live` |
 | Generate School | `build_school_showcase` → `build_gallery(milestones=("school",))` |
 | Build Gallery | `build_gallery()` (M1–M4 + fortress) |
@@ -77,7 +86,10 @@ because they live on compound builders or need multi-entrance editors:
 - **Arcade / balcony gallery** — `BalconySpec` on compound ranges (fortress cloister)
 - **Interior fitout** — `decorate` pass / room program beyond `school` footprint kind
 - **Multi-entrance lists** — only one optional entrance in Spec panel today
-- **Tower specs** — per-tower spiral drums via `TowerSpec` JSON / factories
+- **Tower specs** — per-tower spiral drums via `TowerSpec` JSON / factories;
+  `radius_bays` is continuous from `0.5` to `16`, `shape` is `round` or
+  `square`, and `cap_style` / `spire_height_storeys` scale the roof
+  independently from the shaft
 - **Stage stepping screenshots** — use `tools/pae_build_in_blender.py` flags
 
 Use factories in `pae/spec.py`, `pae/compound.py`, and CLI
@@ -101,7 +113,7 @@ Writes `Saved/pae_addon_smoke.json` on success.
 Unit tests (no Blender):
 
 ```powershell
-python -m pytest pae/tests/unit/test_addon_helpers.py pae/tests/unit/test_addon_registration.py -q
+python -m pytest pae/tests/unit/test_addon_helpers.py pae/tests/unit/test_addon_structure.py pae/tests/unit/test_addon_registration.py -q
 ```
 
 ## PYTHONPATH
@@ -127,7 +139,8 @@ not a reason to go around it. Add the operator.
 ### The path that matters
 
 ```
-Spec panel fields ─► spec_from_context() ─► run_full_pipeline()
+Structure / Levels panels ─► structure_from_context() ─► run_full_pipeline(StructureSpec)
+Legacy Spec panel       ─► spec_from_context()        ─► run_full_pipeline(BuildingSpec)
                                               │
                      solve → plan → assemble → validate
                                               │
@@ -158,22 +171,20 @@ Prefer these over hand-rolled pipeline calls. They exercise the same code the us
 
 | panel | what it can do |
 |---|---|
-| Spec | `building_name`, `style`, `storeys`, `bays_x`, `bays_y`, `footprint_kind`, `seed` |
+| Structure | name, style, seed, optional foundation sketch, roof/stair, YAML load/export, generate + validate |
+| Levels | level stack (add/remove), per-level `height_units`, wall style, ASCII sketch text |
+| Spec (Legacy) | `building_name`, `style`, `storeys`, `bays_x`, `bays_y`, `footprint_kind`, `seed` |
 | Assets | tag filter; browse is a **stub** |
 | Generate | run a stage, run the full pipeline, load the m1/school presets, build fortress/school/gallery |
 | Validate | run validate, list failures, frame a defect |
 | Export | `.blend`, `.fbx`, manifest JSON |
 
-**That is the whole authoring surface: a rectangle, N storeys, a seed.**
+**The structure stack path is the Master Plan §5 authoring surface.** Legacy Spec is still
+a rectangle + storeys shortcut. Grid paint (§3.2) is intentionally not started here.
 
-`BuildingSpec` supports far more than the panel can reach — towers, courtyards, room
-programs, circulation, aperture policy, roof kinds — and `compound.py` / `site.py` build
-whole compounds and streets. None of it is reachable from the UI. The preset buttons are
-hardcoded Python (`fortress_bailey_compound_spec()` and friends), so what looks like
-authoring is really a menu of fixed scenes.
-
-**So the honest answer to "can I design my own buildings or city plans in it?" is no.**
-You can resize a box and press Generate. Everything richer requires editing Python.
+`BuildingSpec` supports far more than either panel can reach — towers, courtyards, room
+programs beyond sketch marks, compound connections — and `compound.py` / `site.py` build
+whole compounds and streets. Preset buttons for fortress/school/gallery remain hardcoded.
 
 ## The gap, and the shape of the fix
 
@@ -185,19 +196,14 @@ engine **refuses to build things that are wrong**. The natural division is:
 - **PAE places, and validates** — the guard rail that catches the doorway to nothing, the
   stair into a wall, the floating tower
 
-For that, the add-on needs one thing it does not have: **a spec that is data, not panel
-fields or hardcoded presets.** `BuildingSpec` is already a dataclass; there is no JSON
-in/out for it, and no operator that accepts one.
+For that, the add-on now has **StructureSpec YAML round-trip** via Structure / Levels
+panels plus load/export operators. Remaining gaps:
 
-That work is scoped in `Docs/CASTLE_SCHOOL_ROADMAP.md` Phase 11. The short version:
-
-1. `spec_to_dict` / `spec_from_dict` round-tripping every field, with a schema version.
-2. `pae.generate_from_spec_json` — takes a filepath or text block, runs the pipeline,
-   writes the report back to `validation_report_json`.
-3. A **site/compound** spec so several buildings and their relationships are expressible
-   as data, not only single buildings.
+1. Grid paint panel (§3.2) — emits the same YAML; not started in MP-WS8.
+2. Program region painting (§5 Panel 4) — YAML `program:` blocks are hand-edited for now.
+3. Site/compound spec as data — still compound presets / CLI.
 4. Report JSON stable enough to feed straight back to an LLM: check name, message,
    `world_xyz`, `piece_id`, severity.
 
-With those four, the loop becomes: LLM writes spec JSON → operator builds and validates →
-report JSON goes back to the LLM → it revises. That is the product.
+With those, the loop becomes: LLM writes §3.1 YAML → **Load Structure YAML** →
+**Generate Structure** → report JSON goes back to the LLM → it revises. That is the product.

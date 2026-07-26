@@ -1,0 +1,22 @@
+schema_version = "1.0.0"
+
+id = "pae"
+version = "0.1.0"
+name = "Procedural Architecture Engine"
+tagline = "Deterministic procedural buildings for Blender and UE 5.8"
+maintainer = "PAE"
+type = "add-on"
+tags = ["3D View", "Add Mesh"]
+blender_version_min = "4.2.0"
+license = ["SPDX:GPL-3.0-or-later"]
+
+[permissions]
+files = "Read building specs and write FBX or manifest exports"
+
+[build]
+paths_exclude_pattern = [
+  "__pycache__/",
+  "/.git/",
+  "/*.zip",
+  "tests/",
+]

@@ -44,6 +44,15 @@ APERTURE_ALIGNMENT_TOL_CM = TOL_CM
 def validate(assembly: Assembly) -> Tuple[Assembly, Report]:
     """Validate an assembly. Returns (assembly, report)."""
     failures: List[Failure] = []
+    if not assembly.placements:
+        failures.append(
+            Failure(
+                check="assembly_nonempty",
+                message="assembly contains no placements",
+                world_xyz=None,
+                critical=True,
+            )
+        )
     failures.extend(_check_end_connectivity(assembly))
     failures.extend(_check_vertical_support(assembly))
     failures.extend(_check_collinear_gaps(assembly))
@@ -78,6 +87,8 @@ def validate(assembly: Assembly) -> Tuple[Assembly, Report]:
     failures.extend(_check_tower_entry_door(assembly))
     failures.extend(_check_tower_entry_clears_stair(assembly))
     failures.extend(_check_spiral_reaches_top(assembly))
+    failures.extend(_check_drum_exclusivity(assembly))
+    failures.extend(_check_aperture_faces_open_air(assembly))
     failures.extend(_check_upper_entrance_landing(assembly))
     failures.extend(_check_storey_egress(assembly))
     failures.extend(_check_stair_landing_clearance(assembly))
@@ -443,6 +454,7 @@ def _emit_collinear_span_gaps(
     plane: float,
     spans: List[Tuple[str, float, float]],
     run_id: str = "",
+    max_gap_cm: Optional[float] = None,
 ) -> List[Failure]:
     failures: List[Failure] = []
     spans = sorted(spans, key=lambda s: s[1])
@@ -451,6 +463,11 @@ def _emit_collinear_span_gaps(
         id_b, start_b, _ = spans[i + 1]
         gap = start_b - end_a
         if gap > TOL_CM:
+            # Geometric inference cannot know whether distant collinear pieces
+            # belong to one wall run.  Keep it useful for a locally missing
+            # module, while authoritative ``wall_runs`` below remain unlimited.
+            if max_gap_cm is not None and gap > max_gap_cm:
+                continue
             mid = (end_a + start_b) * 0.5
             if axis == "y":
                 xyz = (plane, mid, storey_datum_z_cm(level) + STOREY_CM * 0.5)
@@ -481,6 +498,11 @@ def _check_collinear_gaps(assembly: Assembly) -> List[Failure]:
             continue
         if "drum_window" in wall.tags or wall.piece_id.startswith("tower_win_"):
             continue
+        # Program partitions form several intentional, disconnected runs on a
+        # shared grid plane. Their continuity is encoded by the program carve;
+        # globally pairing them creates warnings across rooms and corridors.
+        if "partition" in wall.tags:
+            continue
         bb_min, bb_max = _placement_aabb(wall)
         axis = _wall_long_axis(wall)
         if axis == "y":
@@ -497,7 +519,11 @@ def _check_collinear_gaps(assembly: Assembly) -> List[Failure]:
         for plane, spans in _cluster_spans_by_plane(items):
             failures.extend(
                 _emit_collinear_span_gaps(
-                    level=level, axis=axis, plane=plane, spans=spans
+                    level=level,
+                    axis=axis,
+                    plane=plane,
+                    spans=spans,
+                    max_gap_cm=MODULE_CM + TOL_CM,
                 )
             )
 
@@ -543,7 +569,7 @@ def _is_hall_envelope_wall(p: SolidPlacement) -> bool:
 
 
 def _check_tower_hall_kiss(assembly: Assembly) -> List[Failure]:
-    """Every tower drum arc must AABB-kiss a hall wall within ``TOL_CM``.
+    """Every attached drum ring must AABB-kiss a hall wall within ``TOL_CM``.
 
     WHY: Ledger C-5 shipped a fully detached tower. ``freestanding`` catches islands,
     but a drum that sits near the hall with an air gap can still join the touch graph
@@ -562,27 +588,51 @@ def _check_tower_hall_kiss(assembly: Assembly) -> List[Failure]:
         return []
 
     hall_boxes = [_placement_aabb(w) for w in hall_walls]
-    failures: List[Failure] = []
+    by_ring: Dict[Tuple[Tuple[int, int], int], List[SolidPlacement]] = {}
     for arc in arcs:
-        amin, amax = _placement_aabb(arc)
+        by_ring.setdefault((arc.cell, arc.level), []).append(arc)
+    # A designed tower-entry leaf replaces the attach-face arc. It is part of
+    # the junction shell and may be the only member that actually kisses the hall.
+    entries = [
+        p
+        for p in assembly.placements
+        if "tower_entry" in set(p.tags) or p.piece_id.startswith("tower_entry_")
+    ]
+
+    failures: List[Failure] = []
+    for (cell, level), ring in sorted(by_ring.items()):
+        ring_boxes = [_placement_aabb(p) for p in ring]
+        shell_boxes = ring_boxes + [
+            _placement_aabb(p)
+            for p in entries
+            if p.cell == cell and p.level == level
+        ]
+        z_min = min(bb[0][2] for bb in ring_boxes)
+        z_max = max(bb[1][2] for bb in ring_boxes)
         z_peers = [
             (hmin, hmax)
             for hmin, hmax in hall_boxes
-            if min(amax[2], hmax[2]) - max(amin[2], hmin[2]) >= -TOL_CM
+            if min(z_max, hmax[2]) - max(z_min, hmin[2]) >= -TOL_CM
         ]
         if not z_peers:
             continue
-        if any(aabb_intersects(amin, amax, hmin, hmax) for hmin, hmax in z_peers):
+        if any(
+            aabb_intersects(smin, smax, hmin, hmax)
+            for smin, smax in shell_boxes
+            for hmin, hmax in z_peers
+        ):
             continue
+        sample = ring[0]
+        amin, amax = ring_boxes[0]
         failures.append(
             Failure(
                 check="tower_hall_kiss",
                 message=(
-                    f"tower drum {arc.piece_id} ({arc.asset_id}) does not kiss a "
+                    f"tower drum at {cell} level {level} does not kiss a "
                     f"hall wall within {TOL_CM} cm — freestanding or air-gapped attach"
                 ),
                 world_xyz=_centre(amin, amax),
-                piece_id=arc.piece_id,
+                piece_id=sample.piece_id,
                 critical=True,
             )
         )
@@ -779,6 +829,61 @@ def _designed_roof_valley_pair(a: SolidPlacement, b: SolidPlacement) -> bool:
     return a.kind == "roof" and b.kind == "roof" and a.level == b.level
 
 
+def _designed_roof_tower_arc_pair(
+    a: SolidPlacement,
+    b: SolidPlacement,
+    a_min: Tuple[float, float, float],
+    a_max: Tuple[float, float, float],
+    b_min: Tuple[float, float, float],
+    b_max: Tuple[float, float, float],
+) -> bool:
+    """Pitched hall roof meets an attached tower drum at the kiss (M3 keep)."""
+    if a.kind == "roof" and b.kind == "tower_arc":
+        roof, arc = a, b
+    elif b.kind == "roof" and a.kind == "tower_arc":
+        roof, arc = b, a
+    else:
+        return False
+    rx, ry = roof.cell
+    ax, ay = arc.cell
+    if abs(rx - ax) + abs(ry - ay) != 1:
+        return False
+    if not _has_xy_overlap(a_min, a_max, b_min, b_max):
+        return False
+    # Gable/slope volume can span the storey band above/below the drum ring.
+    if arc.level < roof.level - 1 or arc.level > roof.level + 2:
+        return False
+    return True
+
+
+def _designed_wall_tower_arc_pair(
+    a: SolidPlacement,
+    b: SolidPlacement,
+    a_min: Tuple[float, float, float],
+    a_max: Tuple[float, float, float],
+    b_min: Tuple[float, float, float],
+    b_max: Tuple[float, float, float],
+) -> bool:
+    """Hall envelope wall kisses an attached tower drum ring at the shared edge."""
+    if _is_wall(a) and b.kind == "tower_arc":
+        wall, arc = a, b
+    elif _is_wall(b) and a.kind == "tower_arc":
+        wall, arc = b, a
+    else:
+        return False
+    if not _is_hall_envelope_wall(wall):
+        return False
+    wx, wy = wall.cell
+    ax, ay = arc.cell
+    if abs(wx - ax) + abs(wy - ay) != 1:
+        return False
+    if abs(wall.level - arc.level) > 1:
+        return False
+    if not _has_xy_overlap(a_min, a_max, b_min, b_max):
+        return False
+    return _z_overlap_extent(a_min, a_max, b_min, b_max) > TOL_CM
+
+
 def _interpenetration_pair_allowed(
     a: SolidPlacement,
     b: SolidPlacement,
@@ -807,6 +912,10 @@ def _interpenetration_pair_allowed(
     if _designed_roof_gable_slope_pair(a, b):
         return True
     if _designed_roof_valley_pair(a, b):
+        return True
+    if _designed_roof_tower_arc_pair(a, b, a_min, a_max, b_min, b_max):
+        return True
+    if _designed_wall_tower_arc_pair(a, b, a_min, a_max, b_min, b_max):
         return True
     # Spiral newel shares the drum cell with helix quarters / tower_arc AABBs.
     from pae.spiral_shell import designed_spiral_newel_pair
@@ -998,6 +1107,10 @@ def _flood_interior_leaks(
         if role == CellRole.INTERIOR or role in (
             CellRole.CORRIDOR,
             CellRole.CLASSROOM,
+            CellRole.ROOM,
+            CellRole.HALL,
+            CellRole.SERVICE,
+            CellRole.ARCADE,
         ):
             leaks.append(((cx, cy), cell_world(cx, cy)))
             continue
@@ -1150,6 +1263,10 @@ def _check_floor_coverage(assembly: Assembly) -> List[Failure]:
                     CellRole.INTERIOR,
                     CellRole.CORRIDOR,
                     CellRole.CLASSROOM,
+                    CellRole.ROOM,
+                    CellRole.HALL,
+                    CellRole.SERVICE,
+                    CellRole.ARCADE,
                 ):
                     continue
                 cx, cy = ox + lx, oy + ly
@@ -1400,10 +1517,13 @@ def _is_partition_door(p: SolidPlacement) -> bool:
 
 
 def _check_classroom_corridor_connectivity(assembly: Assembly) -> List[Failure]:
-    """Every CLASSROOM cell must reach a CORRIDOR via a door partition on the shared edge.
+    """Every connected classroom region must reach a corridor through a door.
 
-    Buildings without classrooms skip this check. Critical when classrooms exist.
-    Uses ``_cell_role_is`` so reload_pae stale CellRole enums do not false-fail.
+    A room may be several cells deep, so only its entrance cell is expected to
+    touch the corridor.  The previous per-cell rule forced all classrooms to be
+    one module deep and was the reason the school could not contain real rooms.
+    Buildings without classrooms skip this check. Uses ``_cell_role_is`` so
+    reload_pae stale CellRole enums do not false-fail.
     """
     from pae.trim import covered_cells
 
@@ -1421,14 +1541,14 @@ def _check_classroom_corridor_connectivity(assembly: Assembly) -> List[Failure]:
 
     for level, layer in sorted(assembly.floor_plan.items()):
         ox, oy = layer.origin_cell
-        classrooms: List[Tuple[int, int]] = []
+        classrooms: set[Tuple[int, int]] = set()
         corridors: set[Tuple[int, int]] = set()
         for ly in range(layer.height):
             for lx in range(layer.width):
                 role = layer.cells[ly][lx]
                 cx, cy = ox + lx, oy + ly
                 if _cell_role_is(role, CellRole.CLASSROOM):
-                    classrooms.append((cx, cy))
+                    classrooms.add((cx, cy))
                 elif _cell_role_is(role, CellRole.CORRIDOR):
                     corridors.add((cx, cy))
         if not classrooms:
@@ -1443,23 +1563,51 @@ def _check_classroom_corridor_connectivity(assembly: Assembly) -> List[Failure]:
                 )
             )
             continue
-        for cx, cy in classrooms:
-            corridor_neighbors = [
-                (cx + dx, cy + dy)
-                for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1))
-                if (cx + dx, cy + dy) in corridors
+        remaining = set(classrooms)
+        components: List[set[Tuple[int, int]]] = []
+        while remaining:
+            seed = min(remaining)
+            remaining.remove(seed)
+            component = {seed}
+            stack = [seed]
+            while stack:
+                cx, cy = stack.pop()
+                for neighbor in (
+                    (cx + 1, cy),
+                    (cx - 1, cy),
+                    (cx, cy + 1),
+                    (cx, cy - 1),
+                ):
+                    if neighbor in remaining:
+                        remaining.remove(neighbor)
+                        component.add(neighbor)
+                        stack.append(neighbor)
+            components.append(component)
+
+        for component in components:
+            corridor_edges = [
+                ((cx, cy), (nx, ny))
+                for cx, cy in sorted(component)
+                for nx, ny in (
+                    (cx + 1, cy),
+                    (cx - 1, cy),
+                    (cx, cy + 1),
+                    (cx, cy - 1),
+                )
+                if (nx, ny) in corridors
             ]
-            if not corridor_neighbors:
+            sample = min(component)
+            if not corridor_edges:
                 failures.append(
                     Failure(
                         check="classroom_corridor",
                         message=(
-                            f"classroom cell ({cx}, {cy}) level {level} "
+                            f"classroom region at {sample} level {level} "
                             "does not adjoin a corridor"
                         ),
                         world_xyz=(
-                            cx * MODULE_CM + MODULE_CM * 0.5,
-                            cy * MODULE_CM + MODULE_CM * 0.5,
+                            sample[0] * MODULE_CM + MODULE_CM * 0.5,
+                            sample[1] * MODULE_CM + MODULE_CM * 0.5,
                             float(storey_datum_z_cm(level)),
                         ),
                         critical=True,
@@ -1468,7 +1616,7 @@ def _check_classroom_corridor_connectivity(assembly: Assembly) -> List[Failure]:
                 continue
             has_door = any(
                 (level, cx, cy, face) in door_faces
-                for n in corridor_neighbors
+                for (cx, cy), n in corridor_edges
                 if (face := _face_toward((cx, cy), n)) is not None
             )
             if not has_door:
@@ -1476,12 +1624,12 @@ def _check_classroom_corridor_connectivity(assembly: Assembly) -> List[Failure]:
                     Failure(
                         check="classroom_corridor",
                         message=(
-                            f"classroom cell ({cx}, {cy}) level {level} "
-                            "has no door partition facing its corridor neighbor"
+                            f"classroom region at {sample} level {level} "
+                            "has no door partition facing its corridor"
                         ),
                         world_xyz=(
-                            cx * MODULE_CM + MODULE_CM * 0.5,
-                            cy * MODULE_CM + MODULE_CM * 0.5,
+                            sample[0] * MODULE_CM + MODULE_CM * 0.5,
+                            sample[1] * MODULE_CM + MODULE_CM * 0.5,
                             float(storey_datum_z_cm(level)),
                         ),
                         critical=True,
@@ -1699,6 +1847,13 @@ def _solid_blocks_headroom(
     # Hall→drum doorway is a passage leaf on the attach rim — walk-through, not a plug.
     if "tower_entry" in solid.tags or solid.piece_id.startswith("tower_entry_"):
         return False
+    if "tower_entry_landing" in solid.tags:
+        return False
+    # Central stair-core walls are vertical boundaries beside the helical
+    # walking line, never a ceiling over it. Their conservative AABB intersects
+    # the generic exit/head probes even though the measured faces are tangent.
+    if "tower_stair_core" in solid.tags:
+        return False
     if solid.kind not in ("wall", "roof", "floor"):
         return False
     # Spanning floors are opened at holes by mesh contract; AABB still covers
@@ -1905,10 +2060,20 @@ def _check_stair_exit_clearance(assembly: Assembly) -> List[Failure]:
         hole_cells_top = set(hole_by_cell.keys())
 
         for p in assembly.placements:
-            if p.level != top_level or not _is_module_solid_floor(p):
+            if p.level != top_level or p.kind != "floor" or p.asset_id == "floor_hole":
+                continue
+            # Narrow threshold outside the central well. It deliberately
+            # overlaps the outer tread and door frame but does not cap the
+            # stair opening.
+            if "tower_entry_landing" in p.tags:
                 continue
             plugged = covered_cells(p) & exit_cells
-            plugged = {c for c in plugged if c not in hole_cells_top}
+            if _is_module_solid_floor(p):
+                # Module pads on exit bays are always plugs — a co-located floor_hole
+                # cannot cancel a contradictory solid pad on the same bay.
+                pass
+            else:
+                plugged = {c for c in plugged if c not in hole_cells_top}
             if not plugged:
                 continue
             failures.append(
@@ -2703,6 +2868,18 @@ def _check_spiral_reaches_top(assembly: Assembly) -> List[Failure]:
     return check_spiral_reaches_top(assembly)
 
 
+def _check_drum_exclusivity(assembly: Assembly) -> List[Failure]:
+    from pae.drum import check_drum_exclusivity
+
+    return check_drum_exclusivity(assembly)
+
+
+def _check_aperture_faces_open_air(assembly: Assembly) -> List[Failure]:
+    from pae.drum import check_aperture_faces_open_air
+
+    return check_aperture_faces_open_air(assembly)
+
+
 def _check_upper_entrance_landing(assembly: Assembly) -> List[Failure]:
     """Phase 9.2 T-007/T-009 — role-tagged upper_exterior doors need a landing."""
     from pae.upper_entrance import check_upper_entrance_landing
@@ -2909,6 +3086,24 @@ def _check_headroom(assembly: Assembly) -> List[Failure]:
                     continue
                 if other.asset_id == "floor_hole":
                     continue
+                # Annular tower-room slabs and their central stair enclosure
+                # share one coarse logical cell. Their measured meshes are
+                # adjacent; cell-centre head probes cannot represent the hole.
+                if (
+                    "tower_room_floor" in walk.tags
+                    and "tower_stair_core" in other.tags
+                ):
+                    continue
+                # The spiral and its enclosure are tangent in the authored
+                # geometry. Their conservative centred AABBs overlap, so the
+                # generic head probe cannot distinguish the clear core from
+                # the four perimeter walls.
+                if (
+                    walk.kind == "stair"
+                    and "habitable_drum" in walk.tags
+                    and "tower_stair_core" in other.tags
+                ):
+                    continue
                 # Habitable drum helix climbs under the hip eaves until the crown
                 # ``floor_hole`` / ``tower_deck`` well — not an indoor headroom fail.
                 if (
@@ -2969,6 +3164,10 @@ def _check_roof_covers_enclosed(assembly: Assembly) -> List[Failure]:
                     CellRole.INTERIOR,
                     CellRole.CLASSROOM,
                     CellRole.CORRIDOR,
+                    CellRole.ROOM,
+                    CellRole.HALL,
+                    CellRole.SERVICE,
+                    CellRole.ARCADE,
                 ):
                     interior_cells.add((ox + lx, oy + ly))
 
@@ -3440,6 +3639,9 @@ def _check_aperture_sanity(assembly: Assembly) -> List[Failure]:
     tower_entry_walls = {
         p.piece_id for p in assembly.placements if is_tower_entry_piece(p)
     }
+    partition_walls = {
+        p.piece_id for p in assembly.placements if "partition" in set(p.tags)
+    }
 
     for ap in assembly.apertures:
         sill_above_floor = ap.sill_z_cm - ap.floor_z_cm
@@ -3493,6 +3695,7 @@ def _check_aperture_sanity(assembly: Assembly) -> List[Failure]:
                     ap,
                     layer_map,
                     tower_entry=ap.wall_piece_id in tower_entry_walls,
+                    interior_passage=ap.wall_piece_id in partition_walls,
                 )
             )
 
@@ -3504,6 +3707,7 @@ def _check_door_walkable(
     layer_map: Dict[int, FloorPlanLayer],
     *,
     tower_entry: bool = False,
+    interior_passage: bool = False,
 ) -> List[Failure]:
     failures: List[Failure] = []
     layer = layer_map.get(ap.level)
@@ -3518,6 +3722,10 @@ def _check_door_walkable(
             CellRole.DOOR,
             CellRole.CORRIDOR,
             CellRole.CLASSROOM,
+            CellRole.ROOM,
+            CellRole.HALL,
+            CellRole.SERVICE,
+            CellRole.ARCADE,
         )
 
     def exterior_walkable(cell: Tuple[int, int]) -> bool:
@@ -3558,6 +3766,27 @@ def _check_door_walkable(
                     message=(
                         f"door {ap.piece_id} exterior side cell "
                         f"{ap.exterior_cell} is not walkable"
+                    ),
+                    world_xyz=ap.world_xyz,
+                    piece_id=ap.piece_id,
+                    critical=False,
+                )
+            )
+        return failures
+
+    if interior_passage:
+        for side_name, cell in (
+            ("interior", ap.interior_cell),
+            ("exterior", ap.exterior_cell),
+        ):
+            if interior_walkable(cell):
+                continue
+            failures.append(
+                Failure(
+                    check="aperture_sanity",
+                    message=(
+                        f"door {ap.piece_id} {side_name} side cell "
+                        f"{cell} is not walkable"
                     ),
                     world_xyz=ap.world_xyz,
                     piece_id=ap.piece_id,

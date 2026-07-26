@@ -27,10 +27,15 @@ staircase if you want it *there*, otherwise let it work it out.
 LEGEND (case-insensitive, extend via ``SKETCH_LEGEND``)
 
     ``#``  building        a cell the building occupies
-    ``.``  open            courtyard / open ground inside the outline
+    ``.``  open            courtyard (L0) / open-to-below void (upper levels)
     ``S``  stair           building cell that must host vertical circulation
     ``E``  entrance        building cell carrying the main way in
     ``T``  tower           building cell that becomes a round tower
+    ``A``  arcade          walkable courtyard arcade bay (Stage G room), Master Plan §3.1
+    ``H``  hall            program paint — open hall / great hall
+    ``C``  classroom       program paint — classroom cell
+    ``V``  service         program paint — service / kitchen / store
+    ``R``  corridor        program paint — corridor spine cell
     space  nothing         outside the building entirely
 
 Rows read top-to-bottom in the text and are flipped so that **+Y is north**, i.e. the
@@ -53,14 +58,34 @@ Cell = Tuple[int, int]
 #: character -> role. Anything not listed is treated as outside.
 SKETCH_LEGEND: Dict[str, str] = {
     "#": "building",
-    ".": "open",
+    ".": "open",  # L0 courtyard / upper open-to-below (void) — context in LevelSpec
     "s": "stair",
     "e": "entrance",
     "t": "tower",
+    "a": "arcade",  # Master Plan §3.1 / Stage G — walkable arcade gallery bay
+    "h": "hall",  # Stage G program paint
+    "c": "classroom",
+    "v": "service",
+    "r": "corridor",
 }
 
 #: Roles that occupy a built cell (as opposed to open ground).
-BUILT_ROLES = frozenset({"building", "stair", "entrance", "tower"})
+BUILT_ROLES = frozenset(
+    {
+        "building",
+        "stair",
+        "entrance",
+        "tower",
+        "arcade",
+        "hall",
+        "classroom",
+        "service",
+        "corridor",
+    }
+)
+
+#: Sketch marks that also paint StructureSpec program regions (Stage G).
+PROGRAM_SKETCH_ROLES = frozenset({"hall", "classroom", "service", "corridor", "arcade"})
 
 
 class SketchError(ValueError):
@@ -228,6 +253,7 @@ def sketch_summary(text: str) -> str:
 __all__ = [
     "BUILT_ROLES",
     "Cell",
+    "PROGRAM_SKETCH_ROLES",
     "SKETCH_LEGEND",
     "SketchError",
     "built_cells",

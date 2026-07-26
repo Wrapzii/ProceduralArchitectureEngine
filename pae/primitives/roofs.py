@@ -6,12 +6,17 @@ pieces and ``roof_gable_infill`` triangular prisms on the gable ends.
 
 S-012 adds four-slope ``roof_hip``. S-019 places ``roof_valley`` stubs along
 L/U wing abutments (full diagonal valley merge remains S-021).
+
+Stage C (Master Plan / D3-9): ridge height comes from a **structure height
+field** (topmost built level per XY column), not from ``rect_cover`` / wing
+decomposition. Plates may still split for mesh placement; one band shares one
+ridge family.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Optional, Sequence, Tuple
+from typing import Dict, FrozenSet, Iterable, List, Optional, Sequence, Set, Tuple
 
 from pae.contract import EAVE_OVERHANG_CM, FLOOR_T_CM, MODULE_CM, STOREY_CM, WALL_T_CM
 from pae.primitives.types import PrimitiveDescriptor, SocketDesc, module_tag
@@ -26,6 +31,8 @@ ROOF_PITCH_MAX = 2.5
 VALLEY_WIDTH_CM = MODULE_CM * 0.5
 
 Vec3 = Tuple[float, float, float]
+Cell = Tuple[int, int]
+RoofSpan = Tuple[int, int, int, int]  # x0, y0, x1, y1 inclusive
 
 
 @dataclass(frozen=True)
@@ -41,6 +48,104 @@ class ValleySeam:
     run0: int
     run1: int
     cross_hi: int
+
+
+@dataclass(frozen=True)
+class RoofHeightBand:
+    """One eaves-height plate of a structure roof (Master Plan Stage C).
+
+    Columns that share the same eaves height (topmost built level + cumulative
+    height_units) form one band. ``spans`` are rect_cover of that mask for mesh
+    placement only — ridge height is ``structure_ridge_span_modules(spans)``.
+    """
+
+    top_level: int
+    eaves_height_units: float
+    cells: FrozenSet[Cell]
+    spans: Tuple[RoofSpan, ...]
+
+
+def column_top_levels(
+    level_cells: Sequence[Iterable[Cell]],
+) -> Dict[Cell, int]:
+    """For each XY column, index of the topmost level that includes the cell."""
+    top: Dict[Cell, int] = {}
+    for level, cells in enumerate(level_cells):
+        for cell in cells:
+            c = (int(cell[0]), int(cell[1]))
+            prev = top.get(c)
+            if prev is None or level > prev:
+                top[c] = level
+    return top
+
+
+def eaves_height_units_at_level(
+    level: int,
+    height_units: Optional[Sequence[float]] = None,
+) -> float:
+    """Cumulative height units from ground up through ``level`` (inclusive)."""
+    if not height_units:
+        return float(level + 1)
+    total = 0.0
+    for i in range(level + 1):
+        if i < len(height_units):
+            total += float(max(1.0, float(height_units[i])))
+        else:
+            total += 1.0
+    return total
+
+
+def structure_ridge_span_modules(spans: Sequence[RoofSpan]) -> int:
+    """One ridge family for a height band — max short-span, not per-slice.
+
+    D3-9: ``rect_cover`` / wing splits must not invent different ridge heights
+    on one eaves plane. The tallest short-span in the band wins so a sketched U
+    bridge rises with the legs.
+    """
+    if not spans:
+        return 1
+    shorts = [max(1, min(x1 - x0 + 1, y1 - y0 + 1)) for x0, y0, x1, y1 in spans]
+    return max(shorts)
+
+
+def roof_height_field_bands(
+    level_cells: Sequence[Iterable[Cell]],
+    *,
+    height_units: Optional[Sequence[float]] = None,
+    exclude: Optional[Set[Cell]] = None,
+) -> List[RoofHeightBand]:
+    """Derive roof plates from the column height field (Stage C).
+
+    For each XY column, take the topmost built level → eaves height. Group by
+    eaves height; ``rect_cover`` each group for placement spans. Valleys follow
+    abutting spans inside a band (same as S-019), not massing wing roles.
+    """
+    from pae.sketch import rect_cover
+
+    skip = exclude or set()
+    top = column_top_levels(level_cells)
+    by_eaves: Dict[Tuple[float, int], Set[Cell]] = {}
+    for cell, level in top.items():
+        if cell in skip:
+            continue
+        eaves = eaves_height_units_at_level(level, height_units)
+        key = (eaves, level)
+        by_eaves.setdefault(key, set()).add(cell)
+
+    bands: List[RoofHeightBand] = []
+    for (eaves, level), cells in sorted(by_eaves.items(), key=lambda kv: kv[0][0]):
+        if not cells:
+            continue
+        spans = tuple(rect_cover(cells))
+        bands.append(
+            RoofHeightBand(
+                top_level=level,
+                eaves_height_units=float(eaves),
+                cells=frozenset(cells),
+                spans=spans,
+            )
+        )
+    return bands
 
 
 def roof_rise_cm(pitch: float = DEFAULT_ROOF_PITCH, span_cm: float = MODULE_CM) -> float:
@@ -336,8 +441,13 @@ def roof_hip_span_size_cm(
     overhang_east: float | None = None,
     overhang_south: float | None = None,
     overhang_north: float | None = None,
+    ridge_span_modules: int | None = None,
 ) -> tuple[float, float, float]:
-    """Axis-aligned hip roof spanning *modules_x* × *modules_y* bays plus eaves."""
+    """Axis-aligned hip roof spanning *modules_x* × *modules_y* bays plus eaves.
+
+    ``ridge_span_modules`` (Stage C) overrides the short-span used for peak Z so
+    every plate in a height band shares one ridge family.
+    """
     if modules_x < 1 or modules_y < 1:
         raise ValueError(f"roof span must be ≥ 1×1 modules, got {modules_x}×{modules_y}")
     oh = EAVE_OVERHANG_CM
@@ -345,10 +455,17 @@ def roof_hip_span_size_cm(
     east = overhang_east if overhang_east is not None else oh
     south = overhang_south if overhang_south is not None else oh
     north = overhang_north if overhang_north is not None else oh
+    if ridge_span_modules is not None:
+        rs = max(1, int(ridge_span_modules))
+        peak = roof_hip_height_cm(pitch, span_modules_x=rs, span_modules_y=rs)
+    else:
+        peak = roof_hip_height_cm(
+            pitch, span_modules_x=modules_x, span_modules_y=modules_y
+        )
     return (
         modules_x * MODULE_CM + west + east,
         modules_y * MODULE_CM + south + north,
-        roof_hip_height_cm(pitch, span_modules_x=modules_x, span_modules_y=modules_y),
+        peak,
     )
 
 
@@ -590,7 +707,12 @@ def _gable_infill_verts_faces(sx: float, sy: float, sz: float) -> Tuple[List[Vec
 
 
 def _double_pitch_verts_faces(sx: float, sy: float, sz: float) -> Tuple[List[Vec3], List[Sequence[int]]]:
-    """Full-footprint double-pitch roof: eaves at y=0/sy, ridge at mid-Y, height *sz*."""
+    """Full-footprint double-pitch deck: eaves at y=0/sy, ridge at mid-Y, height *sz*.
+
+    Gable ends are **not** closed here — assemble pairs this mesh with separate
+    ``roof_gable_infill`` prisms. Baking gable caps into the slope caused triple
+    overlapping extruded triangles on fortress / hall roofs.
+    """
     mid = sy * 0.5
     verts: List[Vec3] = [
         (0.0, 0.0, 0.0),
@@ -603,8 +725,6 @@ def _double_pitch_verts_faces(sx: float, sy: float, sz: float) -> Tuple[List[Vec
     faces: List[Sequence[int]] = [
         (0, 1, 5, 4),  # south slope
         (4, 5, 2, 3),  # north slope
-        (0, 4, 3),  # west gable fill (thin)
-        (1, 2, 5),  # east gable fill (thin)
         (0, 3, 2, 1),  # underside
     ]
     return verts, faces
@@ -650,8 +770,32 @@ def _valley_verts_faces(sx: float, sy: float, sz: float) -> Tuple[List[Vec3], Li
     return verts, faces
 
 
+def hip_roof_slope_face_count(verts: Sequence[Vec3], faces: Sequence[Sequence[int]]) -> int:
+    """Count sloped roof plates — faces with at least one vertex above the eave plane."""
+    count = 0
+    for face in faces:
+        zs = [verts[i][2] for i in face]
+        if max(zs) <= 1e-6:
+            continue
+        if all(z <= 1e-6 for z in zs):
+            continue
+        count += 1
+    return count
+
+
+def hip_roof_verts_faces(
+    sx: float, sy: float, sz: float
+) -> Tuple[List[Vec3], List[Sequence[int]]]:
+    """Public wrapper for hip mesh topology tests and Blender build."""
+    return _hip_roof_verts_faces(sx, sy, sz)
+
+
 def _hip_roof_verts_faces(sx: float, sy: float, sz: float) -> Tuple[List[Vec3], List[Sequence[int]]]:
-    """Four-slope hip on a rectangular footprint. *sz* is peak height above eave plane."""
+    """Four-slope hip on a rectangular footprint. *sz* is peak height above eave plane.
+
+    Always authors exactly four sloped plates (square: four triangles; rectangle:
+    two main slopes + two hip-end triangles). Underside is optional deck closure.
+    """
     if sx >= sy:
         hip = sy * 0.5
         mid_y = sy * 0.5
@@ -730,7 +874,7 @@ def _hip_roof_verts_faces(sx: float, sy: float, sz: float) -> Tuple[List[Vec3], 
 
 
 def _double_pitch_verts_faces_ridge_y(sx: float, sy: float, sz: float) -> Tuple[List[Vec3], List[Sequence[int]]]:
-    """Double-pitch with ridge along Y (eaves at x=0/sx)."""
+    """Double-pitch with ridge along Y (eaves at x=0/sx); open ends for gable infill."""
     mid = sx * 0.5
     verts: List[Vec3] = [
         (0.0, 0.0, 0.0),
@@ -743,9 +887,7 @@ def _double_pitch_verts_faces_ridge_y(sx: float, sy: float, sz: float) -> Tuple[
     faces: List[Sequence[int]] = [
         (0, 4, 5, 3),  # west slope
         (4, 1, 2, 5),  # east slope
-        (0, 1, 4),
-        (3, 5, 2),
-        (0, 3, 2, 1),
+        (0, 3, 2, 1),  # underside
     ]
     return verts, faces
 

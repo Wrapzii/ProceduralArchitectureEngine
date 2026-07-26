@@ -55,6 +55,28 @@ def test_school_academy_dict_round_trip():
     spec, report = load_spec(raw)
     assert report.ok, [f.message for f in report.failures]
     assert spec.footprint.kind == "school"
+    assert spec.level_programs is not None
+    assert len(spec.level_programs) == spec.storeys
+    assert "great_hall" in spec.level_programs[0]
+
+
+def test_school_programs_emit_named_rooms_and_full_partition_set():
+    massing, _ = solve(school_academy_spec())
+    floor_plan, report = plan(massing)
+    assert report.ok, [f.message for f in report.failures]
+    labels = {name for _x, _y, _level, name in floor_plan.program_cells}
+    assert {
+        "great_hall",
+        "reception",
+        "headmaster_office",
+        "library",
+        "science_lab",
+        "dormitory_west",
+    } <= labels
+    doors = [part for part in floor_plan.interior_partitions if part[4]]
+    walls = [part for part in floor_plan.interior_partitions if not part[4]]
+    assert len(doors) >= 12
+    assert len(walls) > len(doors)
 
 
 def test_school_switchback_stairwell_is_offset_4x2():
@@ -95,6 +117,23 @@ def test_school_has_corridor_and_classrooms_with_doors():
     assert len(levels) >= 2 or len(floor_plan.classroom_cells) >= 4 * spec.storeys
     door_parts = [p for p in floor_plan.interior_partitions if p[4]]
     assert len(door_parts) >= 4
+
+
+def test_school_classrooms_extend_beyond_the_corridor_edge():
+    """A classroom is a room region, not one decorated cell beside the hall."""
+    massing, _ = solve(school_academy_spec())
+    floor_plan, report = plan(massing)
+    assert report.ok, [f.message for f in report.failures]
+    corridors = set(floor_plan.corridor_cells)
+    deep_cells = [
+        (level, x, y)
+        for level, x, y in floor_plan.classroom_cells
+        if not any(
+            (level, x + dx, y + dy) in corridors
+            for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1))
+        )
+    ]
+    assert deep_cells, "expected full-depth classroom cells behind the doorway row"
 
 
 def test_school_validate_ok_with_trim_pipeline():
@@ -210,7 +249,14 @@ def test_gallery_includes_school_factory():
 
     labels = [lbl for lbl, _c, _f in _gallery_factories()]
     assert "school" in labels
-    assert labels[:6] == ["m1", "m2", "m3", "m4_l", "m4_u", "m4_c"]
+    assert [label for label in labels if label.startswith("m")][:6] == [
+        "m1",
+        "m2",
+        "m3",
+        "m4_l",
+        "m4_u",
+        "m4_c",
+    ]
 
 
 def test_school_export_matches_validate_trim_placement_count(tmp_path: Path):

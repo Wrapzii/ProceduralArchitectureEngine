@@ -11,6 +11,7 @@ from pae.validate import (
     placement_footprint_cells,
     validate,
     _check_stair_exit_clearance,
+    _check_stair_run_floor_clear,
 )
 
 
@@ -322,4 +323,74 @@ def test_m2_assembly_passes_stair_exit_clearance():
     _, report = validate(assembly)
     clearance = [f for f in report.failures if f.check == "stair_exit_clearance"]
     assert clearance == [], [f.message for f in clearance]
+    run_clear = [f for f in report.failures if f.check == "stair_run_floor_clear"]
+    assert run_clear == [], [f.message for f in run_clear]
     assert report.ok is True
+
+
+def test_stair_run_floor_clear_fires_when_hole_covers_only_half_run():
+    """Broken fixture FIRST (F-7): 1×1 hole on a 2-bay stair under a spanning deck."""
+    stair = _stair()
+    exits = sorted(_stair_exit_cells(stair))
+    assert exits == [(0, 0), (0, 1)]
+    assembly = Assembly(
+        placements=[
+            stair,
+            # Only the first exit bay opened — second bay stays solid floor.
+            _hole(exits[0]),
+            SolidPlacement(
+                piece_id="deck",
+                asset_id="floor",
+                kind="floor",
+                cell=(0, 0),
+                level=1,
+                yaw=0,
+                offset_cm=(0.0, 0.0, -FLOOR_T_CM),
+                size_cm=(4.0 * MODULE_CM, 3.0 * MODULE_CM, FLOOR_T_CM),
+                tags=frozenset({"floor"}),
+            ),
+        ],
+        circulation=[CirculationEdge("stair_a", 0, 1)],
+        storeys=2,
+    )
+    fails = _check_stair_run_floor_clear(assembly)
+    assert fails
+    assert all(f.check == "stair_run_floor_clear" and f.critical for f in fails)
+    assert any(str(exits[1]) in f.message for f in fails)
+    assert any("full stair footprint" in f.message for f in fails)
+
+
+def test_spanning_hole_passes_stair_run_floor_clear():
+    stair = _stair()
+    exits = sorted(_stair_exit_cells(stair))
+    assembly = Assembly(
+        placements=[
+            stair,
+            SolidPlacement(
+                piece_id="span_hole",
+                asset_id="floor_hole",
+                kind="floor",
+                cell=exits[0],
+                level=1,
+                yaw=0,
+                offset_cm=(0.0, 0.0, -FLOOR_T_CM),
+                size_cm=(MODULE_CM, 2.0 * MODULE_CM, FLOOR_T_CM),
+                tags=frozenset({"floor", "hole"}),
+            ),
+            SolidPlacement(
+                piece_id="deck",
+                asset_id="floor",
+                kind="floor",
+                cell=(0, 0),
+                level=1,
+                yaw=0,
+                offset_cm=(0.0, 0.0, -FLOOR_T_CM),
+                size_cm=(4.0 * MODULE_CM, 3.0 * MODULE_CM, FLOOR_T_CM),
+                tags=frozenset({"floor"}),
+            ),
+        ],
+        circulation=[CirculationEdge("stair_a", 0, 1)],
+        storeys=2,
+    )
+    assert _check_stair_run_floor_clear(assembly) == []
+    assert _check_stair_exit_clearance(assembly) == []

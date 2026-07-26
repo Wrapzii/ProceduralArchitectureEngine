@@ -183,6 +183,10 @@ def test_room_spec_double_height_uses_role_value_not_identity():
         CORRIDOR = 7
         CLASSROOM = 8
         DOUBLE_VOID = 9
+        ROOM = 10
+        HALL = 11
+        SERVICE = 12
+        ARCADE = 13
 
     assert StaleCellRole.DOUBLE_VOID is not CellRole.DOUBLE_VOID
     assert StaleCellRole.DOUBLE_VOID != CellRole.DOUBLE_VOID

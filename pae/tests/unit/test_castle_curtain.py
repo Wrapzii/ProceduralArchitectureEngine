@@ -68,9 +68,11 @@ def test_castle_compound_has_gate_arch_and_twin_towers():
     gates = [
         p
         for p in assembly.placements
-        if p.asset_id == "wall_gate_arch" and "gatehouse" in p.tags
+        if "gatehouse" in p.tags
+        and p.kind == "wall"
+        and "gate" in (p.asset_id or "").lower()
     ]
-    assert gates, "gatehouse missing south wall_gate_arch"
+    assert gates, "gatehouse missing south gate arch leaf"
 
     tower_arcs = [
         p for p in assembly.placements if p.kind == "tower_arc" and "gatehouse" in p.tags
@@ -89,8 +91,9 @@ def test_castle_compound_uses_curtain_trim_pieces():
     ]
     asset_ids = {p.asset_id for p in curtain}
     assert "wall_plain" in asset_ids
-    assert "parapet_solid" in asset_ids
-    assert any(p.asset_id == "battlement" for p in assembly.placements)
+    assert any(p.asset_id == "battlement" for p in curtain), (
+        "curtain wall-walk must carry battlements (parapets deferred — D3-4)"
+    )
 
 
 def test_castle_compound_validates_clean():

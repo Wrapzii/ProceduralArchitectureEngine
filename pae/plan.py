@@ -5,10 +5,11 @@ Massing → FloorPlan (CellRole grid per storey) + circulation graph proof.
 
 from __future__ import annotations
 
+import math
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Sequence, Set, Tuple
 
 from pae.contract import cell_to_world_cm
 from pae.report import Failure, Report
@@ -24,9 +25,13 @@ class CellRole(Enum):
     STAIR = 4
     VOID = 5  # stairwell / light well — no floor
     COURTYARD = 6  # open to sky, has ground, no roof
-    CORRIDOR = 7  # school circulation spine
+    CORRIDOR = 7  # school / program circulation spine
     CLASSROOM = 8  # programmed room cell (door to corridor)
     DOUBLE_VOID = 9  # double-height volume — no intermediate floor slab
+    ROOM = 10  # generic named program room from StructureSpec
+    HALL = 11  # Stage G — open hall / great hall (no inner partitions)
+    SERVICE = 12  # Stage G — service / kitchen / store
+    ARCADE = 13  # Stage G — walkable courtyard arcade gallery (a room)
 
 
 @dataclass
@@ -100,6 +105,19 @@ class FloorPlan:
         default_factory=list
     )
     rooms: List = field(default_factory=list)  # RoomSpec from spec (optional)
+    # (cell_x, cell_y, level, program name)
+    program_cells: List[Tuple[int, int, int, str]] = field(default_factory=list)
+    #: Envelope / monumental wall span (storeys). None → len(storeys).
+    wall_height_storeys: Optional[float] = None
+    # --- Master Plan Stage A/B ---
+    structure_id: Optional[str] = None
+    foundation_cells: Tuple[Tuple[int, int], ...] = ()
+    level_height_units: Optional[Tuple[int, ...]] = None
+    level_wall_styles: Optional[Tuple[Optional[str], ...]] = None
+    level_window_tags: Optional[Tuple[Optional[str], ...]] = None
+    level_programs: Optional[
+        Tuple[Dict[str, Tuple[Tuple[int, int, int, int], ...]], ...]
+    ] = None
 
 
 def _bbox(volumes: List[Volume]) -> Tuple[int, int, int, int]:
@@ -111,11 +129,28 @@ def _bbox(volumes: List[Volume]) -> Tuple[int, int, int, int]:
 
 
 def _enclosed_cells_at_level(massing: Massing, level: int) -> Set[Tuple[int, int]]:
+    """Built cells for one level.
+
+    When ``massing.level_cells`` is set (StructureSpec / Stage B), honour the
+    per-level mask so an upper level may omit a wing. Otherwise fall back to
+    volume.storeys coverage (legacy BuildingSpec path).
+    """
+    level_cells = getattr(massing, "level_cells", None)
+    if level_cells is not None and 0 <= level < len(level_cells):
+        return set(level_cells[level])
     cells: Set[Tuple[int, int]] = set()
     for v in massing.enclosed_volumes():
         if level < v.storeys:
             cells |= v.cells()
     return cells
+
+
+def _void_cells_at_level(massing: Massing, level: int) -> Set[Tuple[int, int]]:
+    """Open-to-below / void marks for a level (``.`` in Stage B sketches)."""
+    voids = getattr(massing, "level_void_cells", None)
+    if voids is None or level < 0 or level >= len(voids):
+        return set()
+    return set(voids[level])
 
 
 def _courtyard_cells(massing: Massing) -> Set[Tuple[int, int]]:
@@ -156,6 +191,73 @@ def _regions(
                     q.append(n)
         rid += 1
     return region_of
+
+
+def _pick_region_for_cells(
+    rmap: Dict[Tuple[int, int], int],
+    cells: Sequence[Tuple[int, int]],
+    *,
+    neighbor_expand: bool = False,
+) -> Optional[int]:
+    """First walkable region id covering any of *cells* (optional 4-neighbour expand)."""
+    for x, y in cells:
+        r = rmap.get((x, y))
+        if r is not None:
+            return r
+    if not neighbor_expand:
+        return None
+    for x, y in cells:
+        for dx, dy in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+            r = rmap.get((x + dx, y + dy))
+            if r is not None:
+                return r
+    return None
+
+
+def _link_stair_void_regions(
+    storeys: List[StoreyGrid],
+    region_maps: Dict[int, Dict[Tuple[int, int], int]],
+    graph: CirculationGraph,
+) -> None:
+    """Intra-storey edges where a stair VOID well touches multiple regions (Stage D).
+
+    Offset monumental flights leave VOID on upper storeys; regions on either side of
+    the well (e.g. L/U wings on the top floor) must bridge through the opening.
+    """
+    for grid in storeys:
+        level = grid.level
+        rmap = region_maps.get(level, {})
+        voids = {c for c, role in grid.cells.items() if role == CellRole.VOID}
+        if not voids:
+            continue
+        seen: Set[Tuple[int, int]] = set()
+        for start in sorted(voids):
+            if start in seen:
+                continue
+            cluster: Set[Tuple[int, int]] = set()
+            q = deque([start])
+            while q:
+                cx, cy = q.popleft()
+                if (cx, cy) in seen or grid.get(cx, cy) != CellRole.VOID:
+                    continue
+                seen.add((cx, cy))
+                cluster.add((cx, cy))
+                for dx, dy in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+                    n = (cx + dx, cy + dy)
+                    if n in voids and n not in seen:
+                        q.append(n)
+            touch_regs: Set[int] = set()
+            for x, y in cluster:
+                for dx, dy in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+                    r = rmap.get((x + dx, y + dy))
+                    if r is not None:
+                        touch_regs.add(r)
+            for ra in touch_regs:
+                for rb in touch_regs:
+                    if ra != rb:
+                        graph.add_node(level, ra)
+                        graph.add_node(level, rb)
+                        graph.add_edge((level, ra), (level, rb))
 
 
 def _wall_cells_on_facade(
@@ -314,7 +416,8 @@ _KIND_TO_VOLUME_ROLES: Dict[str, Tuple[str, ...]] = {
     "store": ("admin",),
 }
 
-_DOUBLE_HEIGHT_SPAN = 2  # storeys of vertical clearance (ground + one open level)
+# Legacy default when RoomSpec only has ``double_height=True`` (no height_storeys).
+_DOUBLE_HEIGHT_DEFAULT_STOREYS = 2
 
 
 def _volume_cells_for_room(massing: Massing, kind: str) -> Set[Tuple[int, int]]:
@@ -336,8 +439,41 @@ _DOUBLE_HEIGHT_CARVEABLE = frozenset(
         CellRole.INTERIOR,
         CellRole.CORRIDOR,
         CellRole.CLASSROOM,
+        CellRole.HALL,
+        CellRole.SERVICE,
+        CellRole.ROOM,
+        CellRole.ARCADE,
     }
 )
+
+
+def _role_for_program_label(label: str) -> CellRole:
+    """Map a StructureSpec / sketch program name to a CellRole (Stage G).
+
+    ``hall`` is an open programmed room — *not* a corridor. Older code treated any
+    label containing ``hall`` as circulation, which made great-hall regions into
+    CORRIDOR spines and broke room partitions.
+
+    Only the Stage G vocabulary (hall / classroom / service / corridor / arcade)
+    gets dedicated roles; other authored names (living_room, kitchen, …) stay
+    generic ``ROOM``.
+    """
+    lowered = str(label).lower().replace("-", "_").strip()
+    parts = set(lowered.split("_"))
+    if lowered in ("hallway", "corridor", "circulation", "gallery", "landing") or (
+        "corridor" in parts
+    ):
+        return CellRole.CORRIDOR
+    if "arcade" in parts or lowered == "arcade":
+        return CellRole.ARCADE
+    if "classroom" in parts or lowered in ("class", "classrooms"):
+        return CellRole.CLASSROOM
+    if lowered == "service" or parts == {"service"}:
+        return CellRole.SERVICE
+    if "hall" in parts or lowered in ("hall", "great_hall", "main_hall"):
+        # ``hallway`` already returned CORRIDOR above.
+        return CellRole.HALL
+    return CellRole.ROOM
 
 
 def _wall_line_adjacency(grid: StoreyGrid, x: int, y: int) -> int:
@@ -410,11 +546,13 @@ def _apply_double_height_rooms(
     DOUBLE_VOID cell (missing volume, or every interior cell blocked) yields a
     plan failure rather than a silent solid intermediate floor.
     """
+    from pae.spec import room_height_storeys, room_is_multi_height
+
     failures: List[Failure] = []
     if not massing.rooms or massing.storeys < 2:
         return failures
     for room in massing.rooms:
-        if not room.double_height:
+        if not room_is_multi_height(room) and not room.double_height:
             continue
         cells = _volume_cells_for_room(massing, room.kind)
         if not cells:
@@ -430,7 +568,12 @@ def _apply_double_height_rooms(
             )
             continue
         carved = 0
-        levels = list(range(1, min(_DOUBLE_HEIGHT_SPAN, massing.storeys)))
+        try:
+            span = int(math.ceil(room_height_storeys(room)))
+        except ValueError:
+            span = _DOUBLE_HEIGHT_DEFAULT_STOREYS
+        # Open intermediate floors up to the declared height (not hard-capped at 2).
+        levels = list(range(1, min(span, massing.storeys)))
         for level in levels:
             if level >= len(storeys):
                 break
@@ -464,11 +607,14 @@ def _carve_double_loaded_wings(
     List[Tuple[int, int, int]],
     List[Tuple[int, int, int, str, bool]],
 ]:
-    """Mark CORRIDOR / CLASSROOM in classroom wings; record interior door partitions.
+    """Carve full-depth classrooms off a centerline corridor.
 
-    Double-loaded hall: centerline corridor through each ``classroom_wing`` volume,
-    remaining INTERIOR cells become CLASSROOM. Every classroom-corridor adjacency
-    gets a partition; alternating adjacencies are doors.
+    The former implementation only marked the first cell beside the corridor,
+    leaving the rest of each nominal classroom as an unpartitioned open hall.
+    Here every interior cell on either side belongs to a classroom strip.  The
+    strip is divided into rooms of at most three bays along the corridor, with a
+    continuous corridor wall, one doorway per room, and cross-walls between
+    adjoining rooms.
     """
     classroom_cells: List[Tuple[int, int, int]] = []
     corridor_cells: List[Tuple[int, int, int]] = []
@@ -496,7 +642,8 @@ def _carve_double_loaded_wings(
             ]
             if len(cells) < 3:
                 continue
-            if (vol.x1 - vol.x0) >= (vol.y1 - vol.y0):
+            horizontal = (vol.x1 - vol.x0) >= (vol.y1 - vol.y0)
+            if horizontal:
                 cy = (vol.y0 + vol.y1) // 2
                 corridor = {(x, y) for (x, y) in cells if y == cy}
                 if len(corridor) < 2:
@@ -520,41 +667,283 @@ def _carve_double_loaded_wings(
                 if key not in corridor_seen:
                     corridor_seen.add(key)
                     corridor_cells.append(key)
-            rooms = [c for c in cells if c not in corridor]
-            for c in sorted(rooms):
-                touches_corridor = any(
-                    n in corridor
-                    for n in (
-                        (c[0] + 1, c[1]),
-                        (c[0] - 1, c[1]),
-                        (c[0], c[1] + 1),
-                        (c[0], c[1] - 1),
-                    )
-                )
-                if not touches_corridor:
-                    # Keep as INTERIOR (open hall bay) — not a room without a door.
-                    continue
+            rooms = sorted(c for c in cells if c not in corridor)
+            for c in rooms:
                 grid.set(c[0], c[1], CellRole.CLASSROOM)
                 key = (level, c[0], c[1])
                 if key not in classroom_seen:
                     classroom_seen.add(key)
                     classroom_cells.append(key)
-                door_placed = False
-                for nx, ny in (
-                    (c[0] + 1, c[1]),
-                    (c[0] - 1, c[1]),
-                    (c[0], c[1] + 1),
-                    (c[0], c[1] - 1),
-                ):
-                    if (nx, ny) not in corridor:
+
+            if horizontal:
+                corridor_coord = next(iter(corridor))[1]
+                side_sets = [
+                    {c for c in rooms if c[1] < corridor_coord},
+                    {c for c in rooms if c[1] > corridor_coord},
+                ]
+                along = lambda c: c[0]
+                step = (1, 0)
+            else:
+                corridor_coord = next(iter(corridor))[0]
+                side_sets = [
+                    {c for c in rooms if c[0] < corridor_coord},
+                    {c for c in rooms if c[0] > corridor_coord},
+                ]
+                along = lambda c: c[1]
+                step = (0, 1)
+
+            for side in side_sets:
+                if not side:
+                    continue
+                boundary = sorted(
+                    (
+                        c
+                        for c in side
+                        if any(
+                            n in corridor
+                            for n in (
+                                (c[0] + 1, c[1]),
+                                (c[0] - 1, c[1]),
+                                (c[0], c[1] + 1),
+                                (c[0], c[1] - 1),
+                            )
+                        )
+                    ),
+                    key=lambda c: (along(c), c),
+                )
+                along_values = sorted({along(c) for c in boundary})
+                chunks = [
+                    along_values[i : i + 3]
+                    for i in range(0, len(along_values), 3)
+                ]
+                for chunk_index, chunk in enumerate(chunks):
+                    door_along = chunk[len(chunk) // 2]
+                    door_placed = False
+                    for c in (c for c in boundary if along(c) in chunk):
+                        neighbor = next(
+                            (
+                                n
+                                for n in (
+                                    (c[0] + 1, c[1]),
+                                    (c[0] - 1, c[1]),
+                                    (c[0], c[1] + 1),
+                                    (c[0], c[1] - 1),
+                                )
+                                if n in corridor
+                            ),
+                            None,
+                        )
+                        face = _face_toward(c, neighbor) if neighbor else None
+                        if face is None:
+                            continue
+                        is_door = along(c) == door_along and not door_placed
+                        door_placed = door_placed or is_door
+                        partitions.append((c[0], c[1], level, face, is_door))
+
+                    # A wall across the full room depth separates this chunk
+                    # from the next one. The corridor wall above closes its
+                    # inboard end; the exterior shell closes its outboard end.
+                    if chunk_index + 1 >= len(chunks):
                         continue
-                    face = _face_toward(c, (nx, ny))
-                    if face is None:
-                        continue
-                    is_door = not door_placed
-                    door_placed = True
-                    partitions.append((c[0], c[1], level, face, is_door))
+                    cut_along = chunk[-1]
+                    for c in sorted(side):
+                        if along(c) != cut_along:
+                            continue
+                        neighbor = (c[0] + step[0], c[1] + step[1])
+                        if neighbor not in side:
+                            continue
+                        face = _face_toward(c, neighbor)
+                        if face is not None:
+                            partitions.append(
+                                (c[0], c[1], level, face, False)
+                            )
     return classroom_cells, corridor_cells, partitions
+
+
+_PROGRAM_PAINTABLE = frozenset(
+    {
+        CellRole.INTERIOR,
+        CellRole.CORRIDOR,
+        CellRole.CLASSROOM,
+        CellRole.ROOM,
+        CellRole.HALL,
+        CellRole.SERVICE,
+        CellRole.ARCADE,
+    }
+)
+
+# Halls stay open: no partition against unlabelled INTERIOR (great hall spill).
+# Partitions still fire between unlike *named* programs (hall↔classroom, etc.).
+_HALL_OPEN_NEIGHBOURS = frozenset({CellRole.INTERIOR, CellRole.HALL})
+
+
+def _carve_program_regions(
+    storeys: List[StoreyGrid],
+    massing: Massing,
+) -> Tuple[
+    List[Tuple[int, int, int, str]],
+    List[Tuple[int, int, int, str, bool]],
+    List[Tuple[int, int, int]],
+    List[Tuple[int, int, int]],
+]:
+    """Turn StructureSpec program rectangles into rooms and complete partitions.
+
+    Every named rectangle labels walkable cells. Boundaries between unlike
+    programs (or between a program and an unlabelled hall) receive a partition,
+    with one deterministic doorway per adjoining program pair.
+
+    Stage G roles: ``hall`` / ``classroom`` / ``service`` / ``corridor`` (and
+    ``arcade``) map to dedicated CellRoles — not a generic ROOM dump.
+    """
+    programs = getattr(massing, "level_programs", None)
+    if not programs:
+        return [], [], [], []
+
+    program_cells: List[Tuple[int, int, int, str]] = []
+    partitions: List[Tuple[int, int, int, str, bool]] = []
+    classroom_cells: List[Tuple[int, int, int]] = []
+    corridor_cells: List[Tuple[int, int, int]] = []
+    classroom_seen: Set[Tuple[int, int, int]] = set()
+    corridor_seen: Set[Tuple[int, int, int]] = set()
+
+    for level, raw_program in enumerate(programs):
+        if level >= len(storeys) or not raw_program:
+            continue
+        grid = storeys[level]
+        labels: Dict[Tuple[int, int], str] = {}
+        for name, regions in raw_program.items():
+            label = str(name)
+            for x0, y0, x1, y1 in regions:
+                for x in range(int(x0), int(x1) + 1):
+                    for y in range(int(y0), int(y1) + 1):
+                        role = grid.get(x, y)
+                        if role not in _PROGRAM_PAINTABLE:
+                            continue
+                        previous = labels.get((x, y))
+                        if previous is not None and previous != label:
+                            # Overlapping program rectangles are authoring errors;
+                            # retain the first deterministically rather than making
+                            # one cell belong to two rooms.
+                            continue
+                        labels[(x, y)] = label
+
+        for (x, y), label in sorted(labels.items()):
+            role = _role_for_program_label(label)
+            grid.set(x, y, role)
+            program_cells.append((x, y, level, label))
+            key = (level, x, y)
+            if role == CellRole.CLASSROOM and key not in classroom_seen:
+                classroom_seen.add(key)
+                classroom_cells.append(key)
+            elif role == CellRole.CORRIDOR and key not in corridor_seen:
+                corridor_seen.add(key)
+                corridor_cells.append(key)
+
+        edges: List[
+            Tuple[Tuple[str, str], Tuple[int, int], str]
+        ] = []
+        seen_edges: Set[Tuple[Tuple[int, int], Tuple[int, int]]] = set()
+        for cell, label in sorted(labels.items()):
+            x, y = cell
+            role = grid.get(x, y)
+            for neighbor in ((x + 1, y), (x, y + 1), (x - 1, y), (x, y - 1)):
+                other = labels.get(neighbor)
+                neighbor_role = grid.get(*neighbor)
+                if other == label:
+                    continue
+                # A named corridor/classroom rectangle may extend an existing
+                # school program of the same role. Do not insert a wall merely
+                # because the adjoining cells lack the same authoring label.
+                if other is None and neighbor_role == role:
+                    continue
+                # Great hall: do not wall off into unlabelled INTERIOR.
+                if role == CellRole.HALL and other is None and neighbor_role in (
+                    CellRole.INTERIOR,
+                ):
+                    continue
+                if other is None and neighbor_role not in _PROGRAM_PAINTABLE:
+                    continue
+                # Same open-hall spill both ways.
+                if (
+                    other is None
+                    and role in _HALL_OPEN_NEIGHBOURS
+                    and neighbor_role in _HALL_OPEN_NEIGHBOURS
+                ):
+                    continue
+                edge_key = tuple(sorted((cell, neighbor)))
+                if edge_key in seen_edges:
+                    continue
+                seen_edges.add(edge_key)
+                face = _face_toward(cell, neighbor)
+                if face is None:
+                    continue
+                pair = tuple(sorted((label, other or "__hall__")))
+                edges.append((pair, cell, face))
+
+        level_partitions: List[Tuple[int, int, int, str, bool]] = []
+        first_door_for_pair: Set[Tuple[str, str]] = set()
+        for pair, (x, y), face in sorted(edges):
+            is_door = pair not in first_door_for_pair
+            first_door_for_pair.add(pair)
+            level_partitions.append((x, y, level, face, is_door))
+
+        # Program rectangles normally stop one cell inside the envelope because
+        # perimeter cells are WALL_LINE, not ROOM. Extend each partition run
+        # through that final wall-line cell so it physically terminates at the
+        # exterior shell instead of leaving a one-module bypass around each end.
+        canonical: Dict[Tuple[str, int, int], Tuple[int, int, int, str, bool]] = {}
+        for x, y, part_level, face, is_door in level_partitions:
+            if face == "east":
+                key = ("vertical", x + 1, y)
+                value = (x, y, part_level, "east", is_door)
+            elif face == "west":
+                key = ("vertical", x, y)
+                value = (x - 1, y, part_level, "east", is_door)
+            elif face == "north":
+                key = ("horizontal", y + 1, x)
+                value = (x, y, part_level, "north", is_door)
+            else:
+                key = ("horizontal", y, x)
+                value = (x, y - 1, part_level, "north", is_door)
+            previous = canonical.get(key)
+            canonical[key] = value if previous is None else (
+                previous[0],
+                previous[1],
+                previous[2],
+                previous[3],
+                previous[4] or is_door,
+            )
+
+        groups: Dict[Tuple[str, int], Set[int]] = defaultdict(set)
+        for axis, plane, along in canonical:
+            groups[(axis, plane)].add(along)
+        for (axis, plane), along_values in sorted(groups.items()):
+            lo, hi = min(along_values), max(along_values)
+            if axis == "vertical":
+                before = ((plane - 1, lo - 1), (plane, lo - 1))
+                after = ((plane - 1, hi + 1), (plane, hi + 1))
+                if all(grid.get(*c) == CellRole.WALL_LINE for c in before):
+                    canonical[("vertical", plane, lo - 1)] = (
+                        plane - 1, lo - 1, level, "east", False
+                    )
+                if all(grid.get(*c) == CellRole.WALL_LINE for c in after):
+                    canonical[("vertical", plane, hi + 1)] = (
+                        plane - 1, hi + 1, level, "east", False
+                    )
+            else:
+                before = ((lo - 1, plane - 1), (lo - 1, plane))
+                after = ((hi + 1, plane - 1), (hi + 1, plane))
+                if all(grid.get(*c) == CellRole.WALL_LINE for c in before):
+                    canonical[("horizontal", plane, lo - 1)] = (
+                        lo - 1, plane - 1, level, "north", False
+                    )
+                if all(grid.get(*c) == CellRole.WALL_LINE for c in after):
+                    canonical[("horizontal", plane, hi + 1)] = (
+                        hi + 1, plane - 1, level, "north", False
+                    )
+        partitions.extend(canonical[key] for key in sorted(canonical))
+
+    return program_cells, partitions, classroom_cells, corridor_cells
 
 
 def _filter_stair_void_blocked(
@@ -586,8 +975,16 @@ def _filter_stair_void_blocked(
 
 
 # Roles the corridor spine may walk through / reclaim while linking to stairs.
-_SPINE_WALK = frozenset({CellRole.INTERIOR, CellRole.CORRIDOR, CellRole.DOOR})
-_SPINE_RECLAIM = frozenset({CellRole.CLASSROOM})
+_SPINE_WALK = frozenset(
+    {
+        CellRole.INTERIOR,
+        CellRole.CORRIDOR,
+        CellRole.DOOR,
+        CellRole.HALL,
+        CellRole.ARCADE,
+    }
+)
+_SPINE_RECLAIM = frozenset({CellRole.CLASSROOM, CellRole.SERVICE, CellRole.ROOM})
 _SPINE_GOAL = frozenset({CellRole.STAIR, CellRole.VOID})
 
 
@@ -774,6 +1171,8 @@ def _extend_corridor_spine_to_stairs(
                 )
                 continue
             for x, y in path:
+                if (x, y) in set(stair_xy):
+                    continue
                 role = grid.get(x, y)
                 if role == CellRole.CORRIDOR:
                     continue
@@ -832,10 +1231,23 @@ def _apply_stairs(
 
     # Straight run: first cell is bottom; occupies listed cells on each climbed level.
     # Spiral: single tower/interior cell — may be DOOR or WALL_LINE, not INTERIOR.
+    # Monumental wells (4×2 / 2×4): only the active 2×2 pad per level (D3-3).
+    from pae.assemble import _MONUMENTAL_PAD_KINDS, _monumental_flight_pads
+
     is_spiral = (massing.stair_kind or "").lower() == "spiral"
+    kind = (massing.stair_kind or "straight").lower()
+    pads = (
+        _monumental_flight_pads(stair_cells)
+        if kind in _MONUMENTAL_PAD_KINDS
+        else None
+    )
     for level in range(massing.storeys - 1):
         interior = interior_by_level.get(level, set())
-        for sx, sy in stair_cells:
+        if pads is not None:
+            level_cells = pads[level % 2]
+        else:
+            level_cells = stair_cells
+        for sx, sy in level_cells:
             if not is_spiral and (sx, sy) not in interior:
                 failures.append(
                     Failure(
@@ -855,6 +1267,47 @@ def _apply_stairs(
                     # Still mark void intent if the cell exists in grid bbox.
                     storeys[above].set(sx, sy, CellRole.VOID)
     return failures
+
+
+def _reserve_monumental_stairwell(
+    storeys: List[StoreyGrid],
+    massing: Massing,
+    interior_by_level: Dict[int, Set[Tuple[int, int]]],
+) -> None:
+    """After corridor spine: keep full offset-well footprint on L0 STAIR and top VOID.
+
+    D3-3 offset pads mark only the active 2×2 per climbed level for flights, but
+    the school (and corridor spine) still require the entire 4×2 / 2×4 well reserved
+    on ground and fully open on the top landing — corridor must not reclaim the
+    inactive half on the upper storey.
+    """
+    stair_cells = list(massing.stair_cells)
+    if massing.storeys <= 1 or len(stair_cells) < 8:
+        return
+    from pae.assemble import _MONUMENTAL_PAD_KINDS, _monumental_flight_pads
+
+    kind = (massing.stair_kind or "straight").lower()
+    if kind not in _MONUMENTAL_PAD_KINDS:
+        return
+    if _monumental_flight_pads(stair_cells) is None:
+        return
+
+    # Only double-loaded school wings run corridor spine through the inactive
+    # offset half — L/U monumental wells rely on _link_stair_void_regions instead.
+    is_school = massing.name == "school_academy" or any(
+        v.role == "classroom_wing" for v in massing.volumes
+    )
+    if not is_school:
+        return
+
+    well = set(stair_cells)
+    top = massing.storeys - 1
+    interior0 = interior_by_level.get(0, set())
+    for x, y in well:
+        if (x, y) in interior0:
+            storeys[0].set(x, y, CellRole.STAIR)
+    for x, y in well:
+        storeys[top].set(x, y, CellRole.VOID)
 
 
 def _build_circulation(
@@ -880,34 +1333,72 @@ def _build_circulation(
         for r in set(rmap.values()):
             graph.add_node(level, r)
 
-    # Stair edges: a STAIR cell at level L connects region(L, cell) to region(L+1, cell)
-    # if the cell above is VOID (stairwell opening).
-    for level in range(massing.storeys - 1):
-        for (x, y), role in storeys[level].cells.items():
-            if role != CellRole.STAIR:
-                continue
-            r0 = region_maps[level].get((x, y))
-            # VOID cells are removed from walkable regions; attach to neighbouring region above.
-            above_map = region_maps[level + 1]
-            r1 = above_map.get((x, y))
-            if r1 is None:
-                # Look at 4-neighbours on the upper floor for a landing region.
-                for dx, dy in ((-1, 0), (1, 0), (0, -1), (0, 1)):
-                    r1 = above_map.get((x + dx, y + dy))
-                    if r1 is not None:
-                        break
+    # Stair edges between storeys. Monumental 4×2 / 2×4 wells offset pads by level
+    # (D3-3) — link pad L to pad L+1, not same XY cell.
+    from pae.assemble import _MONUMENTAL_PAD_KINDS, _monumental_flight_pads
+
+    kind = (massing.stair_kind or "straight").lower()
+    pads = (
+        _monumental_flight_pads(list(massing.stair_cells))
+        if kind in _MONUMENTAL_PAD_KINDS
+        else None
+    )
+    if pads is not None:
+        for level in range(massing.storeys - 1):
+            low_pad = pads[level % 2]
+            high_pad = pads[(level + 1) % 2]
+            r0 = _pick_region_for_cells(region_maps[level], low_pad)
+            r1 = _pick_region_for_cells(
+                region_maps[level + 1], high_pad, neighbor_expand=True
+            )
             if r0 is None or r1 is None:
+                anchor = low_pad[0]
                 failures.append(
                     Failure(
                         check="stair_graph",
-                        message=f"stair at {(x, y)} level {level} does not link regions",
-                        world_xyz=cell_to_world_cm(x, y, level),
+                        message=(
+                            f"stair pad {sorted(low_pad)} level {level} does not "
+                            f"link to upper pad {sorted(high_pad)} — "
+                            "offset flights must share circulation regions"
+                        ),
+                        world_xyz=cell_to_world_cm(anchor[0], anchor[1], level),
                     )
                 )
                 continue
             graph.add_node(level, r0)
             graph.add_node(level + 1, r1)
             graph.add_edge((level, r0), (level + 1, r1))
+    else:
+        # Straight / spiral: a STAIR cell at level L connects region(L, cell) to
+        # region(L+1, cell) if the cell above is VOID (stairwell opening).
+        for level in range(massing.storeys - 1):
+            for (x, y), role in storeys[level].cells.items():
+                if role != CellRole.STAIR:
+                    continue
+                r0 = region_maps[level].get((x, y))
+                above_map = region_maps[level + 1]
+                r1 = above_map.get((x, y))
+                if r1 is None:
+                    for dx, dy in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+                        r1 = above_map.get((x + dx, y + dy))
+                        if r1 is not None:
+                            break
+                if r0 is None or r1 is None:
+                    failures.append(
+                        Failure(
+                            check="stair_graph",
+                            message=(
+                                f"stair at {(x, y)} level {level} does not link regions"
+                            ),
+                            world_xyz=cell_to_world_cm(x, y, level),
+                        )
+                    )
+                    continue
+                graph.add_node(level, r0)
+                graph.add_node(level + 1, r1)
+                graph.add_edge((level, r0), (level + 1, r1))
+
+    _link_stair_void_regions(storeys, region_maps, graph)
 
     if massing.storeys <= 1:
         return graph, failures
@@ -981,17 +1472,32 @@ def plan(massing: Massing) -> Tuple[Optional[FloorPlan], Report]:
         interior = _enclosed_cells_at_level(massing, level)
         # Courtyard cells are never INTERIOR — outside envelope by role.
         interior -= courtyard
+        voids = _void_cells_at_level(massing, level)
+        # Open marks that sit on built cells below (or L0 courtyard hole) are
+        # not exterior: L0 → COURTYARD, upper → DOUBLE_VOID (open to below).
         interior_by_level[level] = set(interior)
 
         for x in range(x0, x1 + 1):
             for y in range(y0, y1 + 1):
                 if (x, y) in courtyard:
                     grid.set(x, y, CellRole.COURTYARD)
+                elif (x, y) in voids and (x, y) not in interior:
+                    if level == 0:
+                        grid.set(x, y, CellRole.COURTYARD)
+                    else:
+                        grid.set(x, y, CellRole.DOUBLE_VOID)
                 elif (x, y) in interior:
                     if _is_wall_line(x, y, interior):
                         grid.set(x, y, CellRole.WALL_LINE)
                     else:
                         grid.set(x, y, CellRole.INTERIOR)
+                elif (x, y) in voids:
+                    # Void marked on a cell that would otherwise be exterior —
+                    # still treat as open-to-below when above the foundation.
+                    if level == 0:
+                        grid.set(x, y, CellRole.COURTYARD)
+                    else:
+                        grid.set(x, y, CellRole.DOUBLE_VOID)
                 else:
                     grid.set(x, y, CellRole.EXTERIOR)
         storeys.append(grid)
@@ -1007,6 +1513,24 @@ def plan(massing: Massing) -> Tuple[Optional[FloorPlan], Report]:
     classroom_cells, corridor_cells, interior_partitions = _carve_double_loaded_wings(
         storeys, massing
     )
+    (
+        program_cells,
+        program_partitions,
+        program_classrooms,
+        program_corridors,
+    ) = _carve_program_regions(storeys, massing)
+    interior_partitions.extend(program_partitions)
+    # Merge StructureSpec / sketch program paint into school lists (dedupe).
+    seen_cls = set(classroom_cells)
+    for key in program_classrooms:
+        if key not in seen_cls:
+            seen_cls.add(key)
+            classroom_cells.append(key)
+    seen_corr = set(corridor_cells)
+    for key in program_corridors:
+        if key not in seen_corr:
+            seen_corr.add(key)
+            corridor_cells.append(key)
 
     failures.extend(_apply_double_height_rooms(storeys, massing))
 
@@ -1027,6 +1551,8 @@ def plan(massing: Massing) -> Tuple[Optional[FloorPlan], Report]:
         )
     )
     failures.extend(spine_failures)
+
+    _reserve_monumental_stairwell(storeys, massing, interior_by_level)
 
     graph, circ_failures = _build_circulation(massing, interior_by_level, storeys)
     failures.extend(circ_failures)
@@ -1083,5 +1609,13 @@ def plan(massing: Massing) -> Tuple[Optional[FloorPlan], Report]:
         corridor_cells=corridor_cells,
         interior_partitions=interior_partitions,
         rooms=list(massing.rooms),
+        program_cells=program_cells,
+        wall_height_storeys=massing.wall_height_storeys,
+        structure_id=getattr(massing, "structure_id", None),
+        foundation_cells=tuple(getattr(massing, "foundation_cells", ()) or ()),
+        level_height_units=getattr(massing, "level_height_units", None),
+        level_wall_styles=getattr(massing, "level_wall_styles", None),
+        level_window_tags=getattr(massing, "level_window_tags", None),
+        level_programs=getattr(massing, "level_programs", None),
     )
     return fp, Report.from_failures([])

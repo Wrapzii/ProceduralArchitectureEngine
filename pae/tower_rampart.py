@@ -28,6 +28,7 @@ from pae.contract import (
     WALL_T_CM,
     cell_to_world_cm,
     placement_world_aabb,
+    storey_datum_z_cm,
 )
 from pae.report import Failure
 
@@ -142,6 +143,17 @@ def _tower_top_level(assembly: Assembly, cell: Cell) -> Optional[int]:
     return max(tops) if tops else None
 
 
+def _has_closed_spire(assembly: Assembly, cell: Cell, level: int) -> bool:
+    """A roofed steeple top is not an occupiable battlement platform."""
+    return any(
+        p.cell == cell
+        and p.level == level
+        and p.kind == "tower_cap"
+        and "closed_spire" in p.tags
+        for p in assembly.placements
+    )
+
+
 def _drum_center_xy(assembly: Assembly, cell: Cell, level: int) -> Tuple[float, float]:
     """World XY of the drum rotation centre (placement origin for centred pieces)."""
     for p in assembly.placements:
@@ -186,10 +198,11 @@ def _rim_shell_pose(
     z_off: float,
     height_cm: float,
     chord_cm: float,
+    radius_cm: float = MODULE_CM,
 ) -> Tuple[Tuple[float, float, float], Tuple[float, float, float]]:
     """Same rim family as assemble drum windows — keeps shells off hall roofs."""
     thick = WALL_T_CM
-    half = MODULE_CM * 0.5
+    half = float(radius_cm)
     radial = half - thick * 0.5
     dx, dy = drum_xy
     if yaw == 0:
@@ -232,6 +245,7 @@ def place_tower_rampart_crown(
     next_piece_id: Callable[[str, Cell, int], str],
     placements: List[SolidPlacement],
     apertures: List[Aperture],
+    radius_cm: float = MODULE_CM,
 ) -> None:
     """Append walkable deck + tag crown as rampart + place crenel view shells.
 
@@ -259,7 +273,8 @@ def place_tower_rampart_crown(
     # Walkable deck at drum plate — top flush with junction_z (crown sits above).
     deck_h = FLOOR_T_CM
     deck_z = junction_z - deck_h
-    deck_span = MODULE_CM * 0.85  # interior of drum; stays inside battlement ring
+    inner_radius = max(MODULE_CM * 0.25, float(radius_cm) - WALL_T_CM)
+    deck_span = (2.0 * inner_radius) / math.sqrt(2.0)
     deck_tags = frozenset(getattr(floor_piece, "tags", frozenset())) | frozenset(
         {TOWER_DECK_TAG, TOWER_TOP_TAG, "tower", "walkable"}
     )
@@ -281,7 +296,7 @@ def place_tower_rampart_crown(
 
     # Outward crenels / view apertures at crown height (skip attach face).
     # kind=battlement — roof_penetration only inspects wall/column (no demotion).
-    deck_top_world = level * STOREY_CM + junction_z
+    deck_top_world = storey_datum_z_cm(level) + junction_z
     for yaw in _QUARTER_YAWS:
         if skip_yaw is not None and yaw == skip_yaw:
             continue
@@ -291,6 +306,7 @@ def place_tower_rampart_crown(
             z_off=crown_z,
             height_cm=_CRENEL_HEIGHT_CM,
             chord_cm=_CRENEL_CHORD_CM,
+            radius_cm=radius_cm,
         )
         cid = next_piece_id(f"tower_crenel_{yaw}", cell, level)
         tags = frozenset(wall_window_tags) | frozenset(
@@ -414,6 +430,8 @@ def check_tower_rampart_ring(assembly: Assembly) -> List[Failure]:
         level = _tower_top_level(assembly, cell)
         if level is None:
             continue
+        if _has_closed_spire(assembly, cell, level):
+            continue
         ramparts = [
             p
             for p in assembly.placements
@@ -497,6 +515,8 @@ def check_tower_top_walkable(assembly: Assembly) -> List[Failure]:
         level = _tower_top_level(assembly, cell)
         if level is None:
             continue
+        if _has_closed_spire(assembly, cell, level):
+            continue
         decks = [
             p
             for p in assembly.placements
@@ -568,6 +588,8 @@ def check_view_aperture_exists(assembly: Assembly) -> List[Failure]:
     for cell in sorted(_tower_cells_from_assembly(assembly)):
         level = _tower_top_level(assembly, cell)
         if level is None:
+            continue
+        if _has_closed_spire(assembly, cell, level):
             continue
         has_crown = any(
             p.cell == cell

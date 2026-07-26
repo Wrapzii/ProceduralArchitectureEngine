@@ -9,12 +9,84 @@ from pae.addon.session import report_from_json
 if HAS_BPY:
     import bpy  # type: ignore
 
+    class PAE_PT_structure(bpy.types.Panel):
+        bl_label = "Structure"
+        bl_idname = "PAE_PT_structure"
+        bl_space_type = "VIEW_3D"
+        bl_region_type = "UI"
+        bl_category = "PAE"
+        bl_order = 0
+
+        def draw(self, context):
+            props = context.scene.pae
+            layout = self.layout
+            layout.prop(props, "building_name", text="Name")
+            layout.prop(props, "style")
+            layout.prop(props, "seed")
+            layout.separator()
+            layout.prop(props, "structure_use_foundation")
+            if props.structure_use_foundation:
+                layout.prop(props, "structure_foundation_sketch", text="Foundation")
+            layout.separator()
+            row = layout.row(align=True)
+            row.prop(props, "roof_kind")
+            row.prop(props, "stair_kind")
+            layout.prop(props, "roof_pitch")
+            layout.separator()
+            layout.prop(props, "structure_yaml_path", text="YAML")
+            row = layout.row(align=True)
+            row.operator("pae.load_structure_yaml", icon="IMPORT")
+            row.operator("pae.export_structure_yaml", icon="EXPORT")
+            row = layout.row(align=True)
+            row.operator("pae.load_gatehouse_preset", icon="PRESET")
+            row.operator("pae.generate_from_structure", icon="MOD_BUILD")
+            layout.operator("pae.run_validate", icon="CHECKMARK")
+
+    class PAE_PT_levels(bpy.types.Panel):
+        bl_label = "Levels"
+        bl_idname = "PAE_PT_levels"
+        bl_space_type = "VIEW_3D"
+        bl_region_type = "UI"
+        bl_category = "PAE"
+        bl_order = 1
+
+        def draw(self, context):
+            props = context.scene.pae
+            layout = self.layout
+            row = layout.row()
+            row.template_list(
+                "PAE_UL_structure_levels",
+                "",
+                props,
+                "structure_levels",
+                props,
+                "structure_active_level",
+                rows=4,
+            )
+            col = row.column(align=True)
+            col.operator("pae.structure_add_level", icon="ADD", text="")
+            col.operator("pae.structure_remove_level", icon="REMOVE", text="")
+
+            if len(props.structure_levels) == 0:
+                layout.label(text="No levels — click + to add", icon="INFO")
+                return
+
+            index = min(props.structure_active_level, len(props.structure_levels) - 1)
+            level = props.structure_levels[index]
+            box = layout.box()
+            box.label(text=f"Level {index}", icon="LINENUMBERS_ON")
+            box.prop(level, "height_units")
+            box.prop(level, "wall_style")
+            box.prop(level, "sketch", text="")
+
     class PAE_PT_spec(bpy.types.Panel):
-        bl_label = "Spec"
+        bl_label = "Spec (Legacy)"
         bl_idname = "PAE_PT_spec"
         bl_space_type = "VIEW_3D"
         bl_region_type = "UI"
         bl_category = "PAE"
+        bl_options = {"DEFAULT_CLOSED"}
+        bl_order = 2
 
         def draw(self, context):
             props = context.scene.pae
@@ -26,8 +98,35 @@ if HAS_BPY:
             row.prop(props, "bays_x")
             row.prop(props, "bays_y")
             layout.prop(props, "footprint_kind")
+            row = layout.row(align=True)
+            row.prop(props, "wing_depth")
+            row.prop(props, "courtyard")
             layout.prop(props, "seed")
-            layout.operator("pae.load_m1_preset", icon="PRESET")
+
+            box = layout.box()
+            box.label(text="Roof / Height", icon="MOD_BUILD")
+            box.prop(props, "roof_kind")
+            box.prop(props, "roof_pitch")
+            box.prop(props, "wall_height_storeys")
+
+            box = layout.box()
+            box.label(text="Circulation / Openings", icon="MOD_STAIR")
+            box.prop(props, "stair_kind")
+            row = box.row(align=True)
+            row.prop(props, "doors_ground")
+            row.prop(props, "windows_per_bay")
+
+            box = layout.box()
+            box.label(text="Entrance", icon="OUTLINER_OB_EMPTY")
+            box.prop(props, "entrance_enabled")
+            if props.entrance_enabled:
+                box.prop(props, "entrance_role")
+                box.prop(props, "entrance_facade")
+                box.prop(props, "entrance_ensemble")
+
+            row = layout.row(align=True)
+            row.operator("pae.load_m1_preset", icon="PRESET")
+            row.operator("pae.load_school_preset", icon="PRESET")
 
     class PAE_PT_assets(bpy.types.Panel):
         bl_label = "Assets"
@@ -54,12 +153,30 @@ if HAS_BPY:
         def draw(self, context):
             props = context.scene.pae
             layout = self.layout
+            layout.prop(props, "clear_scene_before_build")
+            layout.separator()
+            layout.operator("pae.generate_current_spec", icon="MOD_BUILD")
+            row = layout.row(align=True)
+            row.operator("pae.build_fortress", icon="HOME")
+            row.operator("pae.build_school", icon="COMMUNITY")
+            layout.operator("pae.build_gallery", icon="IMAGE")
+            layout.operator("pae.reload_pae", icon="FILE_REFRESH")
+            layout.separator()
+            layout.label(text="Stage stepping (debug)", icon="SETTINGS")
             layout.prop(props, "pipeline_stage")
             layout.operator("pae.run_pipeline_stage", icon="PLAY")
-            layout.operator("pae.run_full_generate", icon="MOD_BUILD")
-            layout.operator("pae.build_fortress", icon="HOME")
             if props.last_pipeline_message:
                 layout.label(text=props.last_pipeline_message, icon="TIME")
+            if props.last_error_message:
+                box = layout.box()
+                box.label(text="Last error", icon="ERROR")
+                box.label(text=props.last_error_message[:240])
+
+            box = layout.box()
+            box.label(text="Compound presets (CLI wiring)", icon="INFO")
+            box.label(text="ConnectionPolicy / arcades / fitout")
+            box.label(text="live in pae/compound.py — not")
+            box.label(text="single-spec UI fields yet.")
 
     class PAE_PT_validate(bpy.types.Panel):
         bl_label = "Validate"
@@ -134,6 +251,8 @@ if HAS_BPY:
             col.operator("pae.export_manifest", icon="FILE_TEXT")
 
     classes = (
+        PAE_PT_structure,
+        PAE_PT_levels,
         PAE_PT_spec,
         PAE_PT_assets,
         PAE_PT_generate,

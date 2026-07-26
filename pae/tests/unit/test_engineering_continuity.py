@@ -105,7 +105,8 @@ def test_attached_tower_passes_hall_kiss():
 def test_freestanding_tower_fails_hall_kiss():
     """Poison: shift every tower solid away from the hall — kiss must go critical."""
     _, _, base, _ = run_through_assemble(m3_keep_tower_spec())
-    shift = MODULE_CM * 6.0
+    # M3 tower attaches on the west face at cell (-1, 0) — detach = shift west (-X).
+    shift = -MODULE_CM * 6.0
     poisoned = []
     for p in base.placements:
         if p.kind in ("tower_arc", "tower_crown", "tower_cap") or "tower" in p.tags:

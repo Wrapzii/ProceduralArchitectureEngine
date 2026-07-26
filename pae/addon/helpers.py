@@ -11,16 +11,33 @@ from pae.report import Failure, Report
 from pae.spec import (
     BuildingSpec,
     CirculationSpec,
+    EntranceSpec,
     FootprintSpec,
     OpeningPolicy,
     RoofSpec,
+    SUPPORTED_ROOF_KINDS,
+    SUPPORTED_STAIR_KINDS,
 )
 
 OBJECT_NAME_PREFIX = "PAE_"
 CM_PER_M = 100.0
 
-FOOTPRINT_KINDS: Tuple[str, ...] = ("rect", "L", "U", "courtyard", "compound")
+FOOTPRINT_KINDS: Tuple[str, ...] = ("rect", "L", "U", "courtyard", "compound", "school")
 PIPELINE_STAGES: Tuple[str, ...] = ("solve", "plan", "assemble", "validate")
+ROOF_KINDS: Tuple[str, ...] = tuple(sorted(SUPPORTED_ROOF_KINDS))
+STAIR_KINDS: Tuple[str, ...] = tuple(sorted(SUPPORTED_STAIR_KINDS))
+ENTRANCE_ROLES: Tuple[str, ...] = (
+    "grand",
+    "main",
+    "side",
+    "service",
+    "postern",
+    "gate",
+    "balcony",
+    "internal",
+    "upper_exterior",
+)
+FACADE_SIDES: Tuple[str, ...] = ("south", "north", "east", "west")
 
 
 def list_style_ids() -> List[str]:
@@ -155,8 +172,38 @@ def build_spec_from_ui(
     seed: int,
     wing_depth: int = 2,
     courtyard: bool = False,
+    roof_kind: str = "flat",
+    roof_pitch: float = 1.0,
+    stair_kind: str = "straight",
+    wall_height_storeys: float = 0.0,
+    doors_ground: int = 1,
+    windows_per_bay: int = 1,
+    entrance_enabled: bool = False,
+    entrance_role: str = "main",
+    entrance_facade: str = "south",
+    entrance_ensemble: bool = False,
 ) -> BuildingSpec:
     """Build ``BuildingSpec`` from add-on property values (§3)."""
+    rk = (roof_kind or "flat").lower()
+    if rk not in SUPPORTED_ROOF_KINDS:
+        rk = "flat"
+    sk = (stair_kind or "straight").lower()
+    if sk not in SUPPORTED_STAIR_KINDS:
+        sk = "straight"
+    entrances: List[EntranceSpec] = []
+    if entrance_enabled:
+        role = entrance_role if entrance_role in ENTRANCE_ROLES else "main"
+        facade = entrance_facade if entrance_facade in FACADE_SIDES else "south"
+        entrances.append(
+            EntranceSpec(
+                role=role,
+                facade=facade,
+                ensemble=entrance_ensemble,
+            )
+        )
+    whs: Optional[float] = None
+    if wall_height_storeys and wall_height_storeys >= 1.0:
+        whs = float(wall_height_storeys)
     return BuildingSpec(
         name=name or "pae_building",
         style=style,
@@ -170,17 +217,45 @@ def build_spec_from_ui(
         storeys=max(1, storeys),
         storey_use=["hall"],
         towers=[],
-        roof=RoofSpec(kind="flat", pitch=1.0),
-        circulation=CirculationSpec(stair_kind="straight", stair_cells=[]),
+        roof=RoofSpec(kind=rk, pitch=max(0.5, min(2.5, float(roof_pitch)))),
+        circulation=CirculationSpec(stair_kind=sk, stair_cells=[]),
         openings=OpeningPolicy(
-            windows_per_bay=1,
-            doors_ground=1,
+            windows_per_bay=max(0, windows_per_bay),
+            doors_ground=max(0, doors_ground),
             windows_ground=2,
             skip_ground_windows=False,
         ),
+        entrances=entrances,
         seed=seed,
         ground_slab=True,
+        wall_height_storeys=whs,
     )
+
+
+def ui_values_from_spec(spec: BuildingSpec) -> Dict[str, object]:
+    """Map a ``BuildingSpec`` onto add-on property field values."""
+    ent = spec.entrances[0] if spec.entrances else None
+    return {
+        "building_name": spec.name,
+        "style": spec.style,
+        "storeys": spec.storeys,
+        "bays_x": spec.footprint.bays_x,
+        "bays_y": spec.footprint.bays_y,
+        "footprint_kind": spec.footprint.kind,
+        "seed": spec.seed,
+        "wing_depth": spec.footprint.wing_depth,
+        "courtyard": spec.footprint.courtyard,
+        "roof_kind": spec.roof.kind,
+        "roof_pitch": spec.roof.pitch,
+        "stair_kind": spec.circulation.stair_kind,
+        "wall_height_storeys": spec.wall_height_storeys or 0.0,
+        "doors_ground": spec.openings.doors_ground,
+        "windows_per_bay": spec.openings.windows_per_bay,
+        "entrance_enabled": ent is not None,
+        "entrance_role": ent.role if ent else "main",
+        "entrance_facade": ent.facade if ent and ent.facade else "south",
+        "entrance_ensemble": bool(ent.ensemble) if ent else False,
+    }
 
 
 def export_gate_allows(report: Optional[Report]) -> bool:

@@ -853,10 +853,18 @@ def _tower_spiral_stairs(
         for c in covered_cells(p):
             roof_bottom[c] = min(roof_bottom.get(c, mn[2]), mn[2])
 
+    from pae.spiral_shell import DESIGNED_DOOR_BAY_TAGS
+
     for cap in caps:
         if cap.cell in already:
             continue  # the assembler already built one — do not double it
         cap_xy = (cap.offset_cm[0], cap.offset_cm[1])
+        door_exempt = {
+            int(p.yaw) % 360
+            for p in assembly.placements
+            if p.cell == cap.cell and (DESIGNED_DOOR_BAY_TAGS & set(p.tags))
+        }
+        spiral_yaws = tuple(y for y in (0, 90, 180, 270) if y not in door_exempt)
         # Stop BELOW the cap. Climbing to cap.level inclusive ran the top quarter into
         # the underside of the tower roof — 50 headroom criticals. The helix delivers
         # you onto the top deck; the roof above it is not somewhere you walk.
@@ -901,12 +909,14 @@ def _tower_spiral_stairs(
                         suffix=f"newel{level}",
                     )
                 )
-            for q in range(per_storey):
+            for q, yaw in enumerate(spiral_yaws):
+                if q >= per_storey:
+                    break
                 step = _placement(
                     "stair_spiral_quarter",
                     cap.cell,
                     level,
-                    yaw=(q * 90) % 360,
+                    yaw=yaw,
                     offset_cm=(cap_xy[0], cap_xy[1], q * rise),
                     suffix=f"helix{level}_{q}",
                 )

@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Optional, Tuple
+from typing import Any, Optional, Tuple
 
+from pae.addon.structure_helpers import coerce_pipeline_spec
 from pae.assembly_types import Assembly
 from pae.plan import FloorPlan
 from pae.report import Failure, Report
@@ -13,7 +14,7 @@ from pae.spec import BuildingSpec
 
 def run_stage(
     stage: str,
-    spec: BuildingSpec,
+    spec: Any,
     *,
     massing: Optional[Massing] = None,
     floor_plan: Optional[FloorPlan] = None,
@@ -27,6 +28,7 @@ def run_stage(
     from pae.spec import load_style
     from pae.validate import validate
 
+    spec = coerce_pipeline_spec(spec)
     stage = stage.lower()
     if stage == "solve":
         massing, report = solve(spec)
@@ -76,7 +78,7 @@ def run_stage(
 
 
 def run_full_pipeline(
-    spec: BuildingSpec,
+    spec: Any,
     *,
     asset_db=None,
 ) -> Tuple[Optional[Massing], Optional[FloorPlan], Optional[Assembly], Report]:
@@ -84,7 +86,10 @@ def run_full_pipeline(
     from pae.pipeline import run_through_assemble
     from pae.validate import validate
 
-    massing, floor_plan, assembly, preport = run_through_assemble(spec, asset_db=asset_db)
+    building = coerce_pipeline_spec(spec)
+    massing, floor_plan, assembly, preport = run_through_assemble(
+        building, asset_db=asset_db
+    )
     if not preport.ok:
         return massing, floor_plan, assembly, preport
     _, vreport = validate(assembly)

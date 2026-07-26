@@ -43,6 +43,8 @@ HEAD_SHAPES = (
 # Vertical resolution of a curved head. Enough bands that a 1.4 m opening reads as a
 # curve, not a staircase, without exploding the vertex budget on a 600-window school.
 HEAD_BANDS = 12
+# Monumental gate / cloister arches span most of a bay — 12 bands reads as stepped blocks.
+MONUMENTAL_HEAD_BANDS = 36
 
 _SEGMENTAL_RISE_FRAC = 0.35  # of half-width
 _SHOULDER_FRAC = 0.18  # corbel inset as fraction of opening width
@@ -66,6 +68,7 @@ class ApertureProfile:
     height_frac: float
     sill_frac: float = 0.0
     head: str = HEAD_FLAT
+    head_bands: int = HEAD_BANDS
     lights: int = 1
     mullion_frac: float = 0.06  # of MODULE, per mullion
     transom_frac: float = 0.0  # of opening height; 0 = none
@@ -94,6 +97,11 @@ class ApertureProfile:
         if not 0.0 <= self.transom_frac < 1.0:
             raise ValueError(
                 f"aperture profile {self.name!r}: transom_frac must be in [0, 1)"
+            )
+        if self.head_bands < 4:
+            raise ValueError(
+                f"aperture profile {self.name!r}: head_bands must be >= 4, "
+                f"got {self.head_bands}"
             )
 
     # -- derived cm geometry -------------------------------------------------
@@ -156,9 +164,9 @@ def opening_slices(
 ) -> List[Slice]:
     """Decompose an opening into horizontal bands ``(z0, z1, run0, run1)``.
 
-    A flat head is one band.  A curved head is ``HEAD_BANDS`` bands whose width follows the
-    curve.  Mullions and transoms are applied by subtracting bars from these bands, which
-    happens in :func:`frame_parts`.
+    A flat head is one band.  A curved head is ``profile.head_bands`` bands whose width
+    follows the curve.  Mullions and transoms are applied by subtracting bars from these
+    bands in :func:`frame_parts`.
     """
     run0, run1 = profile.opening_run_cm(module_cm)
     z0, z1 = profile.opening_z_cm(storey_cm)
@@ -184,9 +192,10 @@ def opening_slices(
     slices = []
     if spring_z > z0:
         slices.append((z0, spring_z, run0, run1))
-    for i in range(HEAD_BANDS):
-        t0 = i / HEAD_BANDS
-        t1 = (i + 1) / HEAD_BANDS
+    bands = profile.head_bands
+    for i in range(bands):
+        t0 = i / bands
+        t1 = (i + 1) / bands
         # Use the *upper* edge width so the band never pokes outside the curve.
         w = _head_half_width_at(profile, half, t1)
         if w <= 1e-6:
@@ -466,12 +475,41 @@ _register(
     ApertureProfile(
         name="gate_arch",
         kind=_D,
-        width_frac=0.72,
+        width_frac=0.88,
+        height_frac=0.90,
+        sill_frac=0.0,
+        head=HEAD_ROUND,
+        head_bands=MONUMENTAL_HEAD_BANDS,
+        tags=frozenset({"door", "gate", "grand", "monumental"}),
+        notes="Monumental round gate — near full-bay carriage opening (BUILDING_HEIGHT_FLEX Z).",
+    )
+)
+_register(
+    ApertureProfile(
+        name="gate_arch_grand",
+        kind=_D,
+        width_frac=0.92,
+        height_frac=0.94,
+        sill_frac=0.0,
+        head=HEAD_ROUND,
+        head_bands=MONUMENTAL_HEAD_BANDS,
+        tags=frozenset({"door", "gate", "grand", "monumental", "fortress"}),
+        notes=(
+            "Fortress gatehouse leaf — max clear width/height in one bay "
+            "(@GATEHOUSE_MONUMENTAL; arcade gallery owns cloister arches)."
+        ),
+    )
+)
+_register(
+    ApertureProfile(
+        name="gate_arch_pointed",
+        kind=_D,
+        width_frac=0.82,
         height_frac=0.88,
         sill_frac=0.0,
         head=HEAD_POINTED,
-        tags=frozenset({"door", "gate", "grand"}),
-        notes="Gatehouse arch — full-bay carriage opening.",
+        tags=frozenset({"door", "gate", "grand", "gothic"}),
+        notes="Pointed gate variant — gothic gatehouses.",
     )
 )
 
@@ -480,12 +518,25 @@ _register(
     ApertureProfile(
         name="arcade_round",
         kind="arch",
-        width_frac=0.70,
-        height_frac=0.74,
-        sill_frac=0.18,
+        width_frac=0.78,
+        height_frac=0.82,
+        sill_frac=0.10,
         head=HEAD_ROUND,
+        head_bands=MONUMENTAL_HEAD_BANDS,
         tags=frozenset({"arch", "arcade", "cloister"}),
         notes="Round-arched arcade bay — cut into the module, one piece.",
+    )
+)
+_register(
+    ApertureProfile(
+        name="arcade_monumental",
+        kind="arch",
+        width_frac=0.84,
+        height_frac=0.88,
+        sill_frac=0.06,
+        head=HEAD_ROUND,
+        tags=frozenset({"arch", "arcade", "cloister", "monumental"}),
+        notes="Tall cloister arch — low spring, wide round head under a gallery roof.",
     )
 )
 _register(

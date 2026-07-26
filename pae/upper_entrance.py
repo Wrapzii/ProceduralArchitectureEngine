@@ -17,7 +17,13 @@ from __future__ import annotations
 from typing import Dict, List, Set, Tuple
 
 from pae.assembly_types import Assembly, SolidPlacement
-from pae.contract import FLOOR_T_CM, MODULE_CM, STOREY_CM, floor_placement_z_cm
+from pae.contract import (
+    FLOOR_T_CM,
+    MODULE_CM,
+    STOREY_CM,
+    floor_placement_z_cm,
+    storey_datum_z_cm,
+)
 from pae.existence import entrance_role_tag
 from pae.report import Failure
 from pae.trim import covered_cells
@@ -64,6 +70,10 @@ def door_opens_onto_exterior_landing(
 
     ``tower_entry`` doors are hall↔drum passages: the walkable side is the
     interior hall floor at that landing (not an exterior balcony).
+
+    ``stair_landing_clear`` doors are compound through-passages punched by
+    ``repair_stair_landing_walls`` when a stair top meets a neighbour range's
+    party wall — both sides are inhabited floors, not open air.
     """
     from pae.existence import TOWER_ENTRY_TAG
 
@@ -71,11 +81,12 @@ def door_opens_onto_exterior_landing(
     inside = interior.get(door.level, set())
     landing = balcony_deck.get(door.level, set())
     tower_entry = TOWER_ENTRY_TAG in door.tags
+    stair_landing_pass = "stair_landing_clear" in door.tags
     for c in covered_cells(door):
         for dx, dy in ((0, 1), (0, -1), (1, 0), (-1, 0)):
             n = (c[0] + dx, c[1] + dy)
-            if tower_entry:
-                # Landing outside the drum door = hall floor (interior).
+            if tower_entry or stair_landing_pass:
+                # Through-passage: hall/neighbour floor counts as the landing.
                 if n in inside or n in deck:
                     return True
                 continue
@@ -132,7 +143,7 @@ def check_upper_entrance_landing(assembly: Assembly) -> List[Failure]:
         world_xyz = (
             d.cell[0] * MODULE_CM + MODULE_CM * 0.5,
             d.cell[1] * MODULE_CM + MODULE_CM * 0.5,
-            d.level * STOREY_CM,
+            storey_datum_z_cm(d.level),
         )
 
         if d.level < 1:

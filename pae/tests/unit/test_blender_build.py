@@ -94,6 +94,18 @@ def test_build_gallery_headless_all_milestones():
         assert result["screenshot"] is None
 
 
+def test_build_gallery_headless_core_milestones():
+    """M1–school row without fortress (fast subset)."""
+    from pae.blender_build import build_gallery
+
+    result = build_gallery(
+        write_png=False,
+        milestones=("m1", "m2", "m3", "m4_l", "m4_u", "m4_c", "school"),
+    )
+    assert result["ok"] is True
+    assert len(result["milestones"]) == 7
+
+
 def test_build_gallery_headless_subset():
     from pae.blender_build import build_gallery
 
@@ -220,7 +232,6 @@ def test_gallery_headless_offsets_are_monotonic_along_x():
 
     result = build_gallery(write_png=False)
     assert len(result["milestones"]) == 8
-    # Headless path records extent; blender path records offset_m — check labels order.
     labels = [m["label"] for m in result["milestones"]]
     assert labels == ["m1", "m2", "m3", "m4_l", "m4_u", "m4_c", "school", "fortress"]
 
@@ -526,6 +537,10 @@ _TINTED_ASSET_IDS = (
     "roof_pitched_slope",
     "roof_hip",
     "roof_valley",
+    "dormer_steep",
+    "spire_needle",
+    "spire_conical",
+    "spire_octagonal",
     "tower_arc_quarter",
     "tower_crown",
     "tower_cap",
@@ -649,38 +664,37 @@ def test_apply_material_base_color_sets_diffuse_and_principled():
     assert bsdf.inputs["Roughness"].default_value == 0.7
 
 
-def test_resolve_fortress_compound_builder_prefers_fortress_when_present():
+def test_resolve_fortress_compound_builder_is_fortress():
     from pae.blender_build import resolve_fortress_compound_builder
+    from pae.compound import build_fortress_compound
 
-    import pae.compound as compound_mod
-
-    builder = resolve_fortress_compound_builder()
-    fortress = getattr(compound_mod, "build_fortress_compound", None)
-    if callable(fortress):
-        assert builder is fortress
-    else:
-        assert builder is compound_mod.build_castle_curtain_compound
+    assert resolve_fortress_compound_builder() is build_fortress_compound
 
 
-def test_build_fortress_or_curtain_compound_validates():
-    from pae.blender_build import build_fortress_or_curtain_compound
+def test_fortress_gallery_factory_wires_compound_builder():
+    from pae.blender_build import _COMPOUND_GALLERY_LABELS, _gallery_factories
 
-    assembly, layout, report, builder_name = build_fortress_or_curtain_compound()
-    assert report.ok
-    assert assembly.placements
-    assert layout.ranges
-    assert builder_name in ("build_fortress_compound", "build_castle_curtain_compound")
+    assert "fortress" in _COMPOUND_GALLERY_LABELS
+    by_label = {lbl: (coll, fn) for lbl, coll, fn in _gallery_factories()}
+    assert by_label["fortress"][1] is None
+    assert by_label["fortress"][0] == "PAE_Fortress"
 
 
 def test_assemble_fortress_compound_validates_clean():
     from pae.blender_build import assemble_fortress_compound
 
-    assembly, report, layout, builder_name = assemble_fortress_compound()
+    assembly, report, layout = assemble_fortress_compound()
     assert report.ok
     assert report.critical == []
     assert assembly.placements
-    assert layout.ranges
-    assert builder_name in ("build_fortress_compound", "build_castle_curtain_compound")
+    assert layout.ranges == [
+        "west_curtain",
+        "gatehouse",
+        "east_curtain",
+        "west_cloister",
+        "east_cloister",
+        "north_keep",
+    ]
 
 
 def test_build_fortress_live_headless():
@@ -691,12 +705,96 @@ def test_build_fortress_live_headless():
     assert result["mode"] == "fortress"
     assert result["collection"] == FORTRESS_COLLECTION
     assert result["placements"] > 0
-    assert result["ranges"]
-    assert result["compound_builder"] in (
-        "build_fortress_compound",
-        "build_castle_curtain_compound",
-    )
+    assert result["compound_builder"] == "build_fortress_compound"
+    assert "north_keep" in result["ranges"]
     if not HAS_BPY:
         assert result["blender"] is False
         assert result["screenshot"] is None
     assert str(FORTRESS_SCREENSHOT_REL).endswith("fortress_live.png")
+
+
+def test_prepare_fortress_live_scene_clears_before_collection(monkeypatch):
+    import pae.blender_build as bb
+
+    from pae.blender_build import FORTRESS_COLLECTION, prepare_fortress_live_scene
+
+    order: list[str] = []
+
+    def fake_clear():
+        order.append("clear")
+        return {"collections": 3, "objects": 10, "meshes": 5, "materials": 2, "images": 0}
+
+    def fake_ensure(name, *, parent=None):
+        order.append(f"ensure:{name}")
+        return name
+
+    monkeypatch.setattr(bb, "clear_pae_scene", fake_clear)
+    monkeypatch.setattr(bb, "_ensure_collection", fake_ensure)
+
+    coll, cleared = prepare_fortress_live_scene()
+    assert order == ["clear", f"ensure:{FORTRESS_COLLECTION}"]
+    assert coll == FORTRESS_COLLECTION
+    assert cleared["collections"] == 3
+
+
+def test_build_fortress_live_invokes_scene_clear(monkeypatch):
+    import pae.blender_build as bb
+    import pae.primitives.bpy_util as bpy_util
+
+    calls: list[str] = []
+
+    def fake_prepare(*, skip_clear: bool = False):
+        calls.append("prepare")
+        return "PAE_Fortress", {
+            "collections": 1,
+            "objects": 0,
+            "meshes": 0,
+            "materials": 0,
+            "images": 0,
+        }
+
+    monkeypatch.setattr(bb, "reload_pae", lambda: [])
+    monkeypatch.setattr(bb, "prepare_fortress_live_scene", fake_prepare)
+    monkeypatch.setattr(
+        bb,
+        "assemble_fortress_compound",
+        lambda **kw: (_FakeAsm(), _FakeReport(), _FakeLayout()),
+    )
+    monkeypatch.setattr(
+        bb,
+        "assembly_bounds_cm",
+        lambda _a: ((0.0, 0.0, 0.0), (100.0, 100.0, 100.0)),
+    )
+    monkeypatch.setattr(bb, "assembly_footprint_extent_m", lambda _a: (10.0, 8.0, 4.0))
+    monkeypatch.setattr(bb, "instance_assembly", lambda *a, **k: 1)
+    monkeypatch.setattr(bb, "frame_camera_on_meshes", lambda **k: None)
+    monkeypatch.setattr(bb, "write_screenshot", lambda *a, **k: None)
+    monkeypatch.setattr(bpy_util, "HAS_BPY", True)
+    monkeypatch.setattr(bpy_util, "BOOLEAN_SOLVERS", ["EXACT"])
+
+    result = bb.build_fortress_live(write_png=False)
+    assert calls == ["prepare"]
+    assert result["mode"] == "fortress"
+    assert result["scene_cleared"]["collections"] == 1
+
+
+class _FakeReport:
+    ok = True
+
+
+class _FakeLayout:
+    ranges = ["west_curtain", "gatehouse", "east_curtain", "west_cloister", "east_cloister", "north_keep"]
+
+
+class _FakeAsm:
+    placements = [object()]
+
+
+def test_fortress_material_tints_slate_blue_spires():
+    from pae.blender_build import material_color_for_placement
+
+    spire = material_color_for_placement("spire_needle", "roofline")
+    slope = material_color_for_placement("roof_pitched_slope", "roof")
+    assert spire[2] > spire[0], "needle spire should read blue-slate"
+    assert slope[2] > slope[0], "pitched roof should read blue-slate"
+    assert spire != slope

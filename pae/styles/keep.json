@@ -1,6 +1,9 @@
 {
   "id": "keep",
   "roof_pitch": 0.9,
+  "roof": {
+    "kind_default": "hip"
+  },
   "window": {"tag": "window_arrowslit", "per_bay": 1, "skip_ground": true},
   "wall_bands": {"plinth_cm": 60, "cornice_cm": 40},
   "tower": {"cap": "cone_steep", "crown": true, "finial": true},

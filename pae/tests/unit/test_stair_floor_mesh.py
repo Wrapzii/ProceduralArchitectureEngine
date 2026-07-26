@@ -88,54 +88,131 @@ def test_floor_hole_frame_mesh_has_clear_center_void():
     assert inside_hole == []
 
 
-def test_spanning_deck_mesh_punches_stair_voids():
-    """Upper floor deck must open at VOID bays — not a solid ceiling at stair top."""
+def test_origin_only_hole_punch_is_half_a_two_bay_run():
+    """Ledger F-7 / D-24 broken contract: listing only h.cell punches ~1 module, not 2.
+
+    Fail-closed lock — if someone reverts spanning punch to origin-only, this
+    documents why stairs end up buried under half a floor slab.
+    """
     from pae.primitives.floors import (
         hole_rects_for_deck_cm,
+        hole_rects_merged_for_deck_cm,
+    )
+
+    margin = floor_hole_margin_cm()
+    origin_only = hole_rects_for_deck_cm((0, 0), [(1, 1)])
+    full_run = hole_rects_merged_for_deck_cm((0, 0), [(1, 1), (1, 2)])
+    assert len(origin_only) == 1 and len(full_run) == 1
+    ox0, oy0, ox1, oy1 = origin_only[0]
+    fx0, fy0, fx1, fy1 = full_run[0]
+    assert (oy1 - oy0) == pytest.approx(MODULE_CM - 2.0 * margin)
+    assert (fy1 - fy0) == pytest.approx(2.0 * MODULE_CM - 2.0 * margin)
+    assert (fy1 - fy0) > (oy1 - oy0) * 1.5
+
+
+def test_spanning_deck_mesh_punches_stair_voids():
+    """Upper floor deck must open the FULL stair run — one merged well, no rib."""
+    from pae.primitives.floors import (
+        hole_rects_merged_for_deck_cm,
         slab_with_rect_holes_verts_faces,
     )
 
     sx, sy, sz = 4.0 * MODULE_CM, 3.0 * MODULE_CM, FLOOR_T_CM
     hole_cells = [(1, 0), (1, 1)]
-    rects = hole_rects_for_deck_cm((0, 0), hole_cells)
-    assert len(rects) == 2
+    rects = hole_rects_merged_for_deck_cm((0, 0), hole_cells)
+    assert len(rects) == 1
+    x0, y0, x1, y1 = rects[0]
+    margin = floor_hole_margin_cm()
+    assert (x1 - x0) == pytest.approx(MODULE_CM - 2.0 * margin)
+    assert (y1 - y0) == pytest.approx(2.0 * MODULE_CM - 2.0 * margin)
+
     verts, faces = slab_with_rect_holes_verts_faces(sx, sy, sz, rects)
     assert faces
     bb_min, bb_max = mesh_aabb_from_verts(verts)
     assert bb_min == pytest.approx((0.0, 0.0, 0.0), abs=TOL_CM)
     assert bb_max == pytest.approx((sx, sy, sz), abs=TOL_CM)
 
-    margin = floor_hole_margin_cm()
-    # Center of first VOID bay must contain no geometry.
-    cx = 1.0 * MODULE_CM + 0.5 * MODULE_CM
-    cy = 0.0 * MODULE_CM + 0.5 * MODULE_CM
-    inside = [
-        v
-        for v in verts
-        if abs(v[0] - cx) < (MODULE_CM * 0.5 - margin - 2.0)
-        and abs(v[1] - cy) < (MODULE_CM * 0.5 - margin - 2.0)
-    ]
-    assert inside == []
+    # Both VOID bay centres must contain no geometry (full run cleared).
+    for j in (0, 1):
+        cx = 1.0 * MODULE_CM + 0.5 * MODULE_CM
+        cy = j * MODULE_CM + 0.5 * MODULE_CM
+        inside = [
+            v
+            for v in verts
+            if abs(v[0] - cx) < (MODULE_CM * 0.5 - margin - 2.0)
+            and abs(v[1] - cy) < (MODULE_CM * 0.5 - margin - 2.0)
+        ]
+        assert inside == [], f"floor geometry left in void bay (1,{j})"
 
 
 def test_is_spanning_floor_deck_and_hole_rects():
-    from types import SimpleNamespace
-
+    from pae.assembly_types import SolidPlacement
     from pae.blender_build import is_spanning_floor_deck, spanning_floor_hole_rects_cm
 
-    deck = SimpleNamespace(
+    deck = SolidPlacement(
+        piece_id="deck",
         asset_id="floor",
         kind="floor",
         cell=(0, 0),
         level=1,
+        yaw=0,
+        offset_cm=(0.0, 0.0, -FLOOR_T_CM),
         size_cm=(4.0 * MODULE_CM, 3.0 * MODULE_CM, FLOOR_T_CM),
+        tags=frozenset({"floor"}),
     )
     assert is_spanning_floor_deck(deck)
+    # One spanning 1×2 floor_hole (assemble contract) — not two origin cells.
     holes = [
-        SimpleNamespace(asset_id="floor_hole", cell=(1, 0), level=1),
-        SimpleNamespace(asset_id="floor_hole", cell=(1, 1), level=1),
-        SimpleNamespace(asset_id="floor_hole", cell=(1, 0), level=2),  # other storey
+        SolidPlacement(
+            piece_id="span_hole",
+            asset_id="floor_hole",
+            kind="floor",
+            cell=(1, 0),
+            level=1,
+            yaw=0,
+            offset_cm=(0.0, 0.0, -FLOOR_T_CM),
+            size_cm=(MODULE_CM, 2.0 * MODULE_CM, FLOOR_T_CM),
+            tags=frozenset({"floor", "hole"}),
+        ),
+        SolidPlacement(
+            piece_id="other_storey",
+            asset_id="floor_hole",
+            kind="floor",
+            cell=(1, 0),
+            level=2,
+            yaw=0,
+            offset_cm=(0.0, 0.0, -FLOOR_T_CM),
+            size_cm=(MODULE_CM, MODULE_CM, FLOOR_T_CM),
+            tags=frozenset({"floor", "hole"}),
+        ),
     ]
     rects = spanning_floor_hole_rects_cm(deck, holes)
-    assert len(rects) == 2
-    assert rects[0][0] == pytest.approx(MODULE_CM + floor_hole_margin_cm())
+    assert len(rects) == 1
+    margin = floor_hole_margin_cm()
+    assert rects[0][0] == pytest.approx(MODULE_CM + margin)
+    assert rects[0][3] - rects[0][1] == pytest.approx(2.0 * MODULE_CM - 2.0 * margin)
+
+
+def test_m2_spanning_deck_punch_clears_full_stair_run():
+    """Live M2 contract: hole size is 1×2 but origin-only punch was ~1×1 (F-7)."""
+    from pae.blender_build import is_spanning_floor_deck, spanning_floor_hole_rects_cm
+    from pae.pipeline import run_through_assemble
+    from pae.spec import m2_two_storey_stair_spec
+    from pae.trim import covered_cells
+
+    _, _, assembly, _ = run_through_assemble(m2_two_storey_stair_spec())
+    stair = next(p for p in assembly.placements if p.kind == "stair")
+    holes = [p for p in assembly.placements if p.asset_id == "floor_hole"]
+    deck = next(p for p in assembly.placements if is_spanning_floor_deck(p))
+    need = covered_cells(stair)
+    assert len(need) == 2
+    rects = spanning_floor_hole_rects_cm(deck, holes)
+    assert len(rects) == 1
+    x0, y0, x1, y1 = rects[0]
+    # Long axis of the well must exceed one module (half-run regression).
+    assert max(x1 - x0, y1 - y0) > MODULE_CM
+    dx0, dy0 = deck.cell
+    for cell in need:
+        cx = (cell[0] - dx0) * MODULE_CM + MODULE_CM * 0.5
+        cy = (cell[1] - dy0) * MODULE_CM + MODULE_CM * 0.5
+        assert any(r[0] < cx < r[2] and r[1] < cy < r[3] for r in rects), cell

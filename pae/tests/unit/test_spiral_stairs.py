@@ -44,14 +44,13 @@ def test_spiral_plan_marks_stair_and_void_well():
     assert floor_plan.storeys[1].get(*cell) == CellRole.VOID
 
 
-def test_spiral_emits_four_quarters_per_storey_climb():
+def test_spiral_has_full_turn_and_reaches_each_storey():
     assembly, floor_plan, massing = _spiral_assembly()
     spirals = [p for p in assembly.placements if p.asset_id == "stair_spiral_quarter"]
     climbs = len(floor_plan.storeys) - 1
     assert climbs >= 1
     assert len(spirals) == 4 * climbs
-    quarter = get_primitive("stair_spiral_quarter")
-    quarter_rise = quarter.size_cm[2]
+    step_rise = STOREY_CM / 4.0
     stair_cell = tuple(massing.stair_cells[0])
     for level in range(climbs):
         level_pieces = [p for p in spirals if p.level == level]
@@ -60,7 +59,8 @@ def test_spiral_emits_four_quarters_per_storey_climb():
         assert {p.cell for p in level_pieces} == {stair_cell}
         assert all(p.rotates_about_center for p in level_pieces)
         z_offs = sorted(p.offset_cm[2] for p in level_pieces)
-        assert z_offs == [0.0, quarter_rise, 2 * quarter_rise, 3 * quarter_rise]
+        assert z_offs == [0.0, step_rise, 2 * step_rise, 3 * step_rise]
+        assert max(p.offset_cm[2] + p.size_cm[2] for p in level_pieces) == STOREY_CM
 
 
 def test_spiral_stair_reachability_and_exit_clearance():
@@ -78,11 +78,10 @@ def test_spiral_stair_reachability_and_exit_clearance():
 
 
 def test_spiral_validate_interpenetration_with_tower_arcs_is_warning_only():
-    """Spiral wedges occupy the same drum cell as tower_arc quarters — non-critical."""
+    """A correctly sized spiral never creates a critical shell collision."""
     _, _, assembly, _ = run_through_assemble(m_spiral_tower_spec())
     _, vreport = validate(assembly)
     interpen = [f for f in vreport.failures if f.check == "interpenetration"]
-    assert interpen
     assert all(not f.critical for f in interpen)
     assert not vreport.critical, [f.message for f in vreport.critical]
 

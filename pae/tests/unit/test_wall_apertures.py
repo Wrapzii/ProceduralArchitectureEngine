@@ -80,12 +80,16 @@ def test_arrowslit_narrow_and_raised_sill():
 
 
 def test_arcade_jambs_and_spring_from_fractions():
+    from pae.primitives.apertures import get_profile
+
+    profile = get_profile("arcade_round")
     arcade = get("wall_arcade")
     y0, y1, z0, z1 = aperture_opening_yz(arcade.aperture)
-    assert y0 == pytest.approx(MODULE_CM * _ARCH_JAMB)
-    assert y1 == pytest.approx(MODULE_CM * (1.0 - _ARCH_JAMB))
-    assert z0 == pytest.approx(STOREY_CM * _ARCH_SPRING)
-    assert z1 == pytest.approx(STOREY_CM * 0.92)
+    run0, run1 = profile.opening_run_cm(MODULE_CM)
+    assert y0 == pytest.approx(run0)
+    assert y1 == pytest.approx(run1)
+    assert z0 == pytest.approx(STOREY_CM * profile.sill_frac)
+    assert z1 == pytest.approx(STOREY_CM * (profile.sill_frac + profile.height_frac))
 
 
 def test_cutter_x_pierces_both_wall_faces():

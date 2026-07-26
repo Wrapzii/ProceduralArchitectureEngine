@@ -113,9 +113,9 @@ def test_spiral_tower_helical_windows_at_tread_heights():
     assert any(abs(z - quarter_rise) < 1.0 for z in z_offs) or len(z_offs) >= 2
     assert max(z_offs) <= STOREY_CM + 1.0
 
-    # Spiral stairs still present — do not wipe Phase 3.1 placement.
+    # Helical: three treads per storey (attach quarter open for tower_entry).
     spirals = [p for p in assembly.placements if p.asset_id == "stair_spiral_quarter"]
-    assert len(spirals) >= 4
+    assert len(spirals) >= 3
 
 
 def test_tower_windows_no_freestanding_islands():

@@ -62,17 +62,12 @@ def test_random_spec_factory_stays_in_bay_space():
 
 
 def _pipeline_validate(spec):
-    from pae.assemble import assemble
-    from pae.plan import plan as plan_floor
-    from pae.solver import solve
-    from pae.spec import load_style
+    from pae.pipeline import run_through_assemble
     from pae.validate import validate
 
-    massing, _ = solve(spec)
-    assert massing is not None, "solver returned no massing"
-    floor_plan, _ = plan_floor(massing)
-    style, _ = load_style(spec.style)
-    assembly, _ = assemble(floor_plan, asset_db=None, style=style)
+    _massing, _floor_plan, assembly, stage_report = run_through_assemble(spec)
+    assert stage_report.ok, stage_report.critical
+    assert assembly.placements, "pipeline returned an empty successful assembly"
     _, report = validate(assembly)
     return assembly, report
 

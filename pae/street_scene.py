@@ -128,7 +128,7 @@ def street() -> List[StreetBuilding]:
     south_y = -7     # stone row sits south
     return [
         # --- north side: timber-framed, jettied character, varied heights
-        StreetBuilding("timber_a", 4, 4, 3, (0, north_y), TIMBER_BANDING, TIMBER_TRIM,
+        StreetBuilding("timber_a", 5, 4, 3, (0, north_y), TIMBER_BANDING, TIMBER_TRIM,
                        pitch=1.65, seed=21),
         StreetBuilding("timber_b", 3, 4, 2, (5, north_y), TIMBER_BANDING, TIMBER_TRIM,
                        pitch=1.75, seed=22),
@@ -137,13 +137,13 @@ def street() -> List[StreetBuilding]:
         # --- south side: taller rendered stone, arched openings
         StreetBuilding("stone_a", 5, 4, 3, (1, south_y), STONE_BANDING, STONE_TRIM,
                        pitch=1.45, seed=24),
-        StreetBuilding("stone_b", 4, 4, 4, (7, south_y), STONE_BANDING, STONE_TRIM,
+        StreetBuilding("stone_b", 5, 4, 4, (7, south_y), STONE_BANDING, STONE_TRIM,
                        pitch=1.4, seed=25),
         # --- the gate tower closing the far end of the street
         StreetBuilding(
-            "gate_tower", 4, 4, 4, (15, 0), TOWER_BANDING, TOWER_TRIM,
+            "gate_tower", 5, 5, 4, (15, 0), TOWER_BANDING, TOWER_TRIM,
             pitch=1.8, seed=26,
-            towers=[TowerSpec(cell=(0, 0), storeys=4), TowerSpec(cell=(3, 3), storeys=4)],
+            towers=[TowerSpec(cell=(0, 0), storeys=4), TowerSpec(cell=(4, 4), storeys=4)],
         ),
     ]
 

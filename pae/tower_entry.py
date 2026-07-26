@@ -21,14 +21,25 @@ from __future__ import annotations
 from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple, Union
 
 from pae.assembly_types import Aperture, SolidPlacement
-from pae.contract import FLOOR_T_CM, MODULE_CM, STOREY_CM, WALL_T_CM
+from pae.contract import (
+    DRUM_WINDOW_CHORD_FRAC,
+    DRUM_WINDOW_HEIGHT_FRAC,
+    DRUM_WINDOW_SILL_FRAC,
+    FLOOR_T_CM,
+    MODULE_CM,
+    STOREY_CM,
+    WALL_T_CM,
+    storey_datum_z_cm,
+    tower_entry_door_chord_cm,
+    tower_entry_door_height_cm,
+)
 from pae.existence import TOWER_ENTRY_TAG
 from pae.plan import CellRole, FloorPlan
 from pae.solver import Volume
 
 StyleLike = Union[Mapping[str, Any], None]
 
-_TOWER_ENTRY_CHORD_CM = MODULE_CM * 0.5
+_TOWER_ENTRY_CHORD_CM = tower_entry_door_chord_cm()
 
 # Hall / inhabited roles the door must open onto (not WALL_LINE attach cells).
 _HALL_WALKABLE = frozenset(
@@ -38,9 +49,15 @@ _HALL_WALKABLE = frozenset(
         CellRole.DOOR,
         CellRole.CORRIDOR,
         CellRole.CLASSROOM,
+        CellRole.ROOM,
+        CellRole.HALL,
+        CellRole.SERVICE,
+        CellRole.ARCADE,
     }
 )
 # Drum side: stairwell roles — VOID is the open well at the upper landing.
+# WALL_LINE is included because keep/gatehouse attach cells are often planned as
+# envelope WALL_LINE even when a round drum owns the cell (habitable tower path).
 _DRUM_PASSABLE = frozenset(
     {
         CellRole.STAIR,
@@ -48,6 +65,7 @@ _DRUM_PASSABLE = frozenset(
         CellRole.VOID,
         CellRole.DOUBLE_VOID,
         CellRole.INTERIOR,
+        CellRole.WALL_LINE,
     }
 )
 
@@ -149,10 +167,11 @@ def _tower_entry_shell_pose(
     height_cm: float,
     chord_cm: float,
     skip_yaw: Optional[int],
+    radius_cm: float = MODULE_CM,
 ) -> Tuple[Tuple[float, float, float], Tuple[float, float, float]]:
     """Rim pose matching assemble drum-window overlays (thin/long axes baked)."""
     thick = WALL_T_CM
-    half = MODULE_CM * 0.5
+    half = float(radius_cm)
     radial = half - thick * 0.5
     dx, dy = drum_xy
     shift = max(0.0, half - chord_cm * 0.5)
@@ -193,6 +212,8 @@ def place_tower_entry_doors(
     apertures: List[Aperture],
     counters: Dict[str, int],
     floor_plan: Optional[FloorPlan] = None,
+    radius_cm: float = MODULE_CM,
+    chord_cm: Optional[float] = None,
 ) -> int:
     """Emit hall↔drum doors on the attach face. Returns count placed.
 
@@ -209,9 +230,12 @@ def place_tower_entry_doors(
     n_levels = min(vol.storeys, body.storeys)
     if floor_plan is not None:
         n_levels = min(n_levels, len(floor_plan.storeys))
-    # Prefer a passable opening height under the storey slab.
-    height = STOREY_CM - FLOOR_T_CM
-    chord = min(_TOWER_ENTRY_CHORD_CM, MODULE_CM * 0.55)
+    # This placement is a complete doorway-bearing wall module, not just the
+    # clear leaf. The wall must reach the storey plate so upper doorway modules
+    # and landings have continuous bearing; its aperture profile owns the actual
+    # clear opening height.
+    height = STOREY_CM
+    chord = _TOWER_ENTRY_CHORD_CM if chord_cm is None else float(chord_cm)
     placed = 0
     for level in range(n_levels):
         if floor_plan is not None and level < len(floor_plan.storeys):
@@ -239,6 +263,7 @@ def place_tower_entry_doors(
             height_cm=height,
             chord_cm=chord,
             skip_yaw=skip_yaw,
+            radius_cm=radius_cm,
         )
         dpid = next_piece_id(counters, f"tower_entry_{skip_yaw}", cell, level)
         tags = set(door_tags) | {"tower", TOWER_ENTRY_TAG}
@@ -255,7 +280,7 @@ def place_tower_entry_doors(
             tags=frozenset(tags),
         )
         placements.append(sp)
-        floor_z = level * STOREY_CM
+        floor_z = storey_datum_z_cm(level)
         world = aperture_world(sp, "door")
         apertures.append(
             Aperture(
@@ -281,10 +306,64 @@ def is_tower_entry_piece(p: SolidPlacement) -> bool:
     return TOWER_ENTRY_TAG in p.tags or p.piece_id.startswith("tower_entry_")
 
 
+CHECK_TOWER_ENTRY_CLEARS_STAIR = "tower_entry_clears_stair"
+
+
+def check_tower_entry_clears_stair(assembly: "Assembly") -> List["Failure"]:
+    """The doorway's inner face must remain outside the stair walking radius."""
+    from pae.assembly_types import Assembly
+    from pae.contract import TOL_CM
+    from pae.existence import placed_tower_entry_doors
+    from pae.report import Failure
+
+    failures: List[Failure] = []
+    treads = [
+        p
+        for p in assembly.placements
+        if p.asset_id == "stair_spiral_quarter"
+    ]
+    for door in placed_tower_entry_doors(assembly):
+        level_treads = [
+            p for p in treads if p.cell == door.cell and p.level == door.level
+        ]
+        if not level_treads:
+            continue
+        dx = float(door.offset_cm[0]) - float(level_treads[0].offset_cm[0])
+        dy = float(door.offset_cm[1]) - float(level_treads[0].offset_cm[1])
+        radial_distance = (dx * dx + dy * dy) ** 0.5
+        yaw = int(door.yaw) % 360
+        radial_thickness = (
+            float(door.size_cm[0]) if yaw in (0, 180) else float(door.size_cm[1])
+        )
+        inner_face_radius = radial_distance - radial_thickness * 0.5
+        stair_outer_radius = max(
+            max(float(p.size_cm[0]), float(p.size_cm[1])) for p in level_treads
+        )
+        if stair_outer_radius + TOL_CM <= inner_face_radius:
+            continue
+        failures.append(
+            Failure(
+                check=CHECK_TOWER_ENTRY_CLEARS_STAIR,
+                message=(
+                    f"tower_entry {door.piece_id} at cell {door.cell} level "
+                    f"{door.level} clips spiral walking radius "
+                    f"{stair_outer_radius:.1f} cm; doorway inner face is only "
+                    f"{inner_face_radius:.1f} cm from the stair axis"
+                ),
+                world_xyz=None,
+                piece_id=door.piece_id,
+                critical=True,
+            )
+        )
+    return failures
+
+
 __all__ = [
     "place_tower_entry_doors",
     "is_tower_entry_piece",
     "TOWER_ENTRY_TAG",
+    "CHECK_TOWER_ENTRY_CLEARS_STAIR",
+    "check_tower_entry_clears_stair",
     "_resolve_hall_landing_cell",
     "_HALL_WALKABLE",
     "_DRUM_PASSABLE",

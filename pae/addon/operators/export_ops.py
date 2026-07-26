@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pae.addon.helpers import export_gate_allows, export_gate_message
-from pae.addon.operator_utils import scene_props, spec_from_context
+from pae.addon.operator_utils import pipeline_input_from_context, scene_props
 from pae.addon.pipeline_ui import run_full_pipeline
 from pae.addon.properties import HAS_BPY
 from pae.addon.session import report_from_json
@@ -18,7 +18,7 @@ if HAS_BPY:
         report = report_from_json(props.validation_report_json)
         if not export_gate_allows(report):
             return None, None, export_gate_message(report)
-        spec = spec_from_context(context)
+        spec = pipeline_input_from_context(context)
         _, _, assembly, _ = run_full_pipeline(spec)
         if assembly is None:
             return None, None, "No assembly to export"

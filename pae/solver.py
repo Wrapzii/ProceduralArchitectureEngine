@@ -7,7 +7,7 @@ Input: BuildingSpec → Output: Massing (rectangular cell volumes).
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Sequence, Set, Tuple
 
 from pae.contract import cell_to_world_cm
 from pae.report import Failure, Report
@@ -45,6 +45,11 @@ class Volume:
     entrance: bool = False
     # Per-tower drum circulation (from TowerSpec.stair_kind). "" = none.
     stair_kind: str = ""
+    # Physical drum radius in module units; tower remains one logical plan cell.
+    tower_radius_bays: float = 1.0
+    tower_shape: str = "round"
+    tower_cap_style: str = "auto"
+    tower_spire_height_storeys: Optional[float] = None
 
     def cells(self) -> Set[Tuple[int, int]]:
         return {
@@ -110,6 +115,17 @@ class Massing:
     building_class: str = "generic"
     #: Envelope / monumental wall span (storeys). None → ``storeys``.
     wall_height_storeys: Optional[float] = None
+    # --- Master Plan Stage A/B ---
+    structure_id: Optional[str] = None
+    foundation_cells: Tuple[Tuple[int, int], ...] = ()
+    level_height_units: Optional[Tuple[int, ...]] = None
+    level_cells: Optional[Tuple[Tuple[Tuple[int, int], ...], ...]] = None
+    level_void_cells: Optional[Tuple[Tuple[Tuple[int, int], ...], ...]] = None
+    level_wall_styles: Optional[Tuple[Optional[str], ...]] = None
+    level_window_tags: Optional[Tuple[Optional[str], ...]] = None
+    level_programs: Optional[
+        Tuple[Dict[str, Tuple[Tuple[int, int, int, int], ...]], ...]
+    ] = None
 
     def volume_by_id(self, vid: str) -> Optional[Volume]:
         for v in self.volumes:
@@ -373,6 +389,14 @@ def _tower_volume(spec: TowerSpec, index: int, building_storeys: int) -> Volume:
         role="tower",
         entrance=False,
         stair_kind=str(getattr(spec, "stair_kind", "") or "").lower(),
+        tower_radius_bays=max(0.5, float(getattr(spec, "radius_bays", 1.0))),
+        tower_shape=str(getattr(spec, "shape", "round") or "round").lower(),
+        tower_cap_style=str(
+            getattr(spec, "cap_style", "auto") or "auto"
+        ).lower(),
+        tower_spire_height_storeys=getattr(
+            spec, "spire_height_storeys", None
+        ),
     )
 
 
@@ -665,6 +689,18 @@ def _local_repair_towers(volumes: List[Volume]) -> List[Volume]:
                 role=v.role,
                 entrance=False,
                 stair_kind=str(getattr(v, "stair_kind", "") or ""),
+                tower_radius_bays=max(
+                    0.5, float(getattr(v, "tower_radius_bays", 1.0))
+                ),
+                tower_shape=str(
+                    getattr(v, "tower_shape", "round") or "round"
+                ).lower(),
+                tower_cap_style=str(
+                    getattr(v, "tower_cap_style", "auto") or "auto"
+                ).lower(),
+                tower_spire_height_storeys=getattr(
+                    v, "tower_spire_height_storeys", None
+                ),
             )
         )
     return repaired
@@ -680,29 +716,198 @@ def _primary_body(volumes: List[Volume]) -> Optional[Volume]:
     return enclosed[0] if enclosed else None
 
 
-def _default_stair_cell(volumes: List[Volume]) -> Optional[Tuple[int, int]]:
-    """Pick an interior cell near the south edge of the primary body for a straight stair."""
-    m = _primary_body(volumes)
-    if m is None:
-        return None
-    # Need 2 modules span in +Y for a straight run (§5.3).
-    if (m.y1 - m.y0) < 1 or (m.x1 - m.x0) < 0:
-        return None
-    sx = m.x0 + (m.x1 - m.x0) // 2
-    sy = m.y0 + 1  # one bay in from south exterior wall when depth allows
-    if sy + 1 > m.y1:
-        sy = m.y0
-    if sy + 1 > m.y1:
-        return None
-    return (sx, sy)
+# Master Plan Stage D — grand/imperial ceremonial split-flight typology not implemented.
+DEFERRED_STAIR_KINDS = frozenset({"grand", "imperial"})
 
 
-def _default_spiral_stair_cell(volumes: List[Volume]) -> Optional[Tuple[int, int]]:
+def _body_cell_union(volumes: List[Volume]) -> Set[Tuple[int, int]]:
+    cells: Set[Tuple[int, int]] = set()
+    for v in volumes:
+        if v.role != "courtyard":
+            cells |= v.cells()
+    return cells
+
+
+def _per_level_built_sets(
+    volumes: List[Volume],
+    storeys: int,
+    level_cells: Optional[Tuple[Tuple[Tuple[int, int], ...], ...]] = None,
+) -> List[Set[Tuple[int, int]]]:
+    """Built cells per climbed storey — Stage B masks or legacy uniform footprint."""
+    if level_cells:
+        out = [set(level_cells[i]) for i in range(min(storeys, len(level_cells)))]
+        while len(out) < storeys:
+            out.append(set(out[-1]) if out else _body_cell_union(volumes))
+        return out
+    body = _body_cell_union(volumes)
+    return [set(body)] * storeys
+
+
+def _is_perimeter_wall_line(x: int, y: int, built: Set[Tuple[int, int]]) -> bool:
+    if (x, y) not in built:
+        return False
+    for dx, dy in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+        if (x + dx, y + dy) not in built:
+            return True
+    return False
+
+
+def _interior_walkable(built: Set[Tuple[int, int]]) -> Set[Tuple[int, int]]:
+    return {c for c in built if not _is_perimeter_wall_line(c[0], c[1], built)}
+
+
+def _climb_intersection(per_level: List[Set[Tuple[int, int]]], climb_levels: int) -> Set[Tuple[int, int]]:
+    """Cells present on every storey a stair climbs (built mask, not walkable-only).
+
+    Wall-line cells along a courtyard edge are still valid stair-well cells — plan
+    marks STAIR on the full per-level built set (Stage D / L-U connector bars).
+    """
+    if climb_levels < 1 or not per_level:
+        return set()
+    shared = set(per_level[0])
+    for i in range(1, climb_levels):
+        shared &= per_level[i]
+    return shared
+
+
+def _regions_touching_well(
+    built: Set[Tuple[int, int]], well: Sequence[Tuple[int, int]]
+) -> int:
+    """Count 4-connected interior regions adjacent to (but not inside) *well*."""
+    from collections import deque
+
+    well_set = set(well)
+    walkable = _interior_walkable(built) - well_set
+    region_of: Dict[Tuple[int, int], int] = {}
+    touching: Set[int] = set()
+    rid = 0
+    for start in sorted(walkable):
+        if start in region_of:
+            continue
+        q = deque([start])
+        region_of[start] = rid
+        touches = False
+        while q:
+            cx, cy = q.popleft()
+            for dx, dy in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+                n = (cx + dx, cy + dy)
+                if n in well_set:
+                    touches = True
+                    continue
+                if n in walkable and n not in region_of:
+                    region_of[n] = rid
+                    q.append(n)
+        if touches:
+            touching.add(rid)
+        rid += 1
+    return len(touching)
+
+
+def _enum_rect_wells(
+    search: Set[Tuple[int, int]], w: int, h: int
+) -> List[List[Tuple[int, int]]]:
+    if not search:
+        return []
+    x_min = min(c[0] for c in search)
+    x_max = max(c[0] for c in search)
+    y_min = min(c[1] for c in search)
+    y_max = max(c[1] for c in search)
+    out: List[List[Tuple[int, int]]] = []
+    for x0 in range(x_min, x_max + 1):
+        for y0 in range(y_min, y_max + 1):
+            cand = [(x0 + i, y0 + j) for i in range(w) for j in range(h)]
+            if all(c in search for c in cand):
+                out.append(cand)
+    return out
+
+
+def _well_rank_key(
+    well: List[Tuple[int, int]],
+    per_level: List[Set[Tuple[int, int]]],
+    *,
+    anchor: Optional[Tuple[int, int]] = None,
+) -> Tuple[int, int, int, int, int, int, int]:
+    """Lower is better — connector junctions beat narrow-wing dead ends."""
+    built0 = per_level[0]
+    well_set = set(well)
+    xs = {c[0] for c in well}
+    ys = {c[1] for c in well}
+    y_min = min(c[1] for c in built0)
+    x_min = min(c[0] for c in built0)
+    x_max = max(c[0] for c in built0)
+    south_row = sum(1 for c in well if c[1] == y_min)
+    edge_cols = sum(1 for c in well if c[0] in (x_min, x_max))
+    depth = min(c[1] for c in well)
+    auto_miss = 0 if anchor and anchor in well_set else 1
+    connector = -_regions_touching_well(built0, well)
+    # 4×2 in a 2-row south bar splits L/U connectors on alternating storeys.
+    shallow_split = 1 if len(ys) <= 2 and len(xs) >= 4 else 0
+    # Prefer 2×4 leg wells over shallow horizontal splits.
+    vertical_well = 0 if len(ys) > len(xs) else 1
+    return (auto_miss, shallow_split, vertical_well, connector, south_row, edge_cols, -depth)
+
+
+def _pick_best_well(
+    candidates: List[List[Tuple[int, int]]],
+    per_level: List[Set[Tuple[int, int]]],
+    climb_levels: int,
+    *,
+    anchor: Optional[Tuple[int, int]] = None,
+) -> List[Tuple[int, int]]:
+    valid = [
+        cand
+        for cand in candidates
+        if _climb_intersection(per_level, climb_levels) >= set(cand)
+    ]
+    if not valid:
+        return []
+    return min(valid, key=lambda c: _well_rank_key(c, per_level, anchor=anchor))
+
+
+def _default_stair_cell(
+    volumes: List[Volume],
+    *,
+    per_level: Optional[List[Set[Tuple[int, int]]]] = None,
+    climb_levels: int = 1,
+) -> Optional[Tuple[int, int]]:
+    """Pick an interior anchor — prefer connector cells, not a single tiny volume."""
+    if per_level is None:
+        per_level = _per_level_built_sets(volumes, max(1, climb_levels))
+    shared = _climb_intersection(per_level, climb_levels)
+    if not shared:
+        return None
+    walkable = _interior_walkable(per_level[0]) & shared
+    # Prefer true interior cells; fall back to built connector bar (wall-line OK).
+    pool = walkable if walkable else shared
+    ranked: List[Tuple[Tuple[int, int, int, int], Tuple[int, int]]] = []
+    y_min = min(c[1] for c in per_level[0])
+    for x, y in sorted(pool):
+        if (x, y + 1) not in shared:
+            continue
+        south = 1 if y == y_min else 0
+        ranked.append(((south, y, x), (x, y)))
+    if ranked:
+        return min(ranked)[1]
+    return min(pool, key=lambda c: (c[1], c[0]))
+
+
+def _default_spiral_stair_cell(
+    volumes: List[Volume],
+    *,
+    per_level: Optional[List[Set[Tuple[int, int]]]] = None,
+    climb_levels: int = 1,
+) -> Optional[Tuple[int, int]]:
     """Single interior cell for a freestanding spiral (no tower)."""
-    m = _primary_body(volumes)
-    if m is None:
+    if per_level is None:
+        per_level = _per_level_built_sets(volumes, max(1, climb_levels))
+    shared = _climb_intersection(per_level, climb_levels)
+    if not shared:
         return None
-    return (m.x0 + (m.x1 - m.x0) // 2, m.y0 + (m.y1 - m.y0) // 2)
+    cx = sum(c[0] for c in shared) // len(shared)
+    cy = sum(c[1] for c in shared) // len(shared)
+    if (cx, cy) in shared:
+        return (cx, cy)
+    return min(shared, key=lambda c: abs(c[0] - cx) + abs(c[1] - cy))
 
 
 def _tower_stair_cell(volumes: List[Volume]) -> Optional[Tuple[int, int]]:
@@ -731,122 +936,151 @@ def _tower_blocked_cells(volumes: List[Volume]) -> Set[Tuple[int, int]]:
     return blocked
 
 
+def _expand_marked_stair_cells(
+    stair_cells: List[Tuple[int, int]],
+    volumes: List[Volume],
+    stair_kind: str,
+    storeys: int = 1,
+    level_cells: Optional[Tuple[Tuple[Tuple[int, int], ...], ...]] = None,
+) -> List[Tuple[int, int]]:
+    """Grow a sketch-marked anchor into a placeable well without moving the mark.
+
+    One ``S`` means \"stair here\"; straight needs 2×1, switchback/wide need 2×2
+    (and 4×2 when storeys ≥ 3). Already-sized wells are left alone.
+    """
+    kind = (stair_kind or "straight").lower()
+    if kind == "spiral":
+        return list(stair_cells)
+    if not stair_cells:
+        return stair_cells
+    climb_levels = max(1, storeys - 1)
+    per_level = _per_level_built_sets(volumes, storeys, level_cells)
+    search = _climb_intersection(per_level, climb_levels)
+    anchor = stair_cells[0]
+    if kind in ("switchback", "wide"):
+        need = 8 if storeys >= 3 else 4
+        if len(stair_cells) >= need:
+            return list(stair_cells)
+        x0, y0 = anchor
+        pad = [(x0 + i, y0 + j) for i in range(2) for j in range(2)]
+        if storeys >= 3:
+            wide = pad + [(x0 + 2 + i, y0 + j) for i in range(2) for j in range(2)]
+            if set(wide) <= search:
+                return wide
+        if set(pad) <= search:
+            return pad
+        picked = _pick_best_well(
+            _enum_rect_wells(search, 4, 2) + _enum_rect_wells(search, 2, 4)
+            if storeys >= 3
+            else _enum_rect_wells(search, 2, 2),
+            per_level,
+            climb_levels,
+            anchor=anchor,
+        )
+        return picked if picked else list(stair_cells)
+    # straight — need ≥2 cells; multi-flight needs 4×2 / 2×4
+    if storeys >= 3 and len(stair_cells) >= 8:
+        return list(stair_cells)
+    if storeys < 3 and len(stair_cells) >= 2:
+        return list(stair_cells)
+    x0, y0 = anchor
+    if storeys >= 3:
+        for cand in (
+            [(x0 + i, y0 + j) for i in range(2) for j in range(4)],
+            [(x0 + i, y0 + j) for i in range(4) for j in range(2)],
+        ):
+            if set(cand) <= search:
+                return cand
+        picked = _pick_best_well(
+            _enum_rect_wells(search, 4, 2) + _enum_rect_wells(search, 2, 4),
+            per_level,
+            climb_levels,
+            anchor=anchor,
+        )
+        if picked:
+            return picked
+    pair = [anchor, (x0, y0 + 1)]
+    if set(pair) <= search:
+        return pair
+    pair_x = [anchor, (x0 + 1, y0)]
+    if set(pair_x) <= search:
+        return pair_x
+    return list(stair_cells)
+
+
 def _default_stair_cells(
     volumes: List[Volume],
     stair_kind: str,
     storeys: int = 1,
+    level_cells: Optional[Tuple[Tuple[Tuple[int, int], ...], ...]] = None,
 ) -> List[Tuple[int, int]]:
     """Auto stair footprint: 2×1 straight, 2×2 switchback/wide, 1×1 spiral.
+
+    Stage D: search per-level built regions (``level_cells`` / foundation union),
+    not a single ``_primary_body`` volume — L/U multi-region sketches need a
+    connector well, not a narrow-wing dead end.
 
     Multi-storey monumental wells (storeys ≥ 3) expand to 4×2 / 2×4 so successive
     flights can shift by one stair width instead of stacking in the same XY
     (see assemble ``_monumental_flight_pads``).
     """
     kind = (stair_kind or "straight").lower()
+    climb_levels = max(1, storeys - 1)
+    per_level = _per_level_built_sets(volumes, storeys, level_cells)
+    search = _climb_intersection(per_level, climb_levels)
+    if not search:
+        return []
     if kind == "spiral":
         tower_cell = _tower_stair_cell(volumes)
-        if tower_cell is not None:
+        if tower_cell is not None and tower_cell in search:
             return [tower_cell]
-        auto = _default_spiral_stair_cell(volumes)
+        auto = _default_spiral_stair_cell(
+            volumes, per_level=per_level, climb_levels=climb_levels
+        )
         return [auto] if auto is not None else []
-    m = _primary_body(volumes)
-    if m is None:
-        return []
-    if kind in ("switchback", "wide"):
-        # 2×2 stairwell inset from the SW corner of the primary body.
-        if (m.x1 - m.x0) < 2 or (m.y1 - m.y0) < 2:
-            return []
-        x0 = m.x0 + 1
-        y0 = m.y0 + 1
-        if x0 + 1 >= m.x1:
-            x0 = m.x0
-        if y0 + 1 >= m.y1:
-            y0 = m.y0
-        pad = [
-            (x0, y0),
-            (x0 + 1, y0),
-            (x0, y0 + 1),
-            (x0 + 1, y0 + 1),
-        ]
-        # Need two adjacent 2×2 pads when more than one flight is stacked.
-        if storeys >= 3:
-            bx = m.x1 - m.x0
-            by = m.y1 - m.y0
-            # Prefer the long axis so a shallow hall (e.g. 15×4) still fits.
-            if bx >= 4 and x0 + 3 < m.x1:
-                return pad + [
-                    (x0 + 2, y0),
-                    (x0 + 3, y0),
-                    (x0 + 2, y0 + 1),
-                    (x0 + 3, y0 + 1),
-                ]
-            if by >= 4 and y0 + 3 < m.y1:
-                return pad + [
-                    (x0, y0 + 2),
-                    (x0 + 1, y0 + 2),
-                    (x0, y0 + 3),
-                    (x0 + 1, y0 + 3),
-                ]
-            if bx >= 4 and x0 + 3 >= m.x1:
-                x0 = max(m.x0, m.x1 - 4)
-                y0 = min(y0, m.y1 - 2)
-                return [
-                    (x0 + i, y0 + j) for i in range(4) for j in range(2)
-                ]
-            if by >= 4 and y0 + 3 >= m.y1:
-                y0 = max(m.y0, m.y1 - 4)
-                x0 = min(x0, m.x1 - 2)
-                return [
-                    (x0 + i, y0 + j) for i in range(2) for j in range(4)
-                ]
-        return pad
-    auto = _default_stair_cell(volumes)
-    if auto is None:
-        return []
-    if storeys < 3:
-        return [auto, (auto[0], auto[1] + 1)]
-    m = _primary_body(volumes)
-    if m is None:
-        return [auto, (auto[0], auto[1] + 1)]
     blocked = _tower_blocked_cells(volumes)
-    # Multi-flight straight runs need two 2×2 pads (Roadmap 10.4 / D3-3).
-    pads: List[List[Tuple[int, int]]] = []
-    for x0 in range(m.x0, m.x1 - 1):
-        for y0 in range(m.y0, m.y1):
-            if y0 + 3 >= m.y1:
-                continue
-            cand = [(x0 + i, y0 + j) for i in range(2) for j in range(4)]
-            if not all(
-                m.x0 <= c[0] <= m.x1 and m.y0 <= c[1] <= m.y1 for c in cand
-            ):
-                continue
-            if any(c in blocked for c in cand):
-                continue
-            pads.append(cand)
-    if not pads:
-        for x0 in range(m.x0, max(m.x0, m.x1 - 2)):
-            for y0 in range(m.y0, m.y1 + 1):
-                if y0 + 1 > m.y1:
-                    continue
-                cand = [(x0 + i, y0 + j) for i in range(4) for j in range(2)]
-                if not all(
-                m.x0 <= c[0] <= m.x1 and m.y0 <= c[1] <= m.y1 for c in cand
-            ):
-                    continue
-                if any(c in blocked for c in cand):
-                    continue
-                pads.append(cand)
-    if pads:
-        def _pad_rank(cand: List[Tuple[int, int]]) -> Tuple[int, int, int, int]:
-            """Prefer auto anchor, avoid south perimeter and outer X columns, favour depth."""
-            south_row = sum(1 for c in cand if c[1] == m.y0)
-            edge_cols = sum(1 for c in cand if c[0] == m.x0 or c[0] == m.x1)
-            depth = min(c[1] for c in cand)
-            auto_miss = 0 if auto in cand else 1
-            return (auto_miss, south_row, edge_cols, -depth)
-
-        return min(pads, key=_pad_rank)
-    return [auto, (auto[0], auto[1] + 1)]
+    search -= blocked
+    if kind in ("switchback", "wide"):
+        if storeys >= 3:
+            picked = _pick_best_well(
+                _enum_rect_wells(search, 4, 2) + _enum_rect_wells(search, 2, 4),
+                per_level,
+                climb_levels,
+            )
+            return picked
+        picked = _pick_best_well(
+            _enum_rect_wells(search, 2, 2), per_level, climb_levels
+        )
+        return picked
+    if storeys < 3:
+        anchor = _default_stair_cell(
+            volumes, per_level=per_level, climb_levels=climb_levels
+        )
+        if anchor is None:
+            return []
+        pair = [anchor, (anchor[0], anchor[1] + 1)]
+        if set(pair) <= search:
+            return pair
+        pair_x = [anchor, (anchor[0] + 1, anchor[1])]
+        if set(pair_x) <= search:
+            return pair_x
+        return []
+    picked = _pick_best_well(
+        _enum_rect_wells(search, 4, 2) + _enum_rect_wells(search, 2, 4),
+        per_level,
+        climb_levels,
+    )
+    if picked:
+        return picked
+    anchor = _default_stair_cell(
+        volumes, per_level=per_level, climb_levels=climb_levels
+    )
+    if anchor is None:
+        return []
+    pair = [anchor, (anchor[0], anchor[1] + 1)]
+    if set(pair) <= search:
+        return pair
+    return []
 
 
 def solve(spec: BuildingSpec) -> Tuple[Optional[Massing], Report]:
@@ -889,7 +1123,21 @@ def solve(spec: BuildingSpec) -> Tuple[Optional[Massing], Report]:
 
     stair_kind = (spec.circulation.stair_kind or "straight").lower()
     has_tower = any(v.role == "tower" for v in volumes)
-    if spec.storeys > 1 and stair_kind == "spiral" and not has_tower:
+    level_cells = getattr(spec, "level_cells", None)
+    if spec.storeys > 1 and stair_kind in DEFERRED_STAIR_KINDS:
+        failures.append(
+            Failure(
+                check="stair_kind",
+                message=(
+                    f"stair_kind '{stair_kind}' is not implemented — "
+                    "grand/imperial ceremonial split-flight typology is deferred "
+                    "(Master Plan Stage D gap; use switchback or wide)"
+                ),
+                world_xyz=cell_to_world_cm(0, 0, 1),
+                critical=True,
+            )
+        )
+    elif spec.storeys > 1 and stair_kind == "spiral" and not has_tower:
         failures.append(
             Failure(
                 check="stair_kind",
@@ -916,8 +1164,36 @@ def solve(spec: BuildingSpec) -> Tuple[Optional[Massing], Report]:
     stair_cells = list(spec.circulation.stair_cells)
     if spec.storeys > 1 and not stair_cells and not failures:
         stair_cells = _default_stair_cells(
-            volumes, spec.circulation.stair_kind, storeys=spec.storeys
+            volumes,
+            spec.circulation.stair_kind,
+            storeys=spec.storeys,
+            level_cells=level_cells,
         )
+    elif spec.storeys > 1 and stair_cells and not failures:
+        # A single sketch ``S`` is an anchor — expand to the well the typology needs
+        # (assemble refuse-closes on <2 cells for straight). Stage B marks optional.
+        stair_cells = _expand_marked_stair_cells(
+            stair_cells,
+            volumes,
+            spec.circulation.stair_kind,
+            storeys=spec.storeys,
+            level_cells=level_cells,
+        )
+
+    # Narrow tower footprints (e.g. library_tower 3×3): straight cannot fit a
+    # multi-flight well — use the tower helix instead of fail-closed stack.
+    min_straight_cells = 8 if spec.storeys >= 3 else 2
+    if (
+        spec.storeys > 1
+        and not failures
+        and stair_kind == "straight"
+        and len(stair_cells) < min_straight_cells
+        and has_tower
+    ):
+        tower_cell = _tower_stair_cell(volumes)
+        if tower_cell is not None:
+            stair_cells = [tower_cell]
+            stair_kind = "spiral"
 
     failures.extend(_volumes_overlap_failures(volumes))
     failures.extend(_tower_attach_failures(volumes))
@@ -962,7 +1238,7 @@ def solve(spec: BuildingSpec) -> Tuple[Optional[Massing], Report]:
         openings_windows_ground=spec.openings.windows_ground,
         openings_windows_per_bay=spec.openings.windows_per_bay,
         openings_skip_ground_windows=spec.openings.skip_ground_windows,
-        stair_kind=spec.circulation.stair_kind,
+        stair_kind=stair_kind,
         stair_cells=stair_cells,
         roof_kind=roof_kind,
         roof_pitch=roof_pitch,
@@ -971,5 +1247,13 @@ def solve(spec: BuildingSpec) -> Tuple[Optional[Massing], Report]:
         rooms=list(spec.rooms),
         building_class=derive_building_class(spec),
         wall_height_storeys=spec.wall_height_storeys,
+        structure_id=getattr(spec, "structure_id", None),
+        foundation_cells=tuple(getattr(spec, "foundation_cells", ()) or ()),
+        level_height_units=getattr(spec, "level_height_units", None),
+        level_cells=getattr(spec, "level_cells", None),
+        level_void_cells=getattr(spec, "level_void_cells", None),
+        level_wall_styles=getattr(spec, "level_wall_styles", None),
+        level_window_tags=getattr(spec, "level_window_tags", None),
+        level_programs=getattr(spec, "level_programs", None),
     )
     return massing, Report.from_failures([])

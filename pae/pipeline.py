@@ -27,17 +27,28 @@ def run_through_assemble(
     *,
     asset_db=None,
     apply_trim: bool = False,
+    apply_arcade: bool = False,
 ) -> Tuple[Massing, FloorPlan, Assembly, Report]:
-    """spec → solve → plan → assemble (+ optional trim).
+    """spec → solve → plan → assemble (+ optional trim / arcade).
+
+    ``spec`` may be a ``BuildingSpec`` or a Stage A/B ``StructureSpec`` (converted
+    via ``structure_to_building_spec``).
 
     Trim is off by default so M1–M4 unit tests assert bare assembler output.
     Pass ``apply_trim=True`` or use ``run_through_validate_trim`` for the
-    school / campus default.
+    school / campus default. ``apply_arcade=True`` runs the Stage G walkable
+    courtyard arcade after trim (DESIGN_COURTYARD_ARCADE — a room, not colonnade).
     """
     from pae.assemble import assemble
     from pae.plan import plan
     from pae.solver import solve
-    from pae.spec import load_style
+    from pae.spec import BuildingSpec, load_style
+
+    if not isinstance(spec, BuildingSpec):
+        from pae.structure_spec import StructureSpec, structure_to_building_spec
+
+        if isinstance(spec, StructureSpec):
+            spec = structure_to_building_spec(spec)
 
     massing, mreport = solve(spec)
     if not mreport.ok or massing is None:
@@ -47,7 +58,9 @@ def run_through_assemble(
     if not preport.ok or floor_plan is None:
         return massing, floor_plan, Assembly(placements=[]), preport  # type: ignore[arg-type]
 
-    style, _ = load_style(spec.style)
+    style, sreport = load_style(spec.style)
+    if not sreport.ok or style is None:
+        return massing, floor_plan, Assembly(placements=[]), sreport
     assembly, areport = assemble(floor_plan, asset_db, style)
     if not areport.ok:
         return massing, floor_plan, assembly, areport
@@ -58,6 +71,13 @@ def run_through_assemble(
         assembly, treport = trim(assembly)
         if not treport.ok:
             return massing, floor_plan, assembly, treport
+
+    if apply_arcade:
+        from pae.arcade import arcade
+
+        assembly, arc_report = arcade(assembly)
+        if not arc_report.ok:
+            return massing, floor_plan, assembly, arc_report
 
     return massing, floor_plan, assembly, Report.from_failures([])
 

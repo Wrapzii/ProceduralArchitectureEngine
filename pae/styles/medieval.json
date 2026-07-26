@@ -1,0 +1,15 @@
+{
+  "id": "medieval",
+  "geometry": {
+    "roof_pitch": 0.85,
+    "storey_height_cm": 340
+  },
+  "roof": {
+    "kind_default": "hip"
+  },
+  "window": {"tag": "window_mullioned", "per_bay": 1, "skip_ground": false},
+  "door": {"tag": "door_plain"},
+  "wall_bands": {"plinth_cm": 55, "cornice_cm": 38},
+  "tower": {"cap": "cone_steep", "crown": true, "finial": true},
+  "materials": {"wall": "stone_rough", "roof": "slate_dark", "trim": "iron_trim"}
+}

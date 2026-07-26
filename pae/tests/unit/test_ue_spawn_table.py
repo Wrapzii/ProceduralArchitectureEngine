@@ -97,6 +97,9 @@ def test_build_spawn_table_shape():
     assert table["milestone"] == "m1"
     assert table["row_count"] == 2
     assert len(table["rows"]) == 2
+    assert table["ism_group_count"] == 1
+    assert len(table["ism_groups"]) == 1
+    assert table["ism_groups"][0]["instance_count"] == 2
     assert table["source_manifest"] == "Saved/exports/m1_manifest.json"
 
 

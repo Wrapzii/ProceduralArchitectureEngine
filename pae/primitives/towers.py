@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from pae.contract import MODULE_CM, STOREY_CM, WALL_T_CM
+from pae.contract import MODULE_CM, STOREY_CM, WALL_T_CM, DRUM_WINDOW_CHORD_FRAC, DRUM_WINDOW_HEIGHT_FRAC, DRUM_WINDOW_SILL_FRAC
 from pae.primitives.types import ApertureDesc, PrimitiveDescriptor, SocketDesc, module_tag
 
 # Outer radius = one MODULE so a full tower diameter is 2 modules.
@@ -16,13 +16,14 @@ _CROWN_H_FRAC = 0.20  # of STOREY
 _CAP_H_FRAC = 0.85  # of STOREY — steep cone
 _JUNCTION_H_FRAC = 0.06  # of STOREY — corbel / string ring under the crown
 # Helical drum window: centred in the quarter, above floor, below plate.
-_ARC_WINDOW_W_FRAC = 0.28  # of MODULE (tangential run of the opening AABB)
-_ARC_WINDOW_H_FRAC = 0.36  # of STOREY
-_ARC_WINDOW_SILL_FRAC = 0.28  # of STOREY
+_ARC_WINDOW_W_FRAC = DRUM_WINDOW_CHORD_FRAC
+_ARC_WINDOW_H_FRAC = DRUM_WINDOW_HEIGHT_FRAC
+_ARC_WINDOW_SILL_FRAC = DRUM_WINDOW_SILL_FRAC
 
 
 def tower_arc_quarter() -> PrimitiveDescriptor:
     outer = MODULE_CM
+    diameter = 2.0 * outer
     # AABB of first-quadrant annulus: (0,0,0) → (outer, outer, STOREY)
     tag = frozenset({module_tag(), "tower", "arc"})
     sockets = (
@@ -44,14 +45,16 @@ def tower_arc_quarter() -> PrimitiveDescriptor:
     return PrimitiveDescriptor(
         id="tower_arc_quarter",
         kind="tower_arc",
-        footprint_modules=(1, 1),
+        footprint_modules=(2, 2),
         height_storeys=1.0,
-        size_cm=(outer, outer, STOREY_CM),
+        # Centred-placement contract uses the full world AABB, not the
+        # first-quadrant radius. The mesh still authors one radius-sized quarter.
+        size_cm=(diameter, diameter, STOREY_CM),
         sockets=sockets,
         tags=frozenset({"tower", "arc", "quarter", module_tag()}),
         origin="center",
         rotates_about_center=True,
-        aabb_min_cm=(0.0, 0.0, 0.0),
+        aabb_min_cm=(-outer, -outer, 0.0),
         notes=f"Inner radius = MODULE − WALL_T ({MODULE_CM - WALL_T_CM:.1f} cm).",
     )
 
@@ -185,6 +188,34 @@ def tower_cap() -> PrimitiveDescriptor:
     )
 
 
+def tower_cap_square() -> PrimitiveDescriptor:
+    """Centred pyramidal spire for square towers and steeples."""
+    diam = 2.0 * MODULE_CM
+    h = STOREY_CM * 1.4
+    tag = frozenset({module_tag(), "tower", "cap", "square_spire"})
+    return PrimitiveDescriptor(
+        id="tower_cap_square",
+        kind="tower_cap",
+        footprint_modules=(2, 2),
+        height_storeys=1.4,
+        size_cm=(diam, diam, h),
+        sockets=(
+            SocketDesc(
+                name="bottom",
+                pos_cm=(0.0, 0.0, 0.0),
+                normal=(0.0, 0.0, -1.0),
+                type="tower_join",
+                tags=tag,
+            ),
+        ),
+        tags=tag,
+        origin="center",
+        rotates_about_center=True,
+        aabb_min_cm=(-MODULE_CM, -MODULE_CM, 0.0),
+        notes="Four-sided pyramidal spire; XY and height scale independently.",
+    )
+
+
 def all_towers() -> tuple:
     return (
         tower_arc_quarter(),
@@ -192,6 +223,7 @@ def all_towers() -> tuple:
         tower_junction(),
         tower_crown(),
         tower_cap(),
+        tower_cap_square(),
     )
 
 
@@ -249,4 +281,22 @@ def build_tower_mesh(desc: PrimitiveDescriptor, *, name: Optional[str] = None):
         obj = bpy_util.mesh_from_verts_faces(obj_name, verts, faces)
         bpy_util.smooth_shade_curved_faces(obj, angle_deg=40.0)
         return obj
+    if desc.id == "tower_cap_square":
+        r = MODULE_CM
+        h = desc.size_cm[2]
+        verts = [
+            (-r, -r, 0.0),
+            (r, -r, 0.0),
+            (r, r, 0.0),
+            (-r, r, 0.0),
+            (0.0, 0.0, h),
+        ]
+        faces = [
+            (0, 1, 2, 3),
+            (0, 4, 1),
+            (1, 4, 2),
+            (2, 4, 3),
+            (3, 4, 0),
+        ]
+        return bpy_util.mesh_from_verts_faces(obj_name, verts, faces)
     raise ValueError(f"unknown tower primitive: {desc.id!r}")

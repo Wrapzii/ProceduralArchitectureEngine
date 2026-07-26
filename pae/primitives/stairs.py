@@ -27,6 +27,12 @@ _HALF_STAIR_STEPS = 10
 _SWITCHBACK_FLIGHT_STEPS = 10
 _WIDE_STAIR_STEPS = 16
 _SPIRAL_STEPS_PER_QUARTER = 6
+_SPIRAL_INNER_RADIUS_FRAC = 0.35
+
+
+def spiral_inner_radius_cm(outer_radius_cm: float) -> float:
+    """Inner edge of the authored helical tread for a requested outer radius."""
+    return float(outer_radius_cm) * _SPIRAL_INNER_RADIUS_FRAC
 
 
 def straight_stair_step_count() -> int:
@@ -474,7 +480,7 @@ def build_stair_mesh(desc: PrimitiveDescriptor, *, name: Optional[str] = None):
 
     if desc.rotates_about_center or desc.id == "stair_spiral_quarter":
         outer = MODULE_CM
-        inner = MODULE_CM * 0.35
+        inner = spiral_inner_radius_cm(outer)
         verts, faces = helical_quarter_step_verts_faces(
             outer, inner, 0.0, desc.size_cm[2]
         )

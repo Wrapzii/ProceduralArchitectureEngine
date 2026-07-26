@@ -3,9 +3,14 @@
 from __future__ import annotations
 
 from pae.addon.bpy_bridge import HAS_BPY, select_and_frame_failure, sync_assembly_preview
-from pae.addon.operator_utils import scene_props, spec_from_context
+from pae.addon.operator_utils import (
+    pipeline_input_from_context,
+    report_operator_exception,
+    report_validation_result,
+    scene_props,
+)
 from pae.addon.pipeline_ui import run_full_pipeline
-from pae.addon.session import report_from_json, report_to_json
+from pae.addon.session import report_from_json
 
 if HAS_BPY:
     import bpy  # type: ignore
@@ -18,19 +23,18 @@ if HAS_BPY:
 
         def execute(self, context):
             props = scene_props(context)
-            spec = spec_from_context(context)
-            _, _, assembly, report = run_full_pipeline(spec)
-            if assembly is not None and assembly.placements:
-                sync_assembly_preview(assembly)
-            props.validation_report_json = report_to_json(report)
-            props.last_pipeline_message = (
-                "Validation OK" if report.ok else f"{len(report.critical)} critical defect(s)"
-            )
-            self.report(
-                {"INFO" if report.ok else "ERROR"},
-                props.last_pipeline_message,
-            )
-            return {"FINISHED"}
+            try:
+                spec = pipeline_input_from_context(context)
+                _, _, assembly, report = run_full_pipeline(spec)
+                if assembly is not None and assembly.placements:
+                    sync_assembly_preview(assembly)
+                ok, _msg = report_validation_result(
+                    self, props, report, prefix="Validate"
+                )
+                return {"FINISHED"} if ok else {"CANCELLED"}
+            except (RuntimeError, ValueError) as exc:
+                report_operator_exception(self, props, exc)
+                return {"CANCELLED"}
 
     class PAE_OT_frame_defect(bpy.types.Operator):
         bl_idname = "pae.frame_defect"

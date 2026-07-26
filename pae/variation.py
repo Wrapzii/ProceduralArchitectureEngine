@@ -27,7 +27,7 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Sequence, Set, Tuple
 
 from pae.assembly_types import Assembly, SolidPlacement
-from pae.contract import MODULE_CM
+from pae.contract import MODULE_CM, storey_datum_z_cm
 from pae.primitives.catalog import catalog_by_id
 from pae.report import Failure, Report
 from pae.trim import covered_cells
@@ -507,17 +507,15 @@ def _naive_aperture_cells(
 
 
 def _aperture_world_from_wall(p: SolidPlacement, kind: str) -> Tuple[float, float, float]:
-    from pae.contract import STOREY_CM
-
     sx, sy, sz = p.size_cm
     ox, oy, oz = p.offset_cm
     cx = p.cell[0] * MODULE_CM + ox + sx * 0.5
     cy = p.cell[1] * MODULE_CM + oy + sy * 0.5
     # Door sill near floor; window mid-band — enough for existence / reachability.
     if kind == "door":
-        cz = p.level * STOREY_CM + oz + 20.0
+        cz = storey_datum_z_cm(p.level) + oz + 20.0
     else:
-        cz = p.level * STOREY_CM + oz + sz * 0.45
+        cz = storey_datum_z_cm(p.level) + oz + sz * 0.45
     return (cx, cy, cz)
 
 
@@ -553,7 +551,7 @@ def _sync_apertures(old, placements: Sequence[SolidPlacement]):
                         wall_piece_id=wall.piece_id,
                         level=wall.level,
                         sill_z_cm=ap.sill_z_cm,
-                        floor_z_cm=wall.level * STOREY_CM,
+                        floor_z_cm=storey_datum_z_cm(wall.level),
                         interior_cell=ap.interior_cell,
                         exterior_cell=ap.exterior_cell,
                         world_xyz=_aperture_world_from_wall(wall, "window"),
@@ -579,7 +577,7 @@ def _sync_apertures(old, placements: Sequence[SolidPlacement]):
                 wall_piece_id=p.piece_id,
                 level=p.level,
                 sill_z_cm=_aperture_world_from_wall(p, "door")[2],
-                floor_z_cm=p.level * STOREY_CM,
+                floor_z_cm=storey_datum_z_cm(p.level),
                 interior_cell=interior,
                 exterior_cell=exterior,
                 world_xyz=_aperture_world_from_wall(p, "door"),

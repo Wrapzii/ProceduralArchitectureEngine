@@ -129,7 +129,7 @@ def test_spiral_quarter_rise_is_quarter_storey():
 def test_tower_arc_is_centred():
     t = get("tower_arc_quarter")
     assert t.rotates_about_center is True
-    assert t.size_cm[0] == pytest.approx(MODULE_CM)
+    assert t.size_cm[0] == pytest.approx(2.0 * MODULE_CM)
     assert t.size_cm[2] == pytest.approx(STOREY_CM)
 
 

@@ -22,7 +22,7 @@ from pae.trim import covered_cells
 from pae.validate import _check_stair_flight_stack, validate
 
 
-MONUMENTAL = frozenset({"stair_switchback", "stair_wide"})
+MONUMENTAL = frozenset({"stair_switchback", "stair_wide", "stair_straight"})
 
 
 def _monumental_by_level(assembly: Assembly) -> dict:
@@ -203,3 +203,56 @@ def test_random_monumental_multi_storey_never_stacks(seed_count: int = 40):
 
     assert checked >= 8, f"too few monumental multi-storey samples: {checked}"
     assert not stacked, f"stair_flight_stack regressions: {stacked[:5]}"
+
+
+def test_fortress_gatehouse_straight_flights_are_laterally_offset():
+    """3-storey straight hall: L0/L1 must not share cells or yaw (D3-3)."""
+    from dataclasses import replace
+
+    from pae.spec import BuildingSpec, CirculationSpec, FootprintSpec, RoofSpec
+
+    spec = BuildingSpec(
+        name="straight_hall_3",
+        style="townhouse",
+        footprint=FootprintSpec(kind="rect", bays_x=8, bays_y=5),
+        storeys=3,
+        storey_use=["hall"] * 3,
+        towers=[],
+        roof=RoofSpec(kind="flat", pitch=1.0),
+        circulation=CirculationSpec(stair_kind="straight", stair_cells=[]),
+        seed=99,
+        ground_slab=True,
+        building_class="house",
+    )
+    massing, _, assembly, _ = run_through_assemble(spec)
+    assert massing.stair_kind == "straight"
+    assert len(massing.stair_cells) >= 8, massing.stair_cells
+    pads = _monumental_flight_pads(massing.stair_cells)
+    assert pads is not None
+
+    straights = [p for p in assembly.placements if p.asset_id == "stair_straight"]
+    by_level = {p.level: p for p in straights}
+    assert 0 in by_level and 1 in by_level
+    low = covered_cells(by_level[0])
+    high = covered_cells(by_level[1])
+    assert not (low & high), "stacked straight flights must shift pads"
+    assert by_level[0].yaw != by_level[1].yaw, "alternate yaw required for straight pads"
+    assert _check_stair_flight_stack(assembly) == []
+
+
+def test_fortress_gatehouse_offset_stairs_link_stair_graph():
+    """6×4×3 gatehouse: offset pads must pass plan stair_graph (D3-3)."""
+    from pae.spec import fortress_gatehouse_spec
+    from pae.solver import solve
+    from pae.plan import plan as plan_floor
+
+    spec = fortress_gatehouse_spec()
+    massing, mreport = solve(spec)
+    assert mreport.ok, [f.message for f in mreport.failures]
+    assert len(massing.stair_cells) >= 8
+    _, prep = plan_floor(massing)
+    graph_fails = [f for f in prep.failures if f.check == "stair_graph"]
+    assert graph_fails == [], [f.message for f in graph_fails]
+    _, _, assembly, areport = run_through_assemble(spec)
+    assert areport.ok, [f.message for f in areport.failures]
+    assert _check_stair_flight_stack(assembly) == []

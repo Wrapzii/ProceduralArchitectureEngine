@@ -81,6 +81,8 @@ class BuildingInstance:
     assembly: Assembly
     cell_offset: Cell = (0, 0)
     name: str = "building"
+    # Declared structure group (Roadmap 10.1). All pieces also get ``structure:<id>``.
+    structure: Optional[str] = None
 
 
 @dataclass
@@ -120,7 +122,19 @@ def _face_offset(
 # ---------------------------------------------------------------------------
 
 
-def _shift_placement(p: SolidPlacement, dx: int, dy: int, tag: str) -> SolidPlacement:
+def _shift_placement(
+    p: SolidPlacement,
+    dx: int,
+    dy: int,
+    tag: str,
+    *,
+    structure: Optional[str] = None,
+) -> SolidPlacement:
+    from pae.structure_identity import structure_tag
+
+    extra = {tag, f"building:{tag}"}
+    if structure:
+        extra.add(structure_tag(structure))
     return SolidPlacement(
         piece_id=f"{tag}_{p.piece_id}",
         asset_id=p.asset_id,
@@ -133,8 +147,9 @@ def _shift_placement(p: SolidPlacement, dx: int, dy: int, tag: str) -> SolidPlac
         rotates_about_center=p.rotates_about_center,
         # Explicit building marker. The island check needs to know that two separate
         # buildings on one site are SUPPOSED to be separate components — otherwise a
-        # street of six houses reports five freestanding groups.
-        tags=p.tags | frozenset({tag, f"building:{tag}"}),
+        # street of six houses reports five freestanding groups. When a structure is
+        # declared, ``freestanding`` partitions on ``structure:`` instead (Handbook §11d).
+        tags=p.tags | frozenset(extra),
     )
 
 
@@ -175,7 +190,11 @@ def place_buildings(instances: Sequence[BuildingInstance]) -> Tuple[Assembly, Re
     for inst in instances:
         dx, dy = inst.cell_offset
         for p in inst.assembly.placements:
-            placements.append(_shift_placement(p, dx, dy, inst.name))
+            placements.append(
+                _shift_placement(
+                    p, dx, dy, inst.name, structure=inst.structure
+                )
+            )
         circulation.extend(inst.assembly.circulation)
         storeys = max(storeys, inst.assembly.storeys)
         # Keep the first building's plan layers as the site reference frame; per-building

@@ -8,9 +8,19 @@ from pae.spec import (
     load_style,
     m1_box_house_dict,
     m1_box_house_spec,
+    m2_two_storey_stair_dict,
     m3_keep_tower_dict,
     m3_keep_tower_spec,
 )
+
+
+def test_load_spec_rejects_unknown_fields():
+    data = m2_two_storey_stair_dict()
+    data["storeis"] = 2
+    spec, report = load_spec(data)
+    assert spec is None
+    assert not report.ok
+    assert "unknown field" in report.critical[0].message
 
 
 def test_loader_rejects_world_coordinate_fields():

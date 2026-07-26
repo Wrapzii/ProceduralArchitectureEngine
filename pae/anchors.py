@@ -12,7 +12,7 @@ from typing import Dict, FrozenSet, Iterable, List, Optional, Sequence, Set, Tup
 
 from pae.assembly_types import Assembly, FloorPlanLayer, SolidPlacement
 from pae.boundary import FACE_OUTWARD_YAW
-from pae.contract import MODULE_CM, STOREY_CM, placement_world_aabb
+from pae.contract import MODULE_CM, STOREY_CM, placement_world_aabb, storey_datum_z_cm
 from pae.plan import CellRole
 from pae.primitives.catalog import catalog_by_id
 from pae.report import Failure, Report
@@ -90,20 +90,20 @@ def _face_world_point(
     base_x = cx * MODULE_CM
     base_y = cy * MODULE_CM
     if face == "south":
-        return (base_x + MODULE_CM * 0.5, base_y + WALL_INSET_CM, level * STOREY_CM + z_cm)
+        return (base_x + MODULE_CM * 0.5, base_y + WALL_INSET_CM, storey_datum_z_cm(level) + z_cm)
     if face == "north":
         return (
             base_x + MODULE_CM * 0.5,
             (cy + 1) * MODULE_CM - WALL_INSET_CM,
-            level * STOREY_CM + z_cm,
+            storey_datum_z_cm(level) + z_cm,
         )
     if face == "west":
-        return (base_x + WALL_INSET_CM, base_y + MODULE_CM * 0.5, level * STOREY_CM + z_cm)
+        return (base_x + WALL_INSET_CM, base_y + MODULE_CM * 0.5, storey_datum_z_cm(level) + z_cm)
     if face == "east":
         return (
             (cx + 1) * MODULE_CM - WALL_INSET_CM,
             base_y + MODULE_CM * 0.5,
-            level * STOREY_CM + z_cm,
+            storey_datum_z_cm(level) + z_cm,
         )
     raise ValueError(f"unknown face {face!r}")
 
@@ -125,7 +125,7 @@ def _world_to_placement(
     offset_cm = (
         wx - cell_x * MODULE_CM,
         wy - cell_y * MODULE_CM,
-        wz - level * STOREY_CM,
+        wz - storey_datum_z_cm(level),
     )
     return SolidPlacement(
         piece_id=piece_id,
@@ -340,7 +340,7 @@ def apply_light_anchors(
     for level, wx, wy in _chandelier_centroids(
         assembly, min_cells=chandelier_min_cells
     ):
-        wz = level * STOREY_CM + CHANDELIER_HEIGHT_CM
+        wz = storey_datum_z_cm(level) + CHANDELIER_HEIGHT_CM
         pid = f"anchor_chandelier_{level}_{int(wx)}_{int(wy)}"
         _add(
             _world_to_placement(
@@ -355,7 +355,7 @@ def apply_light_anchors(
         )
 
     for level, wx, wy in _pendant_points(assembly):
-        wz = level * STOREY_CM + PENDANT_HEIGHT_CM
+        wz = storey_datum_z_cm(level) + PENDANT_HEIGHT_CM
         pid = f"anchor_pendant_{level}_{int(wx)}_{int(wy)}"
         _add(
             _world_to_placement(

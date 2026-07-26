@@ -22,7 +22,7 @@ from __future__ import annotations
 from typing import Dict, Iterable, List, Optional, Set, Tuple
 
 from pae.assembly_types import Assembly, SolidPlacement
-from pae.contract import MODULE_CM, STOREY_CM, cell_to_world_cm, placement_world_aabb
+from pae.contract import MODULE_CM, STOREY_CM, TOL_CM, cell_to_world_cm, placement_world_aabb
 from pae.report import Failure
 from pae.stair_occupancy import SPIRAL_COMPLEMENTARY_YAWS, SPIRAL_QUARTER_ASSET
 
@@ -102,7 +102,7 @@ def _tower_arc_yaws_at(
     """Yaws of ``tower_arc`` quarters sharing the spiral tower anchor cell."""
     yaws: Set[int] = set()
     for p in assembly.placements:
-        if p.kind != "tower_arc":
+        if p.kind != "tower_arc" and "square_tower" not in p.tags:
             continue
         if p.cell != cell or p.level != level:
             continue
@@ -148,17 +148,30 @@ def _designed_door_yaws(
 
 
 def check_spiral_newel_exists(assembly: Assembly) -> List[Failure]:
-    """Existence: every spiral climb storey has a central newel on the axis.
+    """Existence: tight-core spiral climb storeys have a touching central newel.
 
-    Handbook §2 Q7 / class 1 Existence. Critical — a helix without a pillar is
-    not an engineering shell.
+    Wide/open-well stairs intentionally omit the fixed-size pole when the tread
+    inner edge would not meet it. A disconnected pole is an obstruction, not a
+    support.
     """
+    from pae.primitives.catalog import get as get_primitive
+    from pae.primitives.stairs import spiral_inner_radius_cm
+
     anchors = spiral_anchor_levels(assembly)
     if not anchors:
         return []
     newels = _newel_levels_by_cell(assembly)
+    newel = get_primitive(SPIRAL_NEWEL_ASSET)
+    newel_radius = max(newel.size_cm[0], newel.size_cm[1]) * 0.5
+    required: Dict[Cell, Set[int]] = {}
+    for p in assembly.placements:
+        if p.asset_id != SPIRAL_QUARTER_ASSET:
+            continue
+        outer_radius = max(float(p.size_cm[0]), float(p.size_cm[1]))
+        if spiral_inner_radius_cm(outer_radius) <= newel_radius + TOL_CM:
+            required.setdefault(p.cell, set()).add(p.level)
     failures: List[Failure] = []
-    for cell, levels in sorted(anchors.items()):
+    for cell, levels in sorted(required.items()):
         have = newels.get(cell, set())
         for level in sorted(levels):
             if level in have:
@@ -270,8 +283,17 @@ def place_spiral_newels(
     levels: Iterable[int],
     xy_offset: Tuple[float, float],
     next_piece_id,
+    stair_outer_radius_cm: Optional[float] = None,
 ) -> None:
-    """Emit one ``spiral_newel`` per climb storey on the spiral axis."""
+    """Emit a newel only when the tread inner edge actually meets the pole."""
+    if stair_outer_radius_cm is not None:
+        from pae.primitives.catalog import get as get_primitive
+        from pae.primitives.stairs import spiral_inner_radius_cm
+
+        desc = get_primitive(SPIRAL_NEWEL_ASSET)
+        newel_radius = max(desc.size_cm[0], desc.size_cm[1]) * 0.5
+        if spiral_inner_radius_cm(stair_outer_radius_cm) > newel_radius + TOL_CM:
+            return
     for level in sorted(set(levels)):
         pid = next_piece_id(counters, "spiral_newel", cell, level)
         placements.append(
@@ -343,6 +365,7 @@ def _stub_spiral_quarter(
     level: int,
     yaw: int,
     z_off: float = 0.0,
+    outer_radius_cm: float = MODULE_CM,
 ) -> SolidPlacement:
     rise = STOREY_CM * 0.25
     return SolidPlacement(
@@ -353,7 +376,7 @@ def _stub_spiral_quarter(
         level=level,
         yaw=yaw,
         offset_cm=(0.0, 0.0, z_off),
-        size_cm=(MODULE_CM, MODULE_CM, rise),
+        size_cm=(outer_radius_cm, outer_radius_cm, rise),
         rotates_about_center=True,
         tags=frozenset({"stair", "spiral"}),
     )
@@ -393,6 +416,9 @@ def make_spiral_missing_newel_defect() -> Assembly:
                 level=level,
                 yaw=yaw,
                 z_off=i * STOREY_CM * 0.25,
+                # Tight-core poison: this tread meets the fixed newel radius,
+                # so omitting the pole must still trip the validator.
+                outer_radius_cm=120.0,
             )
         )
         pieces.append(

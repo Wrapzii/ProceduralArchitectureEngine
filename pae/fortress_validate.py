@@ -12,6 +12,8 @@ Checks (stable slugs):
   * ``buttress_outward`` — buttresses bear on exterior walls, not interior (critical)
   * ``spire_freestanding`` — spires/finials must meet tower/roof envelope (critical)
   * ``fortress_grand_approach`` — exterior grand steps when tagged (critical)
+  * ``gate_passage_clear`` — exterior steps must not plug the gate opening (critical)
+  * ``gate_opening_size`` — gate leaves meet min clear width/height (critical)
 
 Rule 5.1: all cell reasoning uses ``covered_cells``, never bare ``p.cell`` for
 span/support questions. Tower *identity* for caps/spires that ``rotates_about_center``
@@ -29,9 +31,13 @@ from typing import Dict, Iterable, List, Optional, Set, Tuple
 from pae.assembly_types import Assembly, SolidPlacement
 from pae.contract import (
     MODULE_CM,
+    STOREY_CM,
     TOL_CM,
+    WALL_T_CM,
     aabb_intersects,
+    aabb_overlap,
     placement_world_aabb,
+    rotate_local_xy,
 )
 from pae.existence import placed_entrance_roles
 from pae.report import Failure
@@ -56,6 +62,13 @@ _CURTAIN_TAGS = frozenset(
 )
 
 DEFAULT_MIN_CAPPED_TOWERS = 2
+
+# Gate walkability / monumental scale (@GATEHOUSE_MONUMENTAL).
+# Ordinary ``wall_door`` (~0.36 MODULE) must fail; ``wall_gate_arch*`` must pass.
+MIN_GATE_CLEAR_WIDTH_CM = MODULE_CM * 0.80
+MIN_GATE_CLEAR_HEIGHT_CM = STOREY_CM * 0.85
+# Exterior approach zone probed for step plugs (one bay beyond the outer face).
+_GATE_PASSAGE_PROBE_OUT_CM = MODULE_CM
 
 # Continuity stub: max uncovered curtain bays in a sorted run before warning.
 _CURTAIN_BATTLEMENT_MAX_GAP_CELLS = 2
@@ -216,6 +229,287 @@ def _is_approach_steps(p: SolidPlacement) -> bool:
     if "ensemble_steps" in p.tags:
         return True
     return False
+
+
+def _is_gate_leaf(p: SolidPlacement) -> bool:
+    if p.kind != "wall" or p.level != 0:
+        return False
+    aid = (p.asset_id or "").lower()
+    if "gate" in aid:
+        return True
+    return "entrance_role_gate" in p.tags
+
+
+def _gate_opening_local(
+    p: SolidPlacement,
+) -> Optional[Tuple[float, float, float, float]]:
+    """Local (run0, run1, z0, z1) opening inside a gate wall bay."""
+    from pae.primitives.catalog import catalog_by_id
+    from pae.primitives.walls import aperture_opening_run_vertical
+
+    desc = catalog_by_id().get(p.asset_id)
+    if desc is None or desc.aperture is None:
+        return None
+    return aperture_opening_run_vertical(desc.aperture, p.size_cm)
+
+
+def _gate_passage_probe_aabb(
+    gate: SolidPlacement,
+) -> Optional[Tuple[Tuple[float, float, float], Tuple[float, float, float]]]:
+    """World AABB of the walkable volume through a gate + one bay outside.
+
+    Extends from the exterior face of the leaf through the opening and one
+    MODULE outward — the zone where approach steps must not sit.
+    """
+    opening = _gate_opening_local(gate)
+    if opening is None:
+        return None
+    run0, run1, z0, z1 = opening
+    sx, sy, _sz = gate.size_cm
+    # Opening box in wall-local coords; extend thin axis both ways for the probe.
+    thin0 = -_GATE_PASSAGE_PROBE_OUT_CM
+    thin1 = sx + WALL_T_CM * 0.25
+    corners_local = [
+        (thin0, run0, z0),
+        (thin0, run1, z0),
+        (thin0, run0, z1),
+        (thin0, run1, z1),
+        (thin1, run0, z0),
+        (thin1, run1, z0),
+        (thin1, run0, z1),
+        (thin1, run1, z1),
+    ]
+    from pae.contract import placement_origin_cm
+
+    ox, oy, oz = placement_origin_cm(
+        gate.cell[0], gate.cell[1], gate.level, gate.offset_cm
+    )
+    xs: List[float] = []
+    ys: List[float] = []
+    zs: List[float] = []
+    for lx, ly, lz in corners_local:
+        rx, ry = rotate_local_xy(lx, ly, gate.yaw, sx, sy)
+        xs.append(ox + rx)
+        ys.append(oy + ry)
+        zs.append(oz + lz)
+    return (min(xs), min(ys), min(zs)), (max(xs), max(ys), max(zs))
+
+
+def check_gate_passage_clear(assembly: Assembly) -> List[Failure]:
+    """Exterior approach steps must not plug a gate / arch walkthrough.
+
+    Critical Use check: a step AABB overlapping the gate opening probe means a
+    person cannot walk through (user: steps stacked against twin towers).
+    """
+    gates = [p for p in assembly.placements if _is_gate_leaf(p)]
+    if not gates:
+        return []
+    steps = [p for p in assembly.placements if _is_approach_steps(p) and p.level == 0]
+    if not steps:
+        return []
+
+    failures: List[Failure] = []
+    for gate in gates:
+        probe = _gate_passage_probe_aabb(gate)
+        if probe is None:
+            continue
+        pmin, pmax = probe
+        for step in steps:
+            smin, smax = _placement_aabb(step)
+            if not aabb_overlap(pmin, pmax, smin, smax, tol=TOL_CM):
+                continue
+            failures.append(
+                Failure(
+                    check="gate_passage_clear",
+                    message=(
+                        f"approach steps {step.piece_id} ({step.asset_id}) block "
+                        f"gate passage through {gate.piece_id} ({gate.asset_id}) "
+                        f"— leave clearance or flank openings"
+                    ),
+                    world_xyz=_centre(smin, smax),
+                    piece_id=step.piece_id,
+                    critical=True,
+                )
+            )
+            break  # one failure per gate leaf is enough
+    return failures
+
+
+def _gate_footprint_column(gate: SolidPlacement) -> Tuple[int, int]:
+    """South gate leaf → footprint (x, y) column for through-passage probes."""
+    x, y = gate.cell
+    yaw = int(gate.yaw) % 360
+    if yaw == 270:  # south face
+        return (x, y)
+    if yaw == 90:  # north face
+        return (x, y - 1)
+    if yaw == 0:  # west
+        return (x, y)
+    if yaw == 180:  # east
+        return (x - 1, y)
+    return (x, y)
+
+
+def _gate_host_range_name(gate: SolidPlacement) -> Optional[str]:
+    """Compound range that owns a gate leaf (``gatehouse``, ``north_keep``, …)."""
+    for tag in gate.tags:
+        if tag.startswith("building:"):
+            return tag.split(":", 1)[1]
+    pid = gate.piece_id or ""
+    for name in (
+        "gatehouse",
+        "north_keep",
+        "west_curtain",
+        "east_curtain",
+        "west_cloister",
+        "east_cloister",
+    ):
+        if name in pid or name in gate.tags:
+            return name
+    return None
+
+
+def _range_y_extent_at_level(
+    assembly: Assembly,
+    range_name: str,
+    *,
+    level: int = 0,
+) -> Optional[Tuple[int, int]]:
+    """Min/max plan Y for a compound range at *level* (from tagged placements)."""
+    from pae.trim import covered_cells
+
+    ys: List[int] = []
+    for p in assembly.placements:
+        if p.level != level:
+            continue
+        pid = p.piece_id or ""
+        if (
+            range_name not in pid
+            and range_name not in p.tags
+            and f"building:{range_name}" not in p.tags
+        ):
+            continue
+        for _cx, cy in covered_cells(p):
+            ys.append(cy)
+    if not ys:
+        return None
+    return min(ys), max(ys)
+
+
+def check_gate_through_passage(assembly: Assembly) -> List[Failure]:
+    """Gate passage columns must stay open from south leaf through building depth.
+
+    Critical Use check (D3-6): a solid ``wall_plain`` in the gate column depth
+    blocks walking through even when the south arch is grand. Side jambs (adjacent
+    columns) are allowed; the column itself must carry gate/door leaves or stay clear.
+
+    Scope is the *gate host range* footprint only — not the full plan column through
+    distant merged ranges (fortress keep south wall must not fail gatehouse south leaf).
+    """
+    from pae.existence import is_door_or_gate_asset
+    from pae.trim import covered_cells
+
+    gates = [p for p in assembly.placements if _is_gate_leaf(p)]
+    if not gates:
+        return []
+
+    failures: List[Failure] = []
+    seen_gates: Set[Tuple[int, int, str]] = set()
+    for gate in gates:
+        col_x, south_y = _gate_footprint_column(gate)
+        host = _gate_host_range_name(gate) or gate.piece_id
+        gate_key = (col_x, south_y, host)
+        if gate_key in seen_gates:
+            continue
+        seen_gates.add(gate_key)
+        y_extent = (
+            _range_y_extent_at_level(assembly, host, level=0)
+            if isinstance(host, str) and host != gate.piece_id
+            else None
+        )
+        if y_extent is not None and y_extent[1] <= south_y:
+            # Host footprint not yet merged (isolated gate fixture) — probe full column.
+            y_extent = None
+        y_max = y_extent[1] if y_extent is not None else None
+        blockers: List[SolidPlacement] = []
+        for p in assembly.placements:
+            if p.kind != "wall" or p.level != 0:
+                continue
+            aid = (p.asset_id or "").lower()
+            if is_door_or_gate_asset(aid):
+                continue
+            for cx, cy in covered_cells(p):
+                if cx != col_x or cy <= south_y:
+                    continue
+                if y_max is not None and cy > y_max:
+                    continue
+                blockers.append(p)
+                break
+        if not blockers:
+            continue
+        bb = _placement_aabb(blockers[0])
+        failures.append(
+            Failure(
+                check="gate_through_passage",
+                message=(
+                    f"solid wall {blockers[0].piece_id} ({blockers[0].asset_id}) "
+                    f"blocks gate through-passage at column x={col_x} — "
+                    "punch north gate arch or remove interior plug"
+                ),
+                world_xyz=_centre(bb[0], bb[1]),
+                piece_id=blockers[0].piece_id,
+                critical=True,
+            )
+        )
+    return failures
+
+
+def check_gate_opening_size(assembly: Assembly) -> List[Failure]:
+    """Gate leaves must meet monumental clear width/height (not a house door)."""
+    gates = [p for p in assembly.placements if _is_gate_leaf(p)]
+    if not gates:
+        return []
+
+    failures: List[Failure] = []
+    for gate in gates:
+        opening = _gate_opening_local(gate)
+        if opening is None:
+            failures.append(
+                Failure(
+                    check="gate_opening_size",
+                    message=(
+                        f"gate leaf {gate.piece_id} ({gate.asset_id}) has no "
+                        f"aperture profile — cannot verify clear opening"
+                    ),
+                    world_xyz=_centre(*_placement_aabb(gate)),
+                    piece_id=gate.piece_id,
+                    critical=True,
+                )
+            )
+            continue
+        run0, run1, z0, z1 = opening
+        clear_w = run1 - run0
+        clear_h = z1 - z0
+        if clear_w + TOL_CM >= MIN_GATE_CLEAR_WIDTH_CM and (
+            clear_h + TOL_CM >= MIN_GATE_CLEAR_HEIGHT_CM
+        ):
+            continue
+        bb = _placement_aabb(gate)
+        failures.append(
+            Failure(
+                check="gate_opening_size",
+                message=(
+                    f"gate leaf {gate.piece_id} ({gate.asset_id}) clear "
+                    f"{clear_w:.0f}×{clear_h:.0f} cm under min "
+                    f"{MIN_GATE_CLEAR_WIDTH_CM:.0f}×{MIN_GATE_CLEAR_HEIGHT_CM:.0f} cm "
+                    f"(use wall_gate_arch / wall_gate_arch_grand)"
+                ),
+                world_xyz=_centre(bb[0], bb[1]),
+                piece_id=gate.piece_id,
+                critical=True,
+            )
+        )
+    return failures
 
 
 def _tower_finish_anchors(assembly: Assembly) -> Set[Cell]:
@@ -577,6 +871,96 @@ def check_fortress_grand_approach(assembly: Assembly) -> List[Failure]:
     ]
 
 
+_HALL_STAIR_ASSETS = frozenset(
+    {
+        "stair_straight",
+        "stair_half",
+        "stair_landing",
+        "stair_wide",
+        "stair_switchback",
+    }
+)
+
+_SOUTH_CURTAIN_CHAIN = ("west_curtain", "gatehouse", "east_curtain")
+
+
+def _placement_in_range(p: SolidPlacement, range_name: str) -> bool:
+    pid = p.piece_id or ""
+    return (
+        range_name in p.tags
+        or f"building:{range_name}" in p.tags
+        or range_name in pid
+    )
+
+
+def check_fortress_gatehouse_hall_stair(assembly: Assembly) -> List[Failure]:
+    """Fortress gatehouse (≥2 storeys) must ship an L0 hall stair well (critical)."""
+    if not assembly_is_fortress(assembly):
+        return []
+    hall = [
+        p
+        for p in assembly.placements
+        if _placement_in_range(p, "gatehouse")
+        and (p.asset_id or "") in _HALL_STAIR_ASSETS
+        and p.level == 0
+    ]
+    if hall:
+        return []
+    return [
+        Failure(
+            check="fortress_gatehouse_hall_stair",
+            message=(
+                "fortress gatehouse missing L0 hall stair well — "
+                "repair_structure_single_stair_core must not strip gatehouse circulation"
+            ),
+            world_xyz=None,
+            critical=True,
+        )
+    ]
+
+
+def check_fortress_merge_wall_shell(assembly: Assembly) -> List[Failure]:
+    """MERGE south bar must not leave upper walls floating without L0 support (critical)."""
+    from pae.trim import covered_cells
+
+    if not assembly_is_fortress(assembly):
+        return []
+    l0_cells: Set[Cell] = set()
+    upper_by_cell: Dict[Cell, SolidPlacement] = {}
+    for p in assembly.placements:
+        if p.kind != "wall":
+            continue
+        for cell in covered_cells(p):
+            if p.level == 0:
+                l0_cells.add(cell)
+        if not any(_placement_in_range(p, rn) for rn in _SOUTH_CURTAIN_CHAIN):
+            continue
+        for cell in covered_cells(p):
+            if p.level > 0 and cell not in upper_by_cell:
+                upper_by_cell[cell] = p
+    failures: List[Failure] = []
+    for cell, wall in sorted(upper_by_cell.items()):
+        if cell in l0_cells:
+            continue
+        aid = (wall.asset_id or "").lower()
+        if "gate" in aid or "door" in aid or "window" in aid or "arcade" in aid:
+            continue
+        bb = _placement_aabb(wall)
+        failures.append(
+            Failure(
+                check="fortress_merge_wall_shell",
+                message=(
+                    f"upper wall {wall.piece_id} at cell {cell} level {wall.level} "
+                    f"has no L0 wall support — merge strip must be all-level or absent"
+                ),
+                world_xyz=_centre(bb[0], bb[1]),
+                piece_id=wall.piece_id,
+                critical=True,
+            )
+        )
+    return failures
+
+
 def check_fortress_compound(assembly: Assembly) -> List[Failure]:
     """Run all fortress / castle building checks (for validate pipeline)."""
     failures: List[Failure] = []
@@ -586,6 +970,12 @@ def check_fortress_compound(assembly: Assembly) -> List[Failure]:
     failures.extend(check_buttress_outward(assembly))
     failures.extend(check_spire_freestanding(assembly))
     failures.extend(check_fortress_grand_approach(assembly))
+    # Gate walkability — applies whenever gate leaves exist (not fortress-only).
+    failures.extend(check_gate_passage_clear(assembly))
+    failures.extend(check_gate_through_passage(assembly))
+    failures.extend(check_gate_opening_size(assembly))
+    failures.extend(check_fortress_gatehouse_hall_stair(assembly))
+    failures.extend(check_fortress_merge_wall_shell(assembly))
     return failures
 
 
@@ -594,6 +984,8 @@ __all__ = [
     "FORTRESS_COMPOUND_TAG",
     "GRAND_APPROACH_TAG",
     "DEFAULT_MIN_CAPPED_TOWERS",
+    "MIN_GATE_CLEAR_WIDTH_CM",
+    "MIN_GATE_CLEAR_HEIGHT_CM",
     "assembly_is_fortress",
     "assembly_requires_grand_approach",
     "fortress_min_capped_towers",
@@ -603,5 +995,10 @@ __all__ = [
     "check_buttress_outward",
     "check_spire_freestanding",
     "check_fortress_grand_approach",
+    "check_gate_passage_clear",
+    "check_gate_through_passage",
+    "check_gate_opening_size",
+    "check_fortress_gatehouse_hall_stair",
+    "check_fortress_merge_wall_shell",
     "check_fortress_compound",
 ]

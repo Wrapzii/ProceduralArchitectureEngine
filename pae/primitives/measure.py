@@ -5,9 +5,122 @@ from __future__ import annotations
 from typing import Iterable, List, Sequence, Tuple
 
 from pae.contract import FLOOR_T_CM, MODULE_CM, STOREY_CM, TOL_CM, WALL_T_CM
+from pae.primitives.apertures import get_profile, opening_slices
 from pae.primitives.types import PrimitiveDescriptor
 
 Vec3 = Tuple[float, float, float]
+
+
+def arch_clear_opening_cm(
+    profile_name: str,
+    *,
+    module_cm: float = MODULE_CM,
+    storey_cm: float = STOREY_CM,
+) -> Tuple[float, float, float]:
+    """``(run_width_cm, spring_z_cm, apex_z_cm)`` for an arch / gate profile."""
+    profile = get_profile(profile_name)
+    run0, run1 = profile.opening_run_cm(module_cm)
+    z0, z1 = profile.opening_z_cm(storey_cm)
+    rise = profile.head_rise_cm(module_cm)
+    return (run1 - run0, z0, z1 + rise)
+
+
+def arch_clear_height_cm(profile_name: str, *, storey_cm: float = STOREY_CM) -> float:
+    """Total vertical clear height including curved head."""
+    _, spring, apex = arch_clear_opening_cm(profile_name, storey_cm=storey_cm)
+    return apex - spring if apex > spring else 0.0
+
+
+def monumental_arch_sane(
+    profile_name: str,
+    *,
+    module_cm: float = MODULE_CM,
+    storey_cm: float = STOREY_CM,
+    min_run_frac: float = 0.55,
+    min_clear_frac: float = 0.72,
+) -> List[str]:
+    """Sanity band for monumental arches — not tiny stepped blobs."""
+    profile = get_profile(profile_name)
+    run_w, spring, apex = arch_clear_opening_cm(
+        profile_name, module_cm=module_cm, storey_cm=storey_cm
+    )
+    errors: List[str] = []
+    if run_w < module_cm * min_run_frac - TOL_CM:
+        errors.append(
+            f"{profile_name}: run {run_w:.1f} cm < {min_run_frac:.0%} of MODULE"
+        )
+    clear_h = apex - spring
+    if clear_h < storey_cm * min_clear_frac - TOL_CM:
+        errors.append(
+            f"{profile_name}: clear height {clear_h:.1f} cm < "
+            f"{min_clear_frac:.0%} of STOREY"
+        )
+    return errors
+
+
+def arch_head_band_step_cm(
+    profile_name: str,
+    *,
+    module_cm: float = MODULE_CM,
+) -> float:
+    """Max vertical height of one curved-head band — lower reads smoother."""
+    profile = get_profile(profile_name)
+    rise = profile.head_rise_cm(module_cm)
+    if rise <= 0.0 or profile.head_bands <= 0:
+        return 0.0
+    return rise / profile.head_bands
+
+
+def monumental_arch_mesh_smooth(
+    profile_name: str,
+    *,
+    module_cm: float = MODULE_CM,
+    max_band_step_cm: float = 8.0,
+    min_head_bands: int = 24,
+) -> List[str]:
+    """Mesh smoothness band for monumental arches — not stepped block heads."""
+    profile = get_profile(profile_name)
+    errors: List[str] = []
+    if profile.head_bands < min_head_bands:
+        errors.append(
+            f"{profile_name}: head_bands {profile.head_bands} < {min_head_bands}"
+        )
+    step = arch_head_band_step_cm(profile_name, module_cm=module_cm)
+    if step > max_band_step_cm + TOL_CM:
+        errors.append(
+            f"{profile_name}: arch band step {step:.1f} cm > {max_band_step_cm:.1f} cm"
+        )
+    return errors
+
+
+def arch_curve_max_deviation_cm(
+    profile_name: str,
+    *,
+    module_cm: float = MODULE_CM,
+    storey_cm: float = STOREY_CM,
+) -> float:
+    """Max run-axis gap between banded mesh and true head curve (cm)."""
+    from pae.primitives.apertures import _head_half_width_at
+
+    profile = get_profile(profile_name)
+    rise = profile.head_rise_cm(module_cm)
+    if rise <= 0.0:
+        return 0.0
+    run0, run1 = profile.opening_run_cm(module_cm)
+    half = (run1 - run0) * 0.5
+    z0, z1 = profile.opening_z_cm(storey_cm)
+    spring_z = max(z0, z1 - rise)
+    max_err = 0.0
+    for z_band0, z_band1, s_run0, s_run1 in opening_slices(
+        profile, module_cm=module_cm, storey_cm=storey_cm
+    ):
+        slice_half = (s_run1 - s_run0) * 0.5
+        if slice_half >= half - 1e-3:
+            continue
+        t = min(1.0, max(0.0, (z_band1 - spring_z) / rise))
+        expected = _head_half_width_at(profile, half, t)
+        max_err = max(max_err, expected - slice_half)
+    return max_err
 
 
 def _axis_err(label: str, got: float, expected: float, tol: float) -> List[str]:

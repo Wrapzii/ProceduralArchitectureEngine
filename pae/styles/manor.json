@@ -1,0 +1,15 @@
+{
+  "id": "manor",
+  "geometry": {
+    "roof_pitch": 1.1,
+    "storey_height_cm": 380
+  },
+  "roof": {
+    "kind_default": "pitched"
+  },
+  "window": {"tag": "window_mullioned", "per_bay": 2, "skip_ground": false},
+  "door": {"tag": "door_plain"},
+  "wall_bands": {"plinth_cm": 50, "cornice_cm": 42},
+  "tower": {"cap": "flat", "crown": true, "finial": false},
+  "materials": {"wall": "limestone_cream", "roof": "tile_terracotta", "trim": "stone_light"}
+}

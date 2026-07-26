@@ -1,0 +1,15 @@
+{
+  "id": "civic",
+  "geometry": {
+    "roof_pitch": 0.75,
+    "storey_height_cm": 400
+  },
+  "roof": {
+    "kind_default": "flat"
+  },
+  "window": {"tag": "window_round", "per_bay": 1, "skip_ground": false},
+  "door": {"tag": "door_plain"},
+  "wall_bands": {"plinth_cm": 70, "cornice_cm": 50},
+  "tower": {"cap": "flat", "crown": false, "finial": false},
+  "materials": {"wall": "civic_limestone", "roof": "slate_blue", "trim": "bronze_trim"}
+}

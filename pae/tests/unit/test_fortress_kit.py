@@ -10,7 +10,7 @@ from pae.pipeline import run_through_assemble
 from pae.primitives import all_descriptors, footprint_contract_errors, get
 from pae.primitives.catalog import catalog_by_id
 from pae.spec import castle_curtain_wall_spec, castle_gatehouse_spec, m3_keep_tower_spec
-from pae.trim import TrimOptions, covered_cells, trim
+from pae.trim import TrimOptions, apply_buttresses, covered_cells, trim
 from pae.validate import validate
 
 
@@ -111,7 +111,7 @@ def test_castle_curtain_gets_outward_buttresses():
   base.building_class = "castle"
   for p in base.placements:
     if p.kind == "wall":
-      p.tags = p.tags | frozenset({"west_curtain", "curtain"})
+      p.tags = p.tags | frozenset({"west_curtain", "curtain", "building:west_curtain"})
   opts = TrimOptions(
     railings=False,
     roofline=False,
@@ -123,12 +123,44 @@ def test_castle_curtain_gets_outward_buttresses():
   assert report.ok
   butts = [p for p in trimmed.placements if p.asset_id == "buttress"]
   assert butts, "2-storey castle curtain should carry buttresses"
-  interior = set()
-  for p in trimmed.placements:
-    if p.kind in ("floor", "plinth", "ground"):
-      interior |= covered_cells(p)
-  for b in butts:
-    assert not (covered_cells(b) & interior), "buttress must project outward"
+  from pae.fortress_validate import check_buttress_outward
+
+  assert check_buttress_outward(trimmed) == []
+
+
+def test_apply_buttresses_post_merge_clears_outward():
+  """Pre-merge piers on adjacent ranges fail until post-merge re-place."""
+  from dataclasses import replace
+  from pae.compound import (
+    fortress_bailey_ranges,
+    place_buildings,
+    BuildingInstance,
+    _strip_trim_tower_helixes,
+  )
+  from pae.spec import fortress_bailey_compound_spec
+  from pae.fortress_validate import check_buttress_outward
+
+  cfg = fortress_bailey_compound_spec()
+  styles = fortress_bailey_ranges(cfg)
+  instances = []
+  for style in styles:
+    _, _, asm, rep = run_through_assemble(style.spec)
+    assert rep.ok
+    trimmed, _ = trim(asm, replace(style.trim, buttresses=True))
+    trimmed = _strip_trim_tower_helixes(trimmed)
+    instances.append(BuildingInstance(trimmed, style.cell_offset, style.name))
+  merged, _ = place_buildings(instances)
+  pre = [p for p in merged.placements if p.asset_id == "buttress"]
+  assert pre, "per-range trim should emit buttresses before merge"
+  pre_fails = check_buttress_outward(merged)
+  curtain_names = {s.name for s in styles if "curtain" in s.name}
+  merged2, extra = apply_buttresses(
+    merged,
+    TrimOptions(buttresses=True),
+    range_names=curtain_names | {"north_keep"},
+  )
+  assert len(extra) >= 1
+  assert check_buttress_outward(merged2) == [], [f.message for f in pre_fails[:3]]
 
 
 # --- trim: cloister wall arcade ----------------------------------------------

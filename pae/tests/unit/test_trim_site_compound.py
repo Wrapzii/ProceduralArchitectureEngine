@@ -132,7 +132,11 @@ def test_m3_tower_gets_a_spire_and_finial():
 
 def test_courtyard_building_gets_a_colonnade():
     trimmed, _ = trim(_assemble(m4_courtyard_spec()))
-    arcs = [p for p in trimmed.placements if p.asset_id == "arch_freestanding"]
+    arcs = [
+        p
+        for p in trimmed.placements
+        if p.asset_id in ("wall_arcade", "arch_freestanding")
+    ]
     assert arcs, "courtyard faces should carry a cloister walk"
 
 

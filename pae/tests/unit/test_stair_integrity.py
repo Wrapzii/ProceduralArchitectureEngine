@@ -96,10 +96,14 @@ def test_stairs_are_inside_the_building(name):
 
 @pytest.mark.parametrize("name", STAIR_SPECS)
 def test_stairs_do_not_run_into_walls(name):
-    """Landing clearance: solid (wall without floor) beyond a linear stair end."""
+    """Landing clearance: solid walls must not block stair landings (critical)."""
     assembly = _assembly(name)
     _, report = validate(assembly)
-    hits = [f for f in report.failures if f.check == "stair_landing_clearance"]
+    hits = [
+        f
+        for f in report.failures
+        if f.check in ("stair_landing_clear", "stair_landing_clearance")
+    ]
     assert not hits, (
         f"{len(hits)} stair end(s) blocked by a wall:\n  "
         + "\n  ".join(f.message for f in hits[:4])
@@ -114,6 +118,11 @@ def test_stair_landing_clearance_check_can_fire():
     """
     poisoned = make_stair_landing_solid_wall_defect()
     _, vreport = validate(poisoned)
-    hits = [f for f in vreport.failures if f.check == "stair_landing_clearance"]
-    assert hits, "stair_landing_clearance never fires — it may have become a no-op"
-    assert "solid" in hits[0].message
+    hits = [
+        f
+        for f in vreport.failures
+        if f.check in ("stair_landing_clear", "stair_landing_clearance")
+    ]
+    assert hits, "stair_landing_clear never fires — it may have become a no-op"
+    assert hits[0].critical
+    assert "solid" in hits[0].message.lower() or "blocked" in hits[0].message.lower()

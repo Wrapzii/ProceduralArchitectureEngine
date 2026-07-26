@@ -1,5 +1,8 @@
 """Contract geometry helpers used by validate."""
 
+import re
+from pathlib import Path
+
 from pae.contract import (
     FLOOR_T_CM,
     MODULE_CM,
@@ -12,6 +15,7 @@ from pae.contract import (
     placement_world_aabb,
     rotate_local_xy,
     rotation_offset_cm,
+    storey_datum_z_cm,
     wall_run_cell,
 )
 
@@ -32,6 +36,37 @@ def test_wall_run_cell_east_north_boundary():
 def test_floor_and_ground_z():
     assert floor_placement_z_cm(1) == STOREY_CM - FLOOR_T_CM
     assert ground_plinth_z_cm() == -2.0 * FLOOR_T_CM
+
+
+def test_storey_datum_accessor_matches_legacy():
+    assert storey_datum_z_cm(0) == 0.0
+    assert storey_datum_z_cm(2) == 2 * STOREY_CM
+    assert floor_placement_z_cm(1) == storey_datum_z_cm(1) - FLOOR_T_CM
+    assert cell_to_world_cm(0, 0, 3)[2] == storey_datum_z_cm(3)
+    half = STOREY_CM * 0.5
+    assert floor_placement_z_cm(1, datum_offset_cm=half) == (
+        storey_datum_z_cm(1, datum_offset_cm=half) - FLOOR_T_CM
+    )
+
+
+_HARDCODED_DATUM_Z = re.compile(
+    r"(?<![\w.])\w+\.level\s*\*\s*STOREY_CM|(?<![\w.])level\s*\*\s*STOREY_CM"
+)
+
+
+def test_no_hardcoded_level_times_storey_cm_outside_accessor():
+    """Datum Z must route through storey_datum_z_cm (Roadmap 10.6 prep)."""
+    root = Path(__file__).resolve().parents[3]
+    pae = root / "pae"
+    offenders: list[str] = []
+    for path in sorted(pae.rglob("*.py")):
+        if path.name == "contract.py":
+            continue
+        text = path.read_text(encoding="utf-8")
+        for i, line in enumerate(text.splitlines(), start=1):
+            if _HARDCODED_DATUM_Z.search(line):
+                offenders.append(f"{path.relative_to(root)}:{i}: {line.strip()}")
+    assert not offenders, "hardcoded datum Z:\n" + "\n".join(offenders)
 
 
 def test_rotate_local_xy_table():

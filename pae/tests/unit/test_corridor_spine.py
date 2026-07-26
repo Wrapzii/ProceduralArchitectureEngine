@@ -76,8 +76,10 @@ def test_corridor_stair_fails_when_spine_severed():
     assembly, _ = assemble(floor_plan, None, style)
     assert _check_corridor_stair_connectivity(assembly) == []
 
-    # Blank every CORRIDOR cell that is not in the classroom wing (hall spine),
-    # leaving wing corridors orphaned from the stair well.
+    # Remove the final corridor cells that touch the actual generated stair well,
+    # leaving the rest of the spine present but orphaned.  Do not assume a fixed
+    # stair coordinate: school massing may legitimately move the well as its
+    # room program changes.
     stair_xy = set(massing.stair_cells)
     for level, layer in assembly.floor_plan.items():
         ox, oy = layer.origin_cell
@@ -87,9 +89,10 @@ def test_corridor_stair_fails_when_spine_severed():
                 if not _cell_role_is(role, CellRole.CORRIDOR):
                     continue
                 cx, cy = ox + lx, oy + ly
-                # Demote corridor cells that sit in the hall (near stairs) or on the
-                # bridge — keep only cells far from the well so the check trips.
-                if abs(cx - 1) + abs(cy - 1) <= 8:
+                if any(
+                    abs(cx - sx) + abs(cy - sy) <= 1
+                    for sx, sy in stair_xy
+                ):
                     layer.cells[ly][lx] = CellRole.INTERIOR
 
     fails = _check_corridor_stair_connectivity(assembly)

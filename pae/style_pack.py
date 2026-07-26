@@ -16,7 +16,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Dict, FrozenSet, Mapping, Optional, Sequence, Tuple
 
-from pae.contract import FLOOR_T_CM
+from pae.contract import FLOOR_T_CM, STOREY_CM
 from pae.report import Failure, Report
 from pae.spec import ROOF_PITCH_MAX, ROOF_PITCH_MIN, STEEP_PITCH_MIN
 
@@ -366,6 +366,20 @@ def _geometry_pitch_from_mapping(style: Mapping[str, Any]) -> float:
     if "roof_pitch" in style:
         return float(style["roof_pitch"])
     return ENGINE_DEFAULTS.geometry.roof_pitch
+
+
+def resolve_storey_height_cm(
+    style: StylePack | Mapping[str, Any] | None,
+) -> float:
+    """Per-pack storey height (Stage I) — defaults to contract ``STOREY_CM``."""
+    if isinstance(style, StylePack):
+        authored = style.geometry.storey_height_cm
+        return float(authored) if authored is not None else STOREY_CM
+    if isinstance(style, Mapping):
+        geom = style.get("geometry")
+        if isinstance(geom, Mapping) and geom.get("storey_height_cm") is not None:
+            return float(geom["storey_height_cm"])
+    return STOREY_CM
 
 
 def resolve_roof_pitch(
@@ -759,6 +773,30 @@ def load_style_pack(
 
 
 # Built-in piece tag → asset id fallbacks (engine default substitution layer).
+# Stage H — short shape names and legacy aliases → canonical aperture profile tags.
+WINDOW_SHAPE_ALIASES: Dict[str, str] = {
+    "square": "window_plain",
+    "plain": "window_plain",
+    "simple": "window_simple",
+    "round": "window_round",
+    "romanesque": "window_round",
+    "lancet": "window_lancet",
+    "gothic": "window_gothic",
+    "mullioned": "window_mullioned",
+    "oculus": "window_oculus",
+    "arrowslit": "window_arrowslit",
+    "window_square": "window_plain",
+}
+
+DOOR_SHAPE_ALIASES: Dict[str, str] = {
+    "plain": "door_plain",
+    "arched": "door_arched",
+    "gothic": "door_gothic",
+    "double": "door_double",
+    "grand": "gate_arch",
+    "gate": "gate_arch_grand",
+}
+
 _BUILTIN_SUBSTITUTIONS: Dict[str, str] = {
     "window_plain": "wall_window",
     "window_simple": "wall_window",
@@ -773,7 +811,12 @@ _BUILTIN_SUBSTITUTIONS: Dict[str, str] = {
     "window_arrowslit": "wall_arrowslit",
     "arrowslit": "wall_arrowslit",
     "door_plain": "wall_door",
+    "door_arched": "wall_door_arched",
+    "door_double": "wall_door_double",
     "door_gothic": "wall_door_gothic",
+    "gate_arch": "wall_gate_arch",
+    "gate_arch_grand": "wall_gate_arch_grand",
+    "gate_arch_pointed": "wall_gate_arch_pointed",
     "roof_flat": "roof_flat",
     "roof_pitched_slope": "roof_pitched_slope",
     "roof_gable_infill": "roof_gable_infill",
@@ -781,6 +824,131 @@ _BUILTIN_SUBSTITUTIONS: Dict[str, str] = {
     "band_course": "band_course",
     "band_pilaster": "band_pilaster",
 }
+
+
+def normalize_aperture_tag(tag: str, *, kind: str = "window") -> str:
+    """Map Stage H shape aliases to canonical profile tag names."""
+    key = str(tag or "").strip().lower()
+    if not key:
+        return "window_plain" if kind == "window" else "door_plain"
+    aliases = WINDOW_SHAPE_ALIASES if kind == "window" else DOOR_SHAPE_ALIASES
+    if key in aliases:
+        return aliases[key]
+    if kind == "window" and not key.startswith("window_") and not key.startswith("arrow"):
+        prefixed = f"window_{key}"
+        if prefixed in aliases.values() or prefixed in _BUILTIN_SUBSTITUTIONS:
+            return prefixed
+    if kind == "door" and not key.startswith("door_") and not key.startswith("gate_"):
+        prefixed = f"door_{key}"
+        if prefixed in aliases.values() or prefixed in _BUILTIN_SUBSTITUTIONS:
+            return prefixed
+    return key
+
+
+def _style_section(style: Optional[Mapping[str, Any]], section: str) -> Dict[str, Any]:
+    if not isinstance(style, Mapping):
+        return {}
+    raw = style.get(section)
+    return dict(raw) if isinstance(raw, dict) else {}
+
+
+def resolve_window_tag(
+    style: StylePack | Mapping[str, Any] | None,
+    *,
+    level_override: Optional[str] = None,
+) -> str:
+    """Resolve the window profile tag from style pack + optional per-level override."""
+    if level_override is not None and str(level_override).strip():
+        return normalize_aperture_tag(str(level_override), kind="window")
+    if isinstance(style, StylePack):
+        return normalize_aperture_tag(style.window.tag, kind="window")
+    win = _style_section(style if isinstance(style, Mapping) else None, "window")
+    return normalize_aperture_tag(str(win.get("tag") or "window_plain"), kind="window")
+
+
+def resolve_window_piece_id(
+    style: StylePack | Mapping[str, Any] | None,
+    *,
+    level_override: Optional[str] = None,
+) -> str:
+    """Map resolved window tag → catalog wall piece id (S-007 / Stage H)."""
+    tag = resolve_window_tag(style, level_override=level_override)
+    style_dict = style.to_legacy_dict() if isinstance(style, StylePack) else style
+    return resolve_piece_id(
+        style_dict if isinstance(style_dict, dict) else None,
+        role="window",
+        tag=tag,
+    )
+
+
+def resolve_door_tag(style: StylePack | Mapping[str, Any] | None) -> str:
+    """Base door profile tag from the style pack (before entrance-role overrides)."""
+    if isinstance(style, StylePack):
+        return normalize_aperture_tag(style.door.tag, kind="door")
+    door = _style_section(style if isinstance(style, Mapping) else None, "door")
+    tag = door.get("tag")
+    if tag:
+        return normalize_aperture_tag(str(tag), kind="door")
+    win_tag = resolve_window_tag(style)
+    if "gothic" in win_tag or "lancet" in win_tag:
+        return "door_gothic"
+    return "door_plain"
+
+
+def _style_reads_gothic(style: StylePack | Mapping[str, Any] | None) -> bool:
+    door_tag = resolve_door_tag(style)
+    if "gothic" in door_tag:
+        return True
+    win_tag = resolve_window_tag(style)
+    return "gothic" in win_tag or "lancet" in win_tag
+
+
+def resolve_door_piece_id(
+    style: StylePack | Mapping[str, Any] | None,
+    *,
+    entrance_role: Optional[str] = None,
+) -> str:
+    """Map style door tag + entrance role → catalog wall piece id (Stage H)."""
+    style_dict = style.to_legacy_dict() if isinstance(style, StylePack) else style
+    role = (entrance_role or "").strip().lower() or None
+    gothic = _style_reads_gothic(style)
+
+    if role == "gate":
+        tag = "door_gothic" if gothic else "gate_arch_grand"
+        return resolve_piece_id(
+            style_dict if isinstance(style_dict, dict) else None,
+            role="door",
+            tag=tag,
+        )
+    if role == "grand":
+        if gothic:
+            tag = "door_gothic"
+        else:
+            base = resolve_door_tag(style)
+            tag = "door_double" if base == "door_double" else "gate_arch"
+        return resolve_piece_id(
+            style_dict if isinstance(style_dict, dict) else None,
+            role="door",
+            tag=tag,
+        )
+    if role == "main":
+        return resolve_piece_id(
+            style_dict if isinstance(style_dict, dict) else None,
+            role="door",
+            tag=resolve_door_tag(style),
+        )
+    if role in ("service", "postern", "internal"):
+        return "wall_door_plain"
+    if role in ("side", "balcony", "upper_exterior"):
+        return resolve_piece_id(
+            style_dict if isinstance(style_dict, dict) else None,
+            role="door",
+        )
+    return resolve_piece_id(
+        style_dict if isinstance(style_dict, dict) else None,
+        role="door",
+        tag=resolve_door_tag(style),
+    )
 
 
 def _default_tag_for_role(style: Optional[Mapping[str, Any]], role: str) -> str:

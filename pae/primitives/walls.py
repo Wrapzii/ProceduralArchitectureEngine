@@ -245,6 +245,7 @@ LEGACY_PROFILE_IDS = {
     "wall_arrowslit": "arrowslit",
     "wall_door": "door_plain",
     "wall_arcade": "arcade_round",
+    "wall_gate_arch": "gate_arch",
 }
 
 
@@ -265,6 +266,25 @@ def wall_arcade() -> PrimitiveDescriptor:
     return wall_from_profile(get_profile("arcade_round"), piece_id="wall_arcade")
 
 
+def wall_gate_arch() -> PrimitiveDescriptor:
+    """Monumental gate leaf — round-headed near full-bay opening."""
+    return wall_from_profile(get_profile("gate_arch"), piece_id="wall_gate_arch")
+
+
+def wall_gate_arch_grand() -> PrimitiveDescriptor:
+    """Fortress gatehouse leaf — maximum clear carriage opening in one bay."""
+    return wall_from_profile(
+        get_profile("gate_arch_grand"), piece_id="wall_gate_arch_grand"
+    )
+
+
+def wall_arcade_monumental() -> PrimitiveDescriptor:
+    """Tall cloister arcade — low spring, wide round head under a gallery roof."""
+    return wall_from_profile(
+        get_profile("arcade_monumental"), piece_id="wall_arcade_monumental"
+    )
+
+
 def all_walls() -> tuple:
     """Solid wall, the four legacy ids, and one bay per registered aperture profile."""
     pieces = [
@@ -273,6 +293,9 @@ def all_walls() -> tuple:
         wall_arrowslit(),
         wall_door(),
         wall_arcade(),
+        wall_gate_arch(),
+        wall_gate_arch_grand(),
+        wall_arcade_monumental(),
     ]
     taken = {p.id for p in pieces}
     for name in sorted(PROFILES):

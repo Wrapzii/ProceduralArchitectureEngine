@@ -61,6 +61,9 @@ FORTRESS_COLLECTION = "PAE_Fortress"
 FORTRESS_SCREENSHOT_REL = Path("Saved") / "Screenshots" / "fortress_live.png"
 # Gallery labels that use compound builders instead of single-spec factories.
 _COMPOUND_GALLERY_LABELS = frozenset({"fortress"})
+# Object name prefixes removed by :func:`clear_pae_scene`.
+_PAE_OBJECT_PREFIXES = ("PAE_", "m1_", "m2_", "m3_", "fortress_")
+_PAE_MATERIAL_PREFIX = "PAE_Mat_"
 GALLERY_GAP_M = 2.0
 # Deterministic gallery camera: SE (+X, −Y) elevated — never random orbit per run.
 GALLERY_CAM_DIRECTION = (1.0, -1.0, 0.65)
@@ -106,9 +109,13 @@ ASSET_MATERIAL_COLORS: Dict[str, Tuple[float, float, float, float]] = {
     "wall_window": (0.35, 0.65, 0.92, 1.0),  # bright sky glazing
     "wall_window_lancet": (0.25, 0.55, 0.88, 1.0),  # gothic lancet
     "roof_flat": (0.22, 0.35, 0.62, 1.0),  # deep slate deck
-    "roof_gable_infill": (0.28, 0.55, 0.42, 1.0),  # green gable triangle
-    "roof_pitched_slope": (0.62, 0.28, 0.22, 1.0),  # red clay tile
+    "roof_gable_infill": (0.28, 0.42, 0.58, 1.0),  # slate gable end-cap
+    "roof_pitched_slope": (0.26, 0.40, 0.66, 1.0),  # slate-blue pitched plane
     "roof_hip": (0.48, 0.38, 0.62, 1.0),  # slate-blue hip
+    "dormer_steep": (0.30, 0.45, 0.72, 1.0),  # bright slate dormer
+    "spire_needle": (0.12, 0.22, 0.48, 1.0),  # deep blue needle spire
+    "spire_conical": (0.34, 0.48, 0.78, 1.0),  # bright slate conical spire
+    "spire_octagonal": (0.45, 0.55, 0.82, 1.0),  # pale slate octagonal spire
     "roof_valley": (0.58, 0.32, 0.48, 1.0),  # plum valley trough
     "tower_arc_quarter": (0.82, 0.68, 0.45, 1.0),  # warm sandstone drum
     "tower_crown": (0.52, 0.42, 0.68, 1.0),  # purple-gray battlements
@@ -122,7 +129,7 @@ ASSET_MATERIAL_COLORS: Dict[str, Tuple[float, float, float, float]] = {
     "spiral_newel": (0.55, 0.48, 0.40, 1.0),  # stone newel pillar
     "floor_hole": (0.12, 0.12, 0.18, 1.0),  # void rim
 }
-_TINTED_ASSET_PREFIXES = ("roof_", "tower_", "stair_")
+_TINTED_ASSET_PREFIXES = ("roof_", "tower_", "stair_", "spire_", "dormer_")
 _TINTED_ASSET_EXACT = frozenset(ASSET_MATERIAL_COLORS.keys())
 
 # Workbench PNGs read ``scene.display.shading`` + material viewport color — not Cycles lights.
@@ -254,45 +261,18 @@ def _fortress_screenshot_path() -> Path:
 
 
 def resolve_fortress_compound_builder():
-    """Return the active fortress compound builder callable.
+    """Return ``pae.compound.build_fortress_compound`` (flat-ground bailey campus)."""
+    from pae.compound import build_fortress_compound
 
-    Prefers ``build_fortress_compound`` when its assembly passes full validate;
-    otherwise falls back to ``build_castle_curtain_compound`` (interim greybox).
-    """
-    from pae.compound import build_castle_curtain_compound
-
-    import pae.compound as compound_mod
-
-    fortress = getattr(compound_mod, "build_fortress_compound", None)
-    if callable(fortress):
-        return fortress
-    return build_castle_curtain_compound
+    return build_fortress_compound
 
 
-def build_fortress_or_curtain_compound() -> Tuple[Any, Any, Any, str]:
-    """Try fortress campus preset; fall back to castle curtain when validate fails."""
-    from pae.compound import build_castle_curtain_compound
+def assemble_fortress_compound(*, label: str = "fortress") -> Tuple[Any, Any, Any]:
+    """``build_fortress_compound`` → validate. Fail-closed on critical failures."""
+    from pae.compound import build_fortress_compound
     from pae.validate import validate
 
-    import pae.compound as compound_mod
-
-    fortress = getattr(compound_mod, "build_fortress_compound", None)
-    if callable(fortress):
-        assembly, layout, creport = fortress()
-        if creport.ok and assembly is not None and assembly.placements:
-            _, vreport = validate(assembly)
-            if vreport.ok:
-                return assembly, layout, creport, "build_fortress_compound"
-
-    assembly, layout, creport = build_castle_curtain_compound()
-    return assembly, layout, creport, "build_castle_curtain_compound"
-
-
-def assemble_fortress_compound(*, label: str = "fortress") -> Tuple[Any, Any, Any, str]:
-    """Compound preset → validate. Raises on critical failures (export/gallery policy)."""
-    from pae.validate import validate
-
-    assembly, layout, compound_report, builder_name = build_fortress_or_curtain_compound()
+    assembly, layout, compound_report = build_fortress_compound()
     if assembly is None or not assembly.placements:
         raise RuntimeError(f"{label}: compound produced no placements ({compound_report})")
     if not compound_report.ok:
@@ -302,7 +282,7 @@ def assemble_fortress_compound(*, label: str = "fortress") -> Tuple[Any, Any, An
     if not vreport.ok:
         crit = "; ".join(f.message for f in vreport.critical[:5])
         raise RuntimeError(f"{label}: validate failed — {crit or vreport}")
-    return assembly, vreport, layout, builder_name
+    return assembly, vreport, layout
 
 
 def is_stair_proof_placement(p) -> bool:
@@ -573,6 +553,16 @@ def assembly_footprint_extent_m(assembly) -> Tuple[float, float, float]:
     )
 
 
+def placement_instance_local_size_cm(p) -> Tuple[float, float, float]:
+    """Placement dimensions in prototype-local axes before yaw rotation."""
+    sx, sy, sz = (float(v) for v in p.size_cm)
+    if bool(getattr(p, "rotates_about_center", False)) and int(p.yaw) % 180 == 90:
+        # Centred placement size_cm is its world AABB contract. Swap back to
+        # prototype-local axes before Blender applies yaw.
+        sx, sy = sy, sx
+    return (sx, sy, sz)
+
+
 def placement_instance_scale_cm(p) -> Tuple[float, float, float]:
     """Per-axis scale from catalog prototype ``size_cm`` to placement ``size_cm``.
 
@@ -594,11 +584,8 @@ def placement_instance_scale_cm(p) -> Tuple[float, float, float]:
             return 1.0
         return placed / proto
 
-    return (
-        _ratio(p.size_cm[0], base[0]),
-        _ratio(p.size_cm[1], base[1]),
-        _ratio(p.size_cm[2], base[2]),
-    )
+    local_size = placement_instance_local_size_cm(p)
+    return tuple(_ratio(local_size[i], base[i]) for i in range(3))
 
 
 def assembly_world_bounds_m(
@@ -721,7 +708,19 @@ def _gallery_factories() -> List[Tuple[str, str, Any]]:
         ("m4_l", "PAE_M4_L", "m4_l_plan_spec"),
         ("m4_u", "PAE_M4_U", "m4_u_plan_spec"),
         ("m4_c", "PAE_M4_C", "m4_courtyard_spec"),
+        ("spiral", "PAE_Spiral_Tower", "m_spiral_tower_spec"),
+        (
+            "tower_rooms",
+            "PAE_Habitable_Round_Tower",
+            "habitable_round_tower_spec",
+        ),
+        ("tiny_spire", "PAE_Tiny_Round_Spire", "tiny_round_spire_spec"),
+        ("small_square", "PAE_Small_Square_Spire", "small_square_spire_spec"),
+        ("square_spire", "PAE_Square_Spire", "square_spire_tower_spec"),
+        ("lighthouse", "PAE_Giant_Lighthouse", "giant_lighthouse_spec"),
         ("school", "PAE_School", "school_academy_spec"),
+        ("rooms", "PAE_Roomed_House", "roomed_house_structure_spec"),
+        ("joined", "PAE_Joined_Wings", "joined_wings_structure_spec"),
         ("fortress", FORTRESS_COLLECTION, None),  # compound — see assemble_fortress_compound
     ]
     factories: List[Tuple[str, str, Any]] = []
@@ -786,14 +785,22 @@ def assemble_and_validate(label: str, factory) -> Tuple[Any, Any]:
 def _assemble_for_gallery(label: str, factory) -> Tuple[Any, Any]:
     """Spec factory or compound preset — always fail-closed on critical validate."""
     if label in _COMPOUND_GALLERY_LABELS:
-        assembly, report, _layout, _builder = assemble_fortress_compound(label=label)
+        assembly, report, _layout = assemble_fortress_compound(label=label)
         return assembly, report
     return assemble_and_validate(label, factory)
 
 
-def build_school_showcase(*, write_png: bool = True) -> Dict[str, Any]:
+def build_school_showcase(
+    *,
+    write_png: bool = True,
+    skip_scene_clear: bool = False,
+) -> Dict[str, Any]:
     """Build the school academy into ``PAE_School`` and write ``school_*.png``."""
-    result = build_gallery(milestones=("school",), write_png=write_png)
+    result = build_gallery(
+        milestones=("school",),
+        write_png=write_png,
+        skip_scene_clear=skip_scene_clear,
+    )
     # Alias canonical proof path expected by SCHOOL_READINESS / Wave 5.
     per = result.get("per_milestone_screenshots") or {}
     school_shot = per.get("school")
@@ -872,6 +879,80 @@ def _clear_proto_meshes() -> None:
                 bpy.data.meshes.remove(mesh)
 
 
+def _is_pae_collection_name(name: str) -> bool:
+    return name.startswith("PAE_")
+
+
+def _is_pae_object_name(name: str) -> bool:
+    return any(name.startswith(prefix) for prefix in _PAE_OBJECT_PREFIXES)
+
+
+def clear_pae_scene() -> Dict[str, int]:
+    """Remove all PAE collections/objects and orphan PAE data blocks.
+
+    Clears prior live/gallery/proof builds so the viewport shows only the next
+    build. Safe to call before ``build_fortress_live`` or ``build_gallery``.
+    """
+    from pae.primitives import bpy_util
+
+    bpy_util.require_bpy()
+    import bpy
+
+    counts = {"collections": 0, "objects": 0, "meshes": 0, "materials": 0, "images": 0}
+
+    scene_root = bpy.context.scene.collection
+
+    # Top-level PAE trees linked under the scene (Gallery, Live, Fortress, proofs, …).
+    for coll in list(scene_root.children):
+        if _is_pae_collection_name(coll.name):
+            _unlink_collection_tree(coll)
+            counts["collections"] += 1
+
+    # Orphan PAE collections left unlinked (partial prior clears / nested leftovers).
+    for coll in list(bpy.data.collections):
+        if _is_pae_collection_name(coll.name):
+            _unlink_collection_tree(coll)
+            counts["collections"] += 1
+
+    for obj in list(bpy.data.objects):
+        if _is_pae_object_name(obj.name):
+            bpy.data.objects.remove(obj, do_unlink=True)
+            counts["objects"] += 1
+
+    _clear_proto_meshes()
+
+    for mesh in list(bpy.data.meshes):
+        if mesh.users == 0:
+            bpy.data.meshes.remove(mesh)
+            counts["meshes"] += 1
+
+    for mat in list(bpy.data.materials):
+        if mat.name.startswith(_PAE_MATERIAL_PREFIX) and mat.users == 0:
+            bpy.data.materials.remove(mat)
+            counts["materials"] += 1
+
+    for img in list(bpy.data.images):
+        if img.name.startswith("PAE_") and img.users == 0:
+            bpy.data.images.remove(img)
+            counts["images"] += 1
+
+    return counts
+
+
+def prepare_fortress_live_scene(*, skip_clear: bool = False) -> Tuple[Any, Dict[str, int]]:
+    """Full PAE slate, then an empty ``PAE_Fortress`` collection."""
+    cleared = {} if skip_clear else clear_pae_scene()
+    coll = _ensure_collection(FORTRESS_COLLECTION)
+    return coll, cleared
+
+
+def prepare_gallery_scene(*, skip_clear: bool = False) -> Tuple[Any, Dict[str, int]]:
+    """Full PAE slate, then an empty ``PAE_Gallery`` root collection."""
+    cleared = {} if skip_clear else clear_pae_scene()
+    coll = _ensure_collection(GALLERY_ROOT_COLLECTION)
+    return coll, cleared
+
+
 def _clear_pae_objects():
     from pae.primitives import bpy_util
 
@@ -894,33 +975,17 @@ def _clear_gallery_collections():
     from pae.primitives import bpy_util
 
     bpy_util.require_bpy()
-    import bpy
-
-    _clear_proto_meshes()
-    root = bpy.data.collections.get(GALLERY_ROOT_COLLECTION)
-    if root is not None:
-        _unlink_collection_tree(root)
-    for mesh in list(bpy.data.meshes):
-        if mesh.users == 0:
-            bpy.data.meshes.remove(mesh)
-    return _ensure_collection(GALLERY_ROOT_COLLECTION)
+    coll, _cleared = prepare_gallery_scene()
+    return coll
 
 
 def _clear_fortress_collection():
-    """Dedicated fortress live collection — flat ground, single compound."""
+    """Dedicated fortress live collection — clears entire PAE scene first."""
     from pae.primitives import bpy_util
 
     bpy_util.require_bpy()
-    import bpy
-
-    _clear_proto_meshes()
-    coll = bpy.data.collections.get(FORTRESS_COLLECTION)
-    if coll is not None:
-        _unlink_collection_tree(coll)
-    for mesh in list(bpy.data.meshes):
-        if mesh.users == 0:
-            bpy.data.meshes.remove(mesh)
-    return _ensure_collection(FORTRESS_COLLECTION)
+    coll, _cleared = prepare_fortress_live_scene()
+    return coll
 
 
 def _ensure_material(asset_id: str, kind: str = "wall"):
@@ -984,16 +1049,23 @@ def is_spanning_floor_deck(p) -> bool:
 
 
 def spanning_floor_hole_rects_cm(deck, hole_placements) -> List[Tuple[float, float, float, float]]:
-    """Local hole rectangles for VOID ``floor_hole`` placements on a spanning deck."""
-    from pae.primitives.floors import hole_rects_for_deck_cm
+    """Local hole rectangles for VOID ``floor_hole`` placements on a spanning deck.
 
-    cells = [
-        tuple(h.cell)
-        for h in hole_placements
-        if getattr(h, "asset_id", None) == "floor_hole"
-        and getattr(h, "level", None) == getattr(deck, "level", None)
-    ]
-    return hole_rects_for_deck_cm(tuple(deck.cell), cells)
+    Rule 5.1 / Ledger F-7: use every ``covered_cells`` bay of each hole (full
+    ``size_cm`` footprint), never ``h.cell`` alone. A 1×2 / 2×1 stairwell is one
+    spanning opening — origin-only punch left stairs buried under half a deck.
+    """
+    from pae.primitives.floors import hole_rects_merged_for_deck_cm
+    from pae.trim import covered_cells
+
+    cells = set()
+    for h in hole_placements:
+        if getattr(h, "asset_id", None) != "floor_hole":
+            continue
+        if getattr(h, "level", None) != getattr(deck, "level", None):
+            continue
+        cells |= covered_cells(h)
+    return hole_rects_merged_for_deck_cm(tuple(deck.cell), cells)
 
 
 def _mesh_for_spanning_floor_deck(p, hole_placements, *, cache: Dict[str, Any]) -> Any:
@@ -1073,6 +1145,7 @@ def instance_assembly(
     """Create linked instances for each placement. Returns instance count."""
     from pae.export.manifest import placement_loc_cm
     from pae.primitives import bpy_util
+    from pae.primitives.catalog import catalog_by_id
 
     bpy_util.require_bpy()
     import bpy
@@ -1082,6 +1155,7 @@ def instance_assembly(
     if coll is None:
         coll = bpy.data.collections.get(PAE_ROOT_COLLECTION) or _clear_pae_objects()
     cache: Dict[str, Any] = {}
+    catalog = catalog_by_id()
     count = 0
     ox, oy, oz = offset_m
     hole_placements = [
@@ -1090,6 +1164,11 @@ def instance_assembly(
         if getattr(hp, "asset_id", None) == "floor_hole"
     ]
     for p in assembly.placements:
+        # ``floor_hole`` is a declarative void/cutter used above to punch the
+        # surrounding floor deck. Instancing its legacy blue frame puts solid
+        # geometry back into the opening and blocks the stair.
+        if p.asset_id == "floor_hole":
+            continue
         if is_spanning_floor_deck(p):
             # Full-size mesh with VOID openings already cut — uniform cm→m only.
             proto = _mesh_for_spanning_floor_deck(p, hole_placements, cache=cache)
@@ -1103,6 +1182,27 @@ def instance_assembly(
             loc_cm[1] * CM_TO_M + oy,
             loc_cm[2] * CM_TO_M + oz,
         )
+        # ``rotates_about_center`` makes offset_cm an XY centre. Tower arcs and
+        # caps are authored around that centre already, but ordinary wall/floor
+        # prototypes start at their min corner. Shift those prototypes back by
+        # their rotated local half-extents before instancing.
+        desc = catalog.get(p.asset_id)
+        if (
+            bool(getattr(p, "rotates_about_center", False))
+            and desc is not None
+            and getattr(desc, "origin", "min_corner") != "center"
+        ):
+            local_sx, local_sy, _local_sz = placement_instance_local_size_cm(p)
+            angle = math.radians(float(p.yaw))
+            half_x = local_sx * 0.5 * CM_TO_M
+            half_y = local_sy * 0.5 * CM_TO_M
+            rotated_half_x = math.cos(angle) * half_x - math.sin(angle) * half_y
+            rotated_half_y = math.sin(angle) * half_x + math.cos(angle) * half_y
+            loc_m = (
+                loc_m[0] - rotated_half_x,
+                loc_m[1] - rotated_half_y,
+                loc_m[2],
+            )
         # Linked duplicate shares mesh datablock.
         inst = proto.copy()
         inst.data = proto.data
@@ -1144,13 +1244,22 @@ def _apply_camera_pose(pose: Dict[str, Any]) -> None:
         bpy.context.scene.camera = cam
     cam.location = Vector(pose["location"])
     cam.rotation_euler = (target - cam.location).to_track_quat("-Z", "Y").to_euler()
+    camera_distance = (target - cam.location).length
     if pose.get("ortho"):
         cam.data.type = "ORTHO"
         cam.data.ortho_scale = float(pose["ortho_scale"])
+        # Large campuses can place the framing camera beyond Blender's 100 m
+        # default far plane, yielding a perfectly framed but completely blank
+        # render. Include the full orthographic depth with generous headroom.
+        cam.data.clip_end = max(
+            float(cam.data.clip_end),
+            camera_distance + float(cam.data.ortho_scale) * 2.0,
+        )
     else:
         cam.data.type = "PERSP"
         if hasattr(cam.data, "lens"):
             cam.data.lens = float(pose.get("lens_mm", GALLERY_CAM_LENS_MM))
+        cam.data.clip_end = max(float(cam.data.clip_end), camera_distance * 4.0)
 
 
 def _ensure_gallery_lighting() -> None:
@@ -1219,20 +1328,19 @@ def _hide_non_stair_proof_collections(*, keep: str = M2_STAIR_PROOF_COLLECTION) 
     return excluded
 
 
+def prepare_stair_proof_scene() -> Tuple[Any, Dict[str, int]]:
+    """Full PAE slate, then an empty ``PAE_M2_StairProof`` collection."""
+    cleared = clear_pae_scene()
+    coll = _ensure_collection(M2_STAIR_PROOF_COLLECTION)
+    return coll, cleared
+
+
 def _clear_stair_proof_collection():
     from pae.primitives import bpy_util
 
     bpy_util.require_bpy()
-    import bpy
-
-    _clear_proto_meshes()
-    coll = bpy.data.collections.get(M2_STAIR_PROOF_COLLECTION)
-    if coll is not None:
-        _unlink_collection_tree(coll)
-    for mesh in list(bpy.data.meshes):
-        if mesh.users == 0:
-            bpy.data.meshes.remove(mesh)
-    return _ensure_collection(M2_STAIR_PROOF_COLLECTION)
+    coll, _cleared = prepare_stair_proof_scene()
+    return coll
 
 
 def frame_camera_on_stair_proof(
@@ -1312,7 +1420,7 @@ def build_m2_stair_proof(*, write_png: bool = True) -> Dict[str, Any]:
             "note": "bpy missing - assemble/validate + camera pose only",
         }
 
-    proof_coll = _clear_stair_proof_collection()
+    proof_coll, scene_cleared = prepare_stair_proof_scene()
     n = instance_assembly(assembly, label="m2", target_coll=proof_coll)
     frame = frame_camera_on_stair_proof(assembly, collection=M2_STAIR_PROOF_COLLECTION)
     camera_pose = {k: v for k, v in frame.items() if k not in (
@@ -1335,6 +1443,7 @@ def build_m2_stair_proof(*, write_png: bool = True) -> Dict[str, Any]:
         "stair_proof_hidden": frame["stair_proof_hidden"],
         "stair_proof_visible": frame["stair_proof_visible"],
         "excluded_collections": frame["excluded_collections"],
+        "scene_cleared": scene_cleared,
         "screenshot": str(shot) if shot else None,
         "boolean_solvers": sorted(bpy_util.BOOLEAN_SOLVERS),
     }
@@ -1563,6 +1672,7 @@ def build_gallery(
     write_png: bool = True,
     gap_m: float = GALLERY_GAP_M,
     stair_proof: bool = False,
+    skip_scene_clear: bool = False,
 ) -> Dict[str, Any]:
     """Build M1–M4 into side-by-side collections under ``PAE_Gallery``.
 
@@ -1594,8 +1704,12 @@ def build_gallery(
                     "placements": len(assembly.placements),
                     "extent_m": extent,
                     "ok": report.ok,
+                    "validation_report": report,
                 }
             )
+        primary = next((r["validation_report"] for r in results if not r["ok"]), None)
+        if primary is None and results:
+            primary = results[0]["validation_report"]
         return {
             "ok": True,
             "blender": False,
@@ -1606,9 +1720,10 @@ def build_gallery(
             "per_milestone_screenshots": {},
             "stair_proof_screenshot": None,
             "note": "bpy missing - assemble/validate only",
+            "validation_report": primary,
         }
 
-    gallery_root = _clear_gallery_collections()
+    gallery_root, scene_cleared = prepare_gallery_scene(skip_clear=skip_scene_clear)
     results = []
     cursor_x_m = 0.0
     per_shots: Dict[str, str] = {}
@@ -1640,6 +1755,7 @@ def build_gallery(
                 "offset_m": offset_m,
                 "extent_m": extent,
                 "ok": report.ok,
+                "validation_report": report,
             }
         )
         if write_png:
@@ -1665,6 +1781,9 @@ def build_gallery(
     stair_proof_result = None
     if stair_proof and write_png:
         stair_proof_result = build_m2_stair_proof(write_png=True)
+    primary = next((r["validation_report"] for r in results if not r.get("ok")), None)
+    if primary is None and results:
+        primary = results[0].get("validation_report")
     return {
         "ok": True,
         "blender": True,
@@ -1674,23 +1793,33 @@ def build_gallery(
         "gap_m": gap_m,
         "screenshot": str(gallery_shot) if gallery_shot else None,
         "per_milestone_screenshots": per_shots,
+        "scene_cleared": scene_cleared,
         "stair_proof_screenshot": (
             stair_proof_result.get("screenshot") if stair_proof_result else None
         ),
         "boolean_solvers": sorted(bpy_util.BOOLEAN_SOLVERS),
+        "validation_report": primary,
     }
 
 
-def build_fortress_live(*, write_png: bool = True) -> Dict[str, Any]:
-    """Build fortress compound into ``PAE_Fortress`` and capture ``fortress_live.png``.
+def build_fortress_live(
+    *,
+    write_png: bool = True,
+    skip_scene_clear: bool = False,
+) -> Dict[str, Any]:
+    """Build ``build_fortress_compound()`` into ``PAE_Fortress`` + ``fortress_live.png``.
 
-    Uses ``resolve_fortress_compound_builder()`` (castle curtain interim until massing
-    ships ``build_fortress_compound``). Fail-closed on critical validate failures.
+    Spec preset: ``fortress_bailey_compound_spec()`` via ``pae.compound``. Fail-closed
+    on compound or validate critical failures (export/gallery policy).
+
+    When *skip_scene_clear* is True, :func:`prepare_fortress_live_scene` does not call
+    :func:`clear_pae_scene` (caller already cleared or wants to preserve siblings).
     """
     reloaded = reload_pae()
     from pae.primitives import bpy_util
 
-    assembly, report, layout, builder_name = assemble_fortress_compound()
+    assembly, report, layout = assemble_fortress_compound()
+    builder_name = "build_fortress_compound"
     bb_min, bb_max = assembly_bounds_cm(assembly)
     offset_m = (
         -bb_min[0] * CM_TO_M,
@@ -1712,9 +1841,10 @@ def build_fortress_live(*, write_png: bool = True) -> Dict[str, Any]:
             "offset_m": offset_m,
             "screenshot": None,
             "note": "bpy missing - assemble/validate only",
+            "validation_report": report,
         }
 
-    fortress_coll = _clear_fortress_collection()
+    fortress_coll, scene_cleared = prepare_fortress_live_scene(skip_clear=skip_scene_clear)
     n = instance_assembly(
         assembly,
         label="fortress",
@@ -1736,8 +1866,10 @@ def build_fortress_live(*, write_png: bool = True) -> Dict[str, Any]:
         "extent_m": assembly_footprint_extent_m(assembly),
         "offset_m": offset_m,
         "bounds_cm": {"min": bb_min, "max": bb_max},
+        "scene_cleared": scene_cleared,
         "screenshot": str(shot) if shot else None,
         "boolean_solvers": sorted(bpy_util.BOOLEAN_SOLVERS),
+        "validation_report": report,
     }
 
 

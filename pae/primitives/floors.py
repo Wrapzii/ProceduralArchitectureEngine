@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import List, Optional, Sequence, Tuple
+from typing import Iterable, List, Optional, Sequence, Set, Tuple
 
 from pae.contract import FLOOR_T_CM, MODULE_CM
 from pae.primitives.types import (
@@ -14,6 +14,7 @@ from pae.primitives.types import (
 
 Vec3 = Tuple[float, float, float]
 Face = Tuple[int, ...]
+Cell = Tuple[int, int]
 
 # Thin rim; inner void ≈ full module bay (stair footprint per cell).
 _HOLE_MARGIN_CM = 10.0
@@ -149,13 +150,40 @@ def slab_with_rect_holes_verts_faces(
     return _merge_verts_faces(parts)
 
 
+def rect_cover_cells(cells: Iterable[Cell]) -> List[Tuple[int, int, int, int]]:
+    """Cover a cell set with maximal axis-aligned rectangles ``(x0, y0, w, h)``.
+
+    Same greedy cover as assemble stairwell merge: one spanning opening per well,
+    never a rib of floor between adjacent VOID bays.
+    """
+    remaining: Set[Cell] = set(cells)
+    out: List[Tuple[int, int, int, int]] = []
+    while remaining:
+        x0, y0 = min(remaining, key=lambda c: (c[1], c[0]))
+        w = 1
+        while (x0 + w, y0) in remaining:
+            w += 1
+        h = 1
+        while all((x0 + i, y0 + h) in remaining for i in range(w)):
+            h += 1
+        for i in range(w):
+            for j in range(h):
+                remaining.discard((x0 + i, y0 + j))
+        out.append((x0, y0, w, h))
+    return out
+
+
 def hole_rects_for_deck_cm(
     deck_cell: Tuple[int, int],
     hole_cells: Sequence[Tuple[int, int]],
     *,
     margin: Optional[float] = None,
 ) -> List[Tuple[float, float, float, float]]:
-    """Local (x0,y0,x1,y1) hole rectangles for VOID cells on a spanning deck."""
+    """Local (x0,y0,x1,y1) hole rectangles — one 1×1 bay per cell (may leave ribs).
+
+    Prefer :func:`hole_rects_merged_for_deck_cm` for stairwells so a multi-bay run
+    is a single opening (Ledger F-7).
+    """
     m = _HOLE_MARGIN_CM if margin is None else margin
     dx0, dy0 = deck_cell
     rects: List[Tuple[float, float, float, float]] = []
@@ -163,6 +191,34 @@ def hole_rects_for_deck_cm(
         ox = (cx - dx0) * MODULE_CM
         oy = (cy - dy0) * MODULE_CM
         rects.append((ox + m, oy + m, ox + MODULE_CM - m, oy + MODULE_CM - m))
+    return rects
+
+
+def hole_rects_merged_for_deck_cm(
+    deck_cell: Tuple[int, int],
+    hole_cells: Sequence[Tuple[int, int]],
+    *,
+    margin: Optional[float] = None,
+) -> List[Tuple[float, float, float, float]]:
+    """Local hole rects after merging adjacent VOID cells into spanning openings.
+
+    Punching one 1×1 per cell (or only the hole's origin cell) leaves a solid rib /
+    half-run of floor over the stair — the live Blender defect F-7.
+    """
+    m = _HOLE_MARGIN_CM if margin is None else margin
+    dx0, dy0 = deck_cell
+    rects: List[Tuple[float, float, float, float]] = []
+    for x0, y0, w, h in rect_cover_cells(hole_cells):
+        ox = (x0 - dx0) * MODULE_CM
+        oy = (y0 - dy0) * MODULE_CM
+        rects.append(
+            (
+                ox + m,
+                oy + m,
+                ox + w * MODULE_CM - m,
+                oy + h * MODULE_CM - m,
+            )
+        )
     return rects
 
 

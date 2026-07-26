@@ -16,15 +16,22 @@ from pae.drum import (
     footprint_bbox,
     has_entry,
     outboard_drum_cells,
+    should_suppress_perimeter_wall_on_outboard_drum,
 )
 from pae.pipeline import run_through_assemble
 
 
-def _street():
+def _drum_assembly():
+    """Prefer street_scene; fall back to m_spiral when street stair well is blocked."""
     from pae.street_scene import build
 
     assembly, _report, _stats = build()
-    assert assembly is not None
+    if assembly is not None:
+        return assembly
+    from pae.spec import m_spiral_tower_spec
+
+    _, _, assembly, areport = run_through_assemble(m_spiral_tower_spec())
+    assert assembly is not None and areport.ok, [f.message for f in areport.failures]
     return assembly
 
 
@@ -37,18 +44,18 @@ def test_footprint_bbox_inclusive():
 
 
 def test_street_has_drum_cells():
-    a = _street()
+    a = _drum_assembly()
     assert drum_cells(a), "street gate tower should produce drum cells"
 
 
 def test_outboard_is_a_subset_of_drum():
-    a = _street()
+    a = _drum_assembly()
     assert outboard_drum_cells(a) <= drum_cells(a)
 
 
 def test_outboard_cells_lie_outside_the_body_bbox():
     """The whole point: an outboard cell is one the box does not already enclose."""
-    a = _street()
+    a = _drum_assembly()
     box = footprint_bbox(body_cells(a))
     if box is None:
         pytest.skip("no body cells")
@@ -83,7 +90,7 @@ def test_inboard_tower_yields_no_outboard_cells():
 
 def test_drum_levels_reports_full_height():
     """The helix has to climb this. If it stops short, that is the number to compare."""
-    a = _street()
+    a = _drum_assembly()
     levels = drum_levels(a)
     if not levels:
         pytest.skip("no drum")
@@ -93,5 +100,19 @@ def test_drum_levels_reports_full_height():
 
 
 def test_has_entry_is_false_for_a_cell_with_no_door():
-    a = _street()
+    a = _drum_assembly()
     assert has_entry(a, (10 ** 6, 10 ** 6)) is False
+
+
+def test_suppress_perimeter_wall_when_probe_or_outward_is_outboard_drum():
+    """North boundary line: drum sits on opening probe, not on wall cell."""
+    outboard = {(-3, 9)}
+    assert should_suppress_perimeter_wall_on_outboard_drum(
+        (-3, 10), "north", outboard
+    )
+    assert not should_suppress_perimeter_wall_on_outboard_drum(
+        (-2, 10), "north", outboard
+    )
+    assert should_suppress_perimeter_wall_on_outboard_drum(
+        (5, 3), "west", {(4, 3)}
+    )

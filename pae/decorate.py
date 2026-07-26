@@ -38,6 +38,10 @@ def _interior_cells(layers: dict[int, FloorPlanLayer]) -> List[Tuple[int, Tuple[
                     CellRole.INTERIOR,
                     CellRole.CORRIDOR,
                     CellRole.CLASSROOM,
+                    CellRole.ROOM,
+                    CellRole.HALL,
+                    CellRole.SERVICE,
+                    CellRole.ARCADE,
                 ):
                     cells.append((level, (ox + lx, oy + ly)))
     return cells

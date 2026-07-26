@@ -225,6 +225,15 @@ def test_blade_through_roof_still_critical_roof_penetration():
     assert "blade_wall" in hits[0].message
 
 
+def test_compound_hips_skip_cross_building_valley_join():
+    """Fortress campus: separate building hips must not require shared valleys."""
+    from pae.compound import build_fortress_compound
+
+    assembly, _, report = build_fortress_compound()
+    assert report.ok, [f.message for f in report.failures]
+    assert _check_roof_valley_join(assembly) == []
+
+
 def test_stripped_valleys_fail_roof_valley_join():
     """Broken fixture: L-plan hip with valleys removed — Existence check fires."""
     spec = _with_roof(m4_l_plan_spec(), RoofSpec(kind="hip", pitch=1.0))

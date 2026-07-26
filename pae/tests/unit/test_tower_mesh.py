@@ -6,7 +6,7 @@ import math
 
 import pytest
 
-from pae.contract import MODULE_CM, STOREY_CM, TOL_CM, WALL_T_CM
+from pae.contract import MODULE_CM, STOREY_CM, TOL_CM, WALL_T_CM, storey_datum_z_cm
 from pae.primitives import get
 from pae.primitives.bpy_util import (
     ARC_SEGMENTS_FULL,
@@ -203,9 +203,9 @@ def test_tower_crown_cap_stack_z_offsets():
     crowns = [p for p in assembly.placements if p.asset_id == "tower_crown"]
     caps = [p for p in assembly.placements if p.asset_id == "tower_cap"]
     assert len(junctions) == 1 and len(crowns) == 1 and len(caps) == 1
-    j_z = junctions[0].level * STOREY_CM + junctions[0].offset_cm[2]
-    crown_z = crowns[0].level * STOREY_CM + crowns[0].offset_cm[2]
-    cap_z = caps[0].level * STOREY_CM + caps[0].offset_cm[2]
+    j_z = storey_datum_z_cm(junctions[0].level) + junctions[0].offset_cm[2]
+    crown_z = storey_datum_z_cm(crowns[0].level) + crowns[0].offset_cm[2]
+    cap_z = storey_datum_z_cm(caps[0].level) + caps[0].offset_cm[2]
     assert j_z >= drum_top_z - 1.0
     assert crown_z == pytest.approx(j_z + junction_desc.size_cm[2], abs=2.0)
     assert cap_z == pytest.approx(crown_z + crown_desc.size_cm[2], abs=2.0)

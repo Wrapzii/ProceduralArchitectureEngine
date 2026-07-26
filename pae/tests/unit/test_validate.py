@@ -5,12 +5,20 @@ from __future__ import annotations
 from dataclasses import replace
 
 from pae.assemble import assemble
+from pae.assembly_types import Assembly
 from pae.contract import MODULE_CM, STOREY_CM, TOL_CM, WALL_T_CM, placement_world_aabb, rotation_offset_cm
 from pae.plan import plan
 from pae.spec import load_style, school_academy_spec
 from pae.solver import solve
 from pae.tests.fixtures.broken_all_defects import EXPECTED_CHECKS, make_broken_assembly
 from pae.validate import validate
+
+
+def test_empty_assembly_fails_closed():
+    _, report = validate(Assembly(placements=[]))
+    assert not report.ok
+    hits = [f for f in report.critical if f.check == "assembly_nonempty"]
+    assert hits
 
 
 def test_broken_fixture_fails_validation():

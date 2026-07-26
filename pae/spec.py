@@ -149,6 +149,12 @@ class TowerSpec:
     storeys: int
     attached_to: str = "corner"  # wall | corner
     stair_kind: str = ""  # "" | spiral — drum vertical circulation
+    #: Outer drum radius in module units. The legacy tower primitive already has
+    #: radius=1 (8 m diameter); larger values create genuinely habitable drums.
+    radius_bays: float = 1.0
+    shape: str = "round"  # round | square
+    cap_style: str = "auto"  # auto | flat | cone | square_spire
+    spire_height_storeys: Optional[float] = None
 
 
 @dataclass
@@ -269,6 +275,25 @@ class BuildingSpec:
     building_class: Optional[str] = None
     #: Optional envelope / monumental wall span (storeys). None → ``storeys``.
     wall_height_storeys: Optional[float] = None
+    # --- Master Plan Stage A/B (Structure / LevelSpec) ----------------------
+    #: Declared structure identity — stamped as ``structure:<id>`` on pieces.
+    structure_id: Optional[str] = None
+    #: Foundation mask (identity). Empty → union of level built cells / footprint.
+    foundation_cells: Tuple[Tuple[int, int], ...] = ()
+    #: Per-level height in storey units (default all 1). Datum = sum below.
+    level_height_units: Optional[Tuple[int, ...]] = None
+    #: Per-level built cell masks (upper levels may be a subset).
+    level_cells: Optional[Tuple[Tuple[Tuple[int, int], ...], ...]] = None
+    #: Per-level open-to-below / void cells (``.`` marks).
+    level_void_cells: Optional[Tuple[Tuple[Tuple[int, int], ...], ...]] = None
+    #: Optional wall style id per level (e.g. arcade).
+    level_wall_styles: Optional[Tuple[Optional[str], ...]] = None
+    #: Optional window shape tag per level (Stage H — lancet, round, oculus, …).
+    level_window_tags: Optional[Tuple[Optional[str], ...]] = None
+    #: Named program rectangles per level, preserved from StructureSpec.
+    level_programs: Optional[
+        Tuple[Dict[str, Tuple[Tuple[int, int, int, int], ...]], ...]
+    ] = None
 
 
 def building_wall_height_storeys(spec: BuildingSpec) -> float:
@@ -433,6 +458,12 @@ def _scan_forbidden_keys(node: Any, path: str = "") -> List[str]:
     return hits
 
 
+def _reject_unknown_keys(raw: dict, allowed: Set[str], label: str) -> None:
+    unknown = sorted(set(raw) - allowed)
+    if unknown:
+        raise ValueError(f"{label} contains unknown field(s): {', '.join(unknown)}")
+
+
 def _as_int_pair(value: Any, label: str) -> Tuple[int, int]:
     if not isinstance(value, (list, tuple)) or len(value) != 2:
         raise ValueError(f"{label} must be a [x, y] cell pair")
@@ -468,11 +499,27 @@ def _validate_school_footprint(
 
 
 def _parse_footprint(raw: dict) -> FootprintSpec:
+    _reject_unknown_keys(
+        raw,
+        {"kind", "bays_x", "bays_y", "wing_depth", "courtyard", "cells"},
+        "footprint",
+    )
     kind = str(raw.get("kind", "rect"))
-    if kind not in ("rect", "L", "U", "courtyard", "compound", "school"):
+    if kind not in ("rect", "L", "U", "courtyard", "compound", "school", "cells"):
         raise ValueError(f"unknown footprint kind: {kind}")
-    bays_x = int(raw["bays_x"])
-    bays_y = int(raw["bays_y"])
+    cells_raw = raw.get("cells") or []
+    cells = tuple(_as_int_pair(c, "footprint.cells") for c in cells_raw)
+    if kind == "cells" and not cells:
+        raise ValueError("footprint.cells must be non-empty when kind='cells'")
+    if cells:
+        xs = [c[0] for c in cells]
+        ys = [c[1] for c in cells]
+        default_bays_x = max(xs) - min(xs) + 1
+        default_bays_y = max(ys) - min(ys) + 1
+    else:
+        default_bays_x = default_bays_y = 0
+    bays_x = int(raw.get("bays_x", default_bays_x))
+    bays_y = int(raw.get("bays_y", default_bays_y))
     if bays_x < 1 or bays_y < 1:
         raise ValueError("bays_x and bays_y must be >= 1")
     wing_depth = int(raw.get("wing_depth", 2))
@@ -487,6 +534,7 @@ def _parse_footprint(raw: dict) -> FootprintSpec:
         bays_y=bays_y,
         wing_depth=wing_depth,
         courtyard=courtyard,
+        cells=cells,
     )
 
 
@@ -499,6 +547,20 @@ def _parse_towers(raw: Any) -> List[TowerSpec]:
     for item in raw:
         if not isinstance(item, dict):
             raise ValueError("tower entries must be objects")
+        _reject_unknown_keys(
+            item,
+            {
+                "cell",
+                "storeys",
+                "attached_to",
+                "stair_kind",
+                "radius_bays",
+                "shape",
+                "cap_style",
+                "spire_height_storeys",
+            },
+            "tower",
+        )
         attached = str(item.get("attached_to", "corner"))
         if attached not in ("wall", "corner"):
             raise ValueError(f"tower.attached_to must be wall|corner, got {attached}")
@@ -507,12 +569,42 @@ def _parse_towers(raw: Any) -> List[TowerSpec]:
             raise ValueError(
                 f"tower.stair_kind must be '' or 'spiral', got {raw_stair!r}"
             )
+        radius_bays = float(item.get("radius_bays", 1.0))
+        if not 0.5 <= radius_bays <= 16.0:
+            raise ValueError(
+                f"tower.radius_bays must be in [0.5, 16], got {radius_bays}"
+            )
+        shape = str(item.get("shape", "round")).lower()
+        if shape not in ("round", "square"):
+            raise ValueError(f"tower.shape must be round|square, got {shape!r}")
+        cap_style = str(item.get("cap_style", "auto")).lower()
+        if cap_style not in ("auto", "flat", "cone", "square_spire"):
+            raise ValueError(
+                "tower.cap_style must be auto|flat|cone|square_spire, "
+                f"got {cap_style!r}"
+            )
+        spire_height_raw = item.get("spire_height_storeys")
+        spire_height_storeys = (
+            None if spire_height_raw is None else float(spire_height_raw)
+        )
+        if (
+            spire_height_storeys is not None
+            and not 0.25 <= spire_height_storeys <= 20.0
+        ):
+            raise ValueError(
+                "tower.spire_height_storeys must be in [0.25, 20], "
+                f"got {spire_height_storeys}"
+            )
         out.append(
             TowerSpec(
                 cell=_as_int_pair(item["cell"], "tower.cell"),
                 storeys=int(item["storeys"]),
                 attached_to=attached,
                 stair_kind=raw_stair,
+                radius_bays=radius_bays,
+                shape=shape,
+                cap_style=cap_style,
+                spire_height_storeys=spire_height_storeys,
             )
         )
     return out
@@ -523,6 +615,7 @@ def _parse_roof(raw: Any) -> RoofSpec:
         return RoofSpec()
     if not isinstance(raw, dict):
         raise ValueError("roof must be an object")
+    _reject_unknown_keys(raw, {"kind", "pitch"}, "roof")
     kind = str(raw.get("kind", "flat"))
     pitch = float(raw.get("pitch", 1.0))
     if kind not in SUPPORTED_ROOF_KINDS:
@@ -540,6 +633,7 @@ def _parse_circulation(raw: Any) -> CirculationSpec:
         return CirculationSpec()
     if not isinstance(raw, dict):
         raise ValueError("circulation must be an object")
+    _reject_unknown_keys(raw, {"stair_kind", "stair_cells"}, "circulation")
     cells_raw = raw.get("stair_cells") or []
     cells = [_as_int_pair(c, "stair_cells") for c in cells_raw]
     stair_kind = str(raw.get("stair_kind", "straight")).lower()
@@ -563,6 +657,11 @@ def _parse_rooms(raw: Any) -> List[RoomSpec]:
     for item in raw:
         if not isinstance(item, dict):
             raise ValueError("room entries must be objects")
+        _reject_unknown_keys(
+            item,
+            {"name", "kind", "area_bays", "double_height", "height_storeys"},
+            "room",
+        )
         kind = str(item.get("kind", "")).lower()
         if kind not in ROOM_KINDS:
             kinds = ", ".join(sorted(ROOM_KINDS))
@@ -590,11 +689,61 @@ def _parse_rooms(raw: Any) -> List[RoomSpec]:
     return out
 
 
+def _parse_level_programs(
+    raw: Any,
+) -> Optional[Tuple[Dict[str, Tuple[Tuple[int, int, int, int], ...]], ...]]:
+    """Parse named per-storey room rectangles from a BuildingSpec payload."""
+    if raw is None:
+        return None
+    if not isinstance(raw, list):
+        raise ValueError("level_programs must be a list of storey objects")
+    levels: List[Dict[str, Tuple[Tuple[int, int, int, int], ...]]] = []
+    for level, item in enumerate(raw):
+        if not isinstance(item, dict):
+            raise ValueError(f"level_programs[{level}] must be an object")
+        programs: Dict[str, Tuple[Tuple[int, int, int, int], ...]] = {}
+        for raw_name, raw_regions in item.items():
+            name = str(raw_name).strip()
+            if not name:
+                raise ValueError(f"level_programs[{level}] has an empty room name")
+            if not isinstance(raw_regions, list):
+                raise ValueError(
+                    f"level_programs[{level}].{name} must be a list of rectangles"
+                )
+            regions: List[Tuple[int, int, int, int]] = []
+            for region_index, region in enumerate(raw_regions):
+                if not isinstance(region, (list, tuple)) or len(region) != 4:
+                    raise ValueError(
+                        f"level_programs[{level}].{name}[{region_index}] "
+                        "must be [x0, y0, x1, y1]"
+                    )
+                x0, y0, x1, y1 = (int(v) for v in region)
+                if x1 < x0 or y1 < y0:
+                    raise ValueError(
+                        f"level_programs[{level}].{name}[{region_index}] "
+                        "has reversed bounds"
+                    )
+                regions.append((x0, y0, x1, y1))
+            programs[name] = tuple(regions)
+        levels.append(programs)
+    return tuple(levels)
+
+
 def _parse_openings(raw: Any) -> OpeningPolicy:
     if raw is None:
         return OpeningPolicy()
     if not isinstance(raw, dict):
         raise ValueError("openings must be an object")
+    _reject_unknown_keys(
+        raw,
+        {
+            "windows_per_bay",
+            "doors_ground",
+            "windows_ground",
+            "skip_ground_windows",
+        },
+        "openings",
+    )
     windows_ground = raw.get("windows_ground")
     return OpeningPolicy(
         windows_per_bay=int(raw.get("windows_per_bay", 1)),
@@ -613,6 +762,11 @@ def _parse_entrances(raw: Any) -> List[EntranceSpec]:
     for i, item in enumerate(raw):
         if not isinstance(item, dict):
             raise ValueError(f"entrances[{i}] must be an object")
+        _reject_unknown_keys(
+            item,
+            {"role", "facade", "bay", "ensemble", "storey"},
+            f"entrances[{i}]",
+        )
         role = str(item.get("role", "")).lower()
         if role not in ENTRANCE_ROLES:
             known = ", ".join(sorted(ENTRANCE_ROLES))
@@ -684,6 +838,28 @@ def load_spec(data: dict) -> Tuple[Optional[BuildingSpec], Report]:
         return None, Report.from_failures(failures)
 
     try:
+        _reject_unknown_keys(
+            data,
+            {
+                "name",
+                "style",
+                "footprint",
+                "storeys",
+                "storey_use",
+                "towers",
+                "roof",
+                "circulation",
+                "openings",
+                "entrances",
+                "seed",
+                "ground_slab",
+                "rooms",
+                "building_class",
+                "wall_height_storeys",
+                "level_programs",
+            },
+            "BuildingSpec",
+        )
         footprint = _parse_footprint(data.get("footprint") or {})
         storeys = int(data["storeys"])
         if storeys < 1:
@@ -724,6 +900,7 @@ def load_spec(data: dict) -> Tuple[Optional[BuildingSpec], Report]:
             rooms=_parse_rooms(data.get("rooms")),
             building_class=building_class,
             wall_height_storeys=wall_height_storeys,
+            level_programs=_parse_level_programs(data.get("level_programs")),
         )
     except (KeyError, TypeError, ValueError) as exc:
         failures.append(
@@ -852,6 +1029,98 @@ def m2_two_storey_stair_dict(*, seed: int = 2) -> dict:
     }
 
 
+def roomed_house_structure_spec(*, seed: int = 31):
+    """Two-storey diagnostic house with explicit rooms, hall, doors, and stair."""
+    from pae.structure_spec import LevelSpec, StructureSpec
+
+    sketch = (
+        "##########\n"
+        "######SS##\n"
+        "##########\n"
+        "##########\n"
+        "##########\n"
+        "##########\n"
+        "##########\n"
+        "##########\n"
+    )
+    return StructureSpec(
+        name="roomed_house",
+        style="townhouse",
+        seed=seed,
+        levels=[
+            LevelSpec(
+                sketch=sketch,
+                program={
+                    "living_room": [(1, 1, 4, 3)],
+                    "kitchen": [(5, 1, 8, 3)],
+                    "dining_room": [(1, 4, 4, 6)],
+                    "central_hall": [(5, 4, 8, 6)],
+                },
+            ),
+            LevelSpec(
+                sketch=sketch,
+                program={
+                    "bedroom_west": [(1, 1, 4, 3)],
+                    "bedroom_east": [(5, 1, 8, 3)],
+                    "bathroom": [(1, 4, 4, 6)],
+                    "landing": [(5, 4, 8, 6)],
+                },
+            ),
+        ],
+        roof_kind="flat",
+        stair_kind="straight",
+        building_class="house",
+    )
+
+
+def joined_wings_structure_spec(*, seed: int = 47):
+    """Two abutting masses authored as one foundation and one interior."""
+    from pae.structure_spec import LevelSpec, StructureSpec
+
+    sketch = (
+        "########      \n"
+        "#####SS#######\n"
+        "##############\n"
+        "##############\n"
+        "##############\n"
+        "##############\n"
+        "##############\n"
+        "########      \n"
+    )
+    return StructureSpec(
+        name="joined_wings",
+        style="townhouse",
+        seed=seed,
+        levels=[
+            LevelSpec(
+                sketch=sketch,
+                program={
+                    # Central hall spans the rect-cover seam at x=8. Rooms in
+                    # both masses open onto it, but no party wall may divide it.
+                    "central_hall": [(5, 1, 9, 6)],
+                    "drawing_room": [(1, 1, 4, 3)],
+                    "dining_room": [(1, 4, 4, 6)],
+                    "library": [(10, 2, 12, 3)],
+                    "office": [(10, 4, 12, 5)],
+                },
+            ),
+            LevelSpec(
+                sketch=sketch,
+                program={
+                    "central_landing": [(5, 1, 9, 6)],
+                    "bedroom_west": [(1, 1, 4, 3)],
+                    "bedroom_north": [(1, 4, 4, 6)],
+                    "bedroom_east": [(10, 2, 12, 3)],
+                    "bathroom": [(10, 4, 12, 5)],
+                },
+            ),
+        ],
+        roof_kind="flat",
+        stair_kind="straight",
+        building_class="generic",
+    )
+
+
 def m1_box_house_dict(*, seed: int = 1) -> dict:
     """JSON-serialisable form of the M1 factory (for loader round-trips)."""
     spec = m1_box_house_spec(seed=seed)
@@ -931,6 +1200,11 @@ def m3_keep_tower_dict(*, seed: int = 3) -> dict:
                 "cell": list(t.cell),
                 "storeys": t.storeys,
                 "attached_to": t.attached_to,
+                "stair_kind": t.stair_kind,
+                "radius_bays": t.radius_bays,
+                "shape": t.shape,
+                "cap_style": t.cap_style,
+                "spire_height_storeys": t.spire_height_storeys,
             }
             for t in spec.towers
         ],
@@ -1034,6 +1308,153 @@ def m_spiral_tower_dict(*, seed: int = 31) -> dict:
     data["name"] = spec.name
     data["circulation"]["stair_kind"] = "spiral"
     return data
+
+
+def habitable_round_tower_spec(*, seed: int = 32) -> BuildingSpec:
+    """Three-storey manor joined to a large, four-storey round room tower.
+
+    The radius-two drum has a 16 m exterior diameter. A compact spiral core is
+    enclosed by doorway-bearing partitions, leaving an annular occupied room on
+    every level and a real hall↔tower doorway at each shared landing.
+    """
+    return BuildingSpec(
+        name="habitable_round_tower",
+        style="keep",
+        footprint=FootprintSpec(kind="rect", bays_x=8, bays_y=6),
+        storeys=3,
+        storey_use=["hall", "hall", "hall"],
+        towers=[
+            TowerSpec(
+                cell=(-1, 2),
+                storeys=4,
+                attached_to="wall",
+                stair_kind="spiral",
+                radius_bays=2,
+            )
+        ],
+        roof=RoofSpec(kind="pitched", pitch=1.05),
+        circulation=CirculationSpec(stair_kind="straight", stair_cells=[]),
+        openings=OpeningPolicy(
+            windows_per_bay=1,
+            doors_ground=1,
+            windows_ground=None,
+            skip_ground_windows=False,
+        ),
+        seed=seed,
+        ground_slab=True,
+        building_class="manor",
+        level_programs=(
+            {
+                "entrance_hall": ((1, 1, 3, 4),),
+                "great_room": ((4, 1, 6, 4),),
+            },
+            {
+                "upper_landing": ((1, 1, 3, 4),),
+                "solar": ((4, 1, 6, 4),),
+            },
+            {
+                "upper_landing": ((1, 1, 3, 4),),
+                "bedchamber": ((4, 1, 6, 4),),
+            },
+        ),
+    )
+
+
+def tiny_round_spire_spec(*, seed: int = 33) -> BuildingSpec:
+    """Compact two-storey range with a four-metre-diameter stair turret."""
+    return BuildingSpec(
+        name="tiny_round_spire",
+        style="keep",
+        footprint=FootprintSpec(kind="rect", bays_x=4, bays_y=3),
+        storeys=2,
+        storey_use=["hall", "hall"],
+        towers=[
+            TowerSpec(
+                cell=(-1, 1),
+                storeys=4,
+                attached_to="wall",
+                stair_kind="spiral",
+                radius_bays=0.5,
+                shape="round",
+                cap_style="cone",
+                spire_height_storeys=1.5,
+            )
+        ],
+        roof=RoofSpec(kind="pitched", pitch=1.0),
+        circulation=CirculationSpec(stair_kind="straight", stair_cells=[]),
+        openings=OpeningPolicy(windows_per_bay=1, doors_ground=1),
+        seed=seed,
+        ground_slab=True,
+        # Mixed compact hall stair + attached turret spiral.
+        building_class="generic",
+    )
+
+
+def small_square_spire_spec(*, seed: int = 36) -> BuildingSpec:
+    """Compact range with a six-metre square stair turret and pyramid roof."""
+    return BuildingSpec(
+        name="small_square_spire",
+        style="keep",
+        footprint=FootprintSpec(kind="rect", bays_x=4, bays_y=3),
+        storeys=2,
+        storey_use=["hall", "hall"],
+        towers=[
+            TowerSpec(
+                cell=(-1, 1),
+                storeys=4,
+                attached_to="wall",
+                stair_kind="spiral",
+                radius_bays=0.75,
+                shape="square",
+                cap_style="square_spire",
+                spire_height_storeys=2.0,
+            )
+        ],
+        roof=RoofSpec(kind="pitched", pitch=1.0),
+        circulation=CirculationSpec(stair_kind="straight", stair_cells=[]),
+        openings=OpeningPolicy(windows_per_bay=1, doors_ground=1),
+        seed=seed,
+        ground_slab=True,
+        building_class="generic",
+    )
+
+
+def square_spire_tower_spec(*, seed: int = 34) -> BuildingSpec:
+    """A multi-storey square stair tower under a tall pyramidal spire."""
+    spec = habitable_round_tower_spec(seed=seed)
+    spec.name = "square_spire_tower"
+    spec.towers = [
+        TowerSpec(
+            cell=(-1, 2),
+            storeys=5,
+            attached_to="wall",
+            stair_kind="spiral",
+            radius_bays=1.5,
+            shape="square",
+            cap_style="square_spire",
+            spire_height_storeys=3.0,
+        )
+    ]
+    return spec
+
+
+def giant_lighthouse_spec(*, seed: int = 35) -> BuildingSpec:
+    """A seven-storey, 28-metre-diameter lighthouse-scale room tower."""
+    spec = habitable_round_tower_spec(seed=seed)
+    spec.name = "giant_lighthouse"
+    spec.towers = [
+        TowerSpec(
+            cell=(-1, 2),
+            storeys=7,
+            attached_to="wall",
+            stair_kind="spiral",
+            radius_bays=3.5,
+            shape="round",
+            cap_style="cone",
+            spire_height_storeys=2.0,
+        )
+    ]
+    return spec
 
 
 def m4_l_plan_spec(*, seed: int = 4) -> BuildingSpec:
@@ -1248,6 +1669,40 @@ def school_academy_spec(*, seed: int = 70) -> BuildingSpec:
             ),
         ],
         building_class="academy",
+        level_programs=(
+            {
+                "great_hall": ((4, 1, 11, 3),),
+                "reception": ((1, 1, 3, 2),),
+                "cloakroom": ((1, 3, 3, 4),),
+                "headmaster_office": ((12, 1, 14, 2),),
+                "faculty_room": ((12, 3, 14, 4),),
+                "admin_corridor": ((3, 10, 14, 10),),
+                "library": ((4, 11, 8, 12),),
+                "staff_room": ((9, 11, 14, 12),),
+                "archive_west": ((3, 9, 4, 9),),
+                "archive_east": ((11, 9, 14, 9),),
+            },
+            {
+                "great_hall_gallery": ((4, 1, 11, 3),),
+                "tutorial_west": ((1, 1, 3, 4),),
+                "tutorial_east": ((12, 1, 14, 4),),
+                "admin_corridor": ((3, 10, 14, 10),),
+                "science_lab": ((4, 11, 8, 12),),
+                "art_room": ((9, 11, 14, 12),),
+                "store_west": ((3, 9, 4, 9),),
+                "store_east": ((11, 9, 14, 9),),
+            },
+            {
+                "upper_hall": ((4, 1, 11, 3),),
+                "study_west": ((1, 1, 3, 4),),
+                "study_east": ((12, 1, 14, 4),),
+                "admin_corridor": ((3, 10, 14, 10),),
+                "dormitory_west": ((4, 11, 8, 12),),
+                "dormitory_east": ((9, 11, 14, 12),),
+                "bathroom_west": ((3, 9, 4, 9),),
+                "bathroom_east": ((11, 9, 14, 9),),
+            },
+        ),
     )
 
 
@@ -1659,4 +2114,11 @@ def school_academy_dict(*, seed: int = 70) -> dict:
             for r in spec.rooms
         ],
         "wall_height_storeys": spec.wall_height_storeys,
+        "level_programs": [
+            {
+                name: [list(region) for region in regions]
+                for name, regions in level.items()
+            }
+            for level in (spec.level_programs or ())
+        ],
     }
