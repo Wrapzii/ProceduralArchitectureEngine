@@ -12,7 +12,7 @@ def test_bl_info_present():
     meta = bl_info_metadata()
     assert meta["name"] == "Procedural Architecture Engine"
     assert meta["blender"] >= (4, 0, 0)
-    assert bl_info["version"] == (0, 2, 0)
+    assert bl_info["version"] == (0, 2, 1)
 
 
 def test_addon_modules_import_without_bpy():
