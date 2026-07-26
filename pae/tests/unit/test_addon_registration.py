@@ -46,6 +46,7 @@ def test_expected_operator_ids_registered_in_source():
         "pae.run_pipeline_stage",
         "pae.load_m1_preset",
         "pae.load_school_preset",
+        "pae.generate_facade",
     }
     src_root = Path(__file__).resolve().parents[2] / "addon" / "operators"
     text = "\n".join(p.read_text(encoding="utf-8") for p in src_root.glob("*.py"))
@@ -58,7 +59,14 @@ def test_panel_ids():
 
     src = Path(__file__).resolve().parents[2] / "addon" / "panels.py"
     text = src.read_text(encoding="utf-8")
-    for panel_id in ("PAE_PT_structure", "PAE_PT_levels", "PAE_PT_spec", "PAE_PT_generate", "PAE_PT_validate"):
+    for panel_id in (
+        "PAE_PT_structure",
+        "PAE_PT_levels",
+        "PAE_PT_facade_grammar",
+        "PAE_PT_spec",
+        "PAE_PT_generate",
+        "PAE_PT_validate",
+    ):
         assert panel_id in text
     if panel_classes:
         ids = {cls.bl_idname for cls in panel_classes}
@@ -83,6 +91,10 @@ def test_scene_property_fields_declared_in_source():
         "structure_use_foundation",
         "structure_foundation_sketch",
         "structure_yaml_path",
+        "facade_archetype",
+        "facade_frontage_m",
+        "facade_wealth",
+        "facade_row_context",
     ):
         assert f"{field}:" in src, f"missing PAESceneProperties.{field}"
     assert PAESceneProperties is None or hasattr(PAESceneProperties, "roof_kind")

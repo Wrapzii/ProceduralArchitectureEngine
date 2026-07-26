@@ -228,6 +228,75 @@ if HAS_BPY:
                 report_operator_exception(self, props, exc)
                 return {"CANCELLED"}
 
+    class PAE_OT_generate_facade(bpy.types.Operator):
+        bl_idname = "pae.generate_facade"
+        bl_label = "Generate Georgian Facade"
+        bl_description = "Build townhouse from Facade Grammar sliders (shared door/stair ids)"
+        bl_options = {"REGISTER"}
+
+        def execute(self, context):
+            props = scene_props(context)
+            try:
+                maybe_clear_pae_scene(props)
+                from pae.blender_build import (
+                    CM_TO_M,
+                    assembly_bounds_cm,
+                    clear_pae_scene,
+                    instance_assembly,
+                )
+                from pae.facade_grammar import FacadeParams, build_from_params, resolve_storeys
+
+                params = FacadeParams(
+                    seed=int(props.seed),
+                    archetype=str(props.facade_archetype or "georgian_merchant"),
+                    frontage_m=float(props.facade_frontage_m),
+                    depth_m=float(props.facade_depth_m),
+                    storeys=resolve_storeys(int(props.storeys)),
+                    wealth=int(props.facade_wealth),
+                    weathering=float(props.facade_weathering),
+                    lit_windows=float(props.facade_lit_windows),
+                    row_context=str(props.facade_row_context),
+                )
+                _massing, _plan, assembly, report, _out = build_from_params(
+                    params, validate_assembly=False
+                )
+                if assembly is not None and assembly.placements:
+                    import bpy
+
+                    coll_name = "PAE_GeorgianTownhouse"
+                    clear_pae_scene()
+                    coll = bpy.data.collections.get(coll_name)
+                    if coll is None:
+                        coll = bpy.data.collections.new(coll_name)
+                        bpy.context.scene.collection.children.link(coll)
+                    bb_min, _bb_max = assembly_bounds_cm(assembly)
+                    offset_m = (
+                        -bb_min[0] * CM_TO_M,
+                        -bb_min[1] * CM_TO_M,
+                        -bb_min[2] * CM_TO_M,
+                    )
+                    instance_assembly(
+                        assembly,
+                        label="facade",
+                        target_coll=coll,
+                        offset_m=offset_m,
+                    )
+                    sync_assembly_preview(assembly)
+                store_validation_report(props, report)
+                n = len(assembly.placements) if assembly else 0
+                ok, _msg = report_validation_result(
+                    self, props, report, prefix="Facade"
+                )
+                props.last_pipeline_message = (
+                    f"Facade grammar OK ({n} placements, PAE_GeorgianTownhouse)"
+                    if ok
+                    else f"Facade grammar — {len(report.critical)} critical"
+                )
+                return {"FINISHED"} if ok else {"CANCELLED"}
+            except (RuntimeError, ValueError) as exc:
+                report_operator_exception(self, props, exc)
+                return {"CANCELLED"}
+
     classes = (
         PAE_OT_run_pipeline_stage,
         PAE_OT_generate_current_spec,
@@ -238,6 +307,7 @@ if HAS_BPY:
         PAE_OT_build_school,
         PAE_OT_build_gallery,
         PAE_OT_reload_pae,
+        PAE_OT_generate_facade,
     )
 else:
     classes = tuple()

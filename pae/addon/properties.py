@@ -154,6 +154,53 @@ if HAS_BPY:
             subtype="FILE_PATH",
             default="//structure.yaml",
         )
+        # --- Facade grammar (Georgian townhouse sliders) ----------------------
+        facade_archetype: StringProperty(  # type: ignore
+            name="Archetype",
+            default="georgian_merchant",
+        )
+        facade_frontage_m: FloatProperty(  # type: ignore
+            name="Frontage (m)",
+            default=10.0,
+            min=0.0,
+            max=48.0,
+        )
+        facade_depth_m: FloatProperty(  # type: ignore
+            name="Depth (m)",
+            default=8.0,
+            min=0.0,
+            max=48.0,
+        )
+        facade_wealth: IntProperty(  # type: ignore
+            name="Wealth",
+            description="Tier 1–5 (-1 = auto)",
+            default=3,
+            min=-1,
+            max=5,
+        )
+        facade_weathering: FloatProperty(  # type: ignore
+            name="Weathering",
+            description="-1 = auto from wealth",
+            default=-1.0,
+            min=-1.0,
+            max=1.0,
+        )
+        facade_lit_windows: FloatProperty(  # type: ignore
+            name="Lit Windows",
+            default=0.4,
+            min=0.0,
+            max=1.0,
+        )
+        facade_row_context: EnumProperty(  # type: ignore
+            name="Row Context",
+            items=(
+                ("freestanding", "Freestanding", ""),
+                ("end_left", "End Left", ""),
+                ("end_right", "End Right", ""),
+                ("mid", "Mid Row", ""),
+            ),
+            default=2,
+        )
 
     classes = (PAELevelSpecItem, PAESceneProperties,)
 

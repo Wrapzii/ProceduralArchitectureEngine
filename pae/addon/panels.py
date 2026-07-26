@@ -79,6 +79,31 @@ if HAS_BPY:
             box.prop(level, "wall_style")
             box.prop(level, "sketch", text="")
 
+    class PAE_PT_facade_grammar(bpy.types.Panel):
+        bl_label = "Facade Grammar (Georgian)"
+        bl_idname = "PAE_PT_facade_grammar"
+        bl_space_type = "VIEW_3D"
+        bl_region_type = "UI"
+        bl_category = "PAE"
+        bl_order = 3
+
+        def draw(self, context):
+            props = context.scene.pae
+            layout = self.layout
+            layout.prop(props, "facade_archetype", text="Archetype")
+            layout.prop(props, "seed")
+            row = layout.row(align=True)
+            row.prop(props, "facade_frontage_m", text="Frontage m")
+            row.prop(props, "facade_depth_m", text="Depth m")
+            layout.prop(props, "storeys")
+            row = layout.row(align=True)
+            row.prop(props, "facade_wealth")
+            row.prop(props, "facade_weathering")
+            layout.prop(props, "facade_lit_windows")
+            layout.prop(props, "facade_row_context", text="Row")
+            layout.separator()
+            layout.operator("pae.generate_facade", icon="MOD_BUILD")
+
     class PAE_PT_spec(bpy.types.Panel):
         bl_label = "Spec (Legacy)"
         bl_idname = "PAE_PT_spec"
@@ -253,6 +278,7 @@ if HAS_BPY:
     classes = (
         PAE_PT_structure,
         PAE_PT_levels,
+        PAE_PT_facade_grammar,
         PAE_PT_spec,
         PAE_PT_assets,
         PAE_PT_generate,
