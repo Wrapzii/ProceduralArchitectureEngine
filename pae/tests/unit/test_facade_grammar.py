@@ -121,6 +121,27 @@ def test_resolve_stair_id_downgrades_switchback_on_small_plot():
     assert resolve_stair_id(4, 3, 2) == "stair_straight"
 
 
+def test_resolve_stair_plan_scales_with_footprint():
+    """Engine picks house → corridor → switchback by fit, not by preset name."""
+    from pae.facade_grammar import resolve_stair_plan, stair_plan_fits
+
+    house = resolve_stair_plan(2, 3, 2, storeys=2)
+    assert house.scale_class == "house"
+    assert house.well_bays == (1, 1)
+    assert stair_plan_fits(house, 3, 2)
+
+    corridor = resolve_stair_plan(2, 4, 3, storeys=2)
+    assert corridor.scale_class == "corridor"
+    assert corridor.well_bays == (2, 1)
+
+    mansion = resolve_stair_plan(4, 6, 3, storeys=4)
+    assert mansion.scale_class == "switchback"
+    assert mansion.well_bays == (2, 2)
+
+    # Corridor plan must not claim it fits a 3×2 house plot.
+    assert not stair_plan_fits(corridor, 3, 2)
+
+
 def test_build_from_params_validate_assembly_unpacks_report():
     params = FacadeParams(
         seed=1812,

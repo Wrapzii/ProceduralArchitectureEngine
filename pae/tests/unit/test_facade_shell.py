@@ -232,11 +232,46 @@ def test_shell_has_no_style_pack_balconies():
 
 def test_stair_and_floor_hole_counts_match_storeys():
     for storeys in (2, 3, 4):
-        params = _default_params(storeys=storeys, frontage_m=12.0, depth_m=10.0)
+        # Wide enough for corridor/switchback so shaft enclosure is meaningful.
+        params = _default_params(storeys=storeys, frontage_m=22.0, depth_m=12.0, wealth=4)
         assembly, _ = build_shell_assembly(params)
         assert count_stair_placements(assembly) == storeys - 1
         assert count_floor_holes(assembly) == storeys - 1
+        # Switchback keeps three shaft faces (+ optional rail) per storey.
         assert count_stair_shaft_pieces(assembly) >= 3 * storeys
+
+
+def test_house_scale_stair_is_one_bay_and_not_sealed():
+    """Small footprints fit a one-bay house stair with open approach/exit faces."""
+    from pae.facade_grammar import resolve_stair_plan
+    from pae.facade_shell import _stair_anchor_and_cells
+
+    params = _default_params(storeys=2, frontage_m=10.0, depth_m=8.0, wealth=2)
+    plan = resolve_stair_plan(2, 3, 2, storeys=2)
+    assert plan.scale_class == "house"
+    assert plan.well_bays == (1, 1)
+    assert plan.yaw == 90
+    assert "south" in plan.open_faces and "north" in plan.open_faces
+
+    assembly, _ = build_shell_assembly(params)
+    stairs = [p for p in assembly.placements if p.kind == "stair"]
+    assert len(stairs) == 1
+    stair = stairs[0]
+    assert stair.size_cm[0] == MODULE_CM
+    assert stair.size_cm[1] == MODULE_CM
+    assert stair.yaw == 90
+    # No partition on the climb axis (would wall off bottom/top).
+    sealed = [
+        p
+        for p in assembly.placements
+        if "stair_shaft" in p.tags
+        and ("face_south" in p.tags or "face_north" in p.tags)
+        and p.asset_id != "shell_stair_rail"
+    ]
+    assert not sealed, [p.piece_id for p in sealed]
+    _anchor, yaw, cells = _stair_anchor_and_cells(plan, 3, 2)
+    assert yaw == 90
+    assert len(cells) == 1
 
 
 def test_stair_shaft_pieces_inside_footprint():
@@ -508,7 +543,7 @@ def test_shell_roof_aabb_within_footprint_overhang():
 
 def test_stairwell_bays_have_no_room_windows():
     """North/east bays occupied by the stair shaft must not get living-room sashes."""
-    from pae.facade_grammar import resolve_stair_id, resolve_wealth
+    from pae.facade_grammar import resolve_stair_plan, resolve_wealth
     from pae.facade_shell import (
         _stair_anchor_and_cells,
         stairwell_blocked_bays,
@@ -518,11 +553,11 @@ def test_stairwell_bays_have_no_room_windows():
     assembly, _ = build_shell_assembly(params)
     spec = params_to_spec(params)
     wealth = resolve_wealth(params.wealth)
-    stair_id = resolve_stair_id(
+    plan = resolve_stair_plan(
         wealth, spec.footprint.bays_x, spec.footprint.bays_y, storeys=spec.storeys
     )
     _anchor, _yaw, cells = _stair_anchor_and_cells(
-        stair_id, spec.footprint.bays_x, spec.footprint.bays_y
+        plan, spec.footprint.bays_x, spec.footprint.bays_y
     )
     blocked = stairwell_blocked_bays(
         cells, bays_x=spec.footprint.bays_x, bays_y=spec.footprint.bays_y

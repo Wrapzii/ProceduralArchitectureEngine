@@ -13,7 +13,7 @@ import random
 from dataclasses import asdict, dataclass, fields
 from typing import Any, Dict, FrozenSet, Optional, Tuple
 
-from pae.contract import MODULE_CM
+from pae.contract import MODULE_CM, STOREY_CM
 from pae.report import Report
 from pae.shared_ids import resolve_shared
 from pae.spec import (
@@ -205,6 +205,145 @@ def footprint_allows_switchback(bays_x: int, bays_y: int) -> bool:
     return bays_x >= 4 and bays_y >= 3
 
 
+@dataclass(frozen=True)
+class StairPlan:
+    """Circulation piece chosen to fit a footprint (grammar → shell).
+
+    The engine tries the largest walkable typology the plot can host, then
+    steps down. Houses get a one-bay flight; wider shells get a corridor run;
+    tall/wide plots get a switchback — not preset-specific overrides.
+    """
+
+    asset_id: str
+    well_bays: Tuple[int, int]
+    yaw: int
+    open_faces: FrozenSet[str]
+    scale_class: str  # house | corridor | switchback
+
+    @property
+    def size_cm(self) -> Tuple[float, float, float]:
+        w, d = self.well_bays
+        return (w * MODULE_CM, d * MODULE_CM, STOREY_CM)
+
+    @property
+    def well_w(self) -> int:
+        return int(self.well_bays[0])
+
+    @property
+    def well_d(self) -> int:
+        return int(self.well_bays[1])
+
+
+def _stair_plan_candidates(
+    wealth: int,
+    bays_x: int,
+    bays_y: int,
+    *,
+    storeys: int,
+) -> Tuple[StairPlan, ...]:
+    """Largest → smallest stair typologies the wealth/storeys might want."""
+    resolved_storeys = resolve_storeys(storeys) if storeys <= 0 else max(1, int(storeys))
+    tier = resolve_wealth(wealth)
+    plans: list[StairPlan] = []
+
+    wants_switchback = resolved_storeys >= 3 or tier >= 3
+    if wants_switchback:
+        plans.append(
+            StairPlan(
+                asset_id="stair_switchback",
+                well_bays=(2, 2),
+                yaw=0,
+                open_faces=frozenset({"south"}),
+                scale_class="switchback",
+            )
+        )
+
+    # Corridor straight: 2×1 run along +X, approach/exit on west/east.
+    plans.append(
+        StairPlan(
+            asset_id="stair_straight",
+            well_bays=(2, 1),
+            yaw=0,
+            open_faces=frozenset({"south", "west", "east"}),
+            scale_class="corridor",
+        )
+    )
+
+    # House / cottage: one-bay flight climbing +Y from the south hall.
+    plans.append(
+        StairPlan(
+            asset_id="stair_straight",
+            well_bays=(1, 1),
+            yaw=90,
+            open_faces=frozenset({"south", "north"}),
+            scale_class="house",
+        )
+    )
+    return tuple(plans)
+
+
+def stair_plan_fits(plan: StairPlan, bays_x: int, bays_y: int) -> bool:
+    """True when *plan* leaves living floor and walkable approach/exit room."""
+    ww, wd = plan.well_bays
+    if ww < 1 or wd < 1:
+        return False
+    if ww > bays_x or wd > bays_y:
+        return False
+    area = bays_x * bays_y
+    well_area = ww * wd
+    if well_area >= area:
+        return False
+    # Stair must not eat more than a third of the plan (small houses stay livable).
+    if well_area > max(1, (area + 2) // 3):
+        return False
+    # Run axis: keep at least half the frontage/depth as room, not stair.
+    if int(plan.yaw) % 180 == 0:
+        if ww > max(1, bays_x // 2):
+            return False
+        # Flush to both gables (ww == bays_x) seals bottom and top.
+        if ww >= bays_x:
+            return False
+    else:
+        if wd > max(1, bays_y // 2):
+            return False
+        if wd >= bays_y and bays_y > 1:
+            # Full-depth well leaves no hall bay south of the flight.
+            return False
+    if plan.asset_id == "stair_switchback" and not footprint_allows_switchback(
+        bays_x, bays_y
+    ):
+        return False
+    return True
+
+
+def resolve_stair_plan(
+    wealth: int,
+    bays_x: int,
+    bays_y: int,
+    *,
+    storeys: int = 1,
+) -> StairPlan:
+    """Pick the largest stair typology that fits this footprint walkably.
+
+    Downgrades mansion → corridor → house until :func:`stair_plan_fits` passes.
+    Any small house (shallow or tight bay count) therefore gets a one-bay stair
+    because a 2×1 / 2×2 well does not fit — not because a preset forced it.
+    """
+    bx = max(1, int(bays_x))
+    by = max(1, int(bays_y))
+    for plan in _stair_plan_candidates(wealth, bx, by, storeys=storeys):
+        if stair_plan_fits(plan, bx, by):
+            return plan
+    # Degenerate 1×1 plot — still emit a house flight.
+    return StairPlan(
+        asset_id="stair_straight",
+        well_bays=(1, 1),
+        yaw=90,
+        open_faces=frozenset({"south", "north"}),
+        scale_class="house",
+    )
+
+
 def resolve_stair_id(
     wealth: int,
     bays_x: int,
@@ -212,26 +351,15 @@ def resolve_stair_id(
     *,
     storeys: int = 1,
 ) -> str:
-    """Pick stair piece id — straight on small/low plots, switchback when tall/wide."""
-    resolved_storeys = resolve_storeys(storeys) if storeys <= 0 else max(1, int(storeys))
-    wants_switchback = resolved_storeys >= 3 or (
-        bays_x >= 4 and bays_y >= 3
-    )
-    if wants_switchback and footprint_allows_switchback(bays_x, bays_y):
-        return "stair_switchback"
-    stair_id = resolve_shared("stair", resolve_wealth(wealth), "main")
-    if stair_id == "stair_switchback" and not footprint_allows_switchback(
-        bays_x, bays_y
-    ):
-        return "stair_straight"
-    if not wants_switchback:
-        return "stair_straight"
-    return stair_id
+    """Pick stair piece id — fit-based plan, then asset id."""
+    return resolve_stair_plan(wealth, bays_x, bays_y, storeys=storeys).asset_id
 
 
 def _stair_kind(wealth: int, bays_x: int, bays_y: int, *, storeys: int = 1) -> str:
-    stair_id = resolve_stair_id(wealth, bays_x, bays_y, storeys=storeys)
-    return "switchback" if stair_id == "stair_switchback" else "straight"
+    plan = resolve_stair_plan(wealth, bays_x, bays_y, storeys=storeys)
+    if plan.asset_id == "stair_switchback":
+        return "switchback"
+    return "straight"
 
 
 def params_to_spec(params: FacadeParams) -> BuildingSpec:
@@ -424,6 +552,9 @@ __all__ = [
     "params_to_style_overrides",
     "party_wall_faces",
     "resolve_stair_id",
+    "resolve_stair_plan",
+    "stair_plan_fits",
+    "StairPlan",
     "resolve_storeys",
     "resolve_weathering",
     "resolve_wealth",

@@ -29,7 +29,7 @@ from pae.facade_grammar import (
     params_to_spec,
     params_to_style_overrides,
     party_wall_faces,
-    resolve_stair_id,
+    resolve_stair_plan,
     resolve_wealth,
 )
 from pae.report import Report
@@ -289,30 +289,35 @@ def _footprint_cm(bays_x: int, bays_y: int) -> Tuple[float, float]:
     return bays_x * MODULE_CM, bays_y * MODULE_CM
 
 
-def _stair_well_size(stair_id: str, bays_x: int, bays_y: int) -> Tuple[int, int]:
-    """Footprint of the stair shaft in cells (width along X, depth along Y)."""
-    if stair_id == "stair_switchback":
-        return (2, 2)
-    if bays_x >= 5 or bays_y >= 4 or bays_x * bays_y >= 12:
-        return (2, 2)
-    return (2, 1)
-
-
 def _stair_anchor_and_cells(
-    stair_id: str, bays_x: int, bays_y: int
+    plan,
+    bays_x: int,
+    bays_y: int,
 ) -> Tuple[Tuple[int, int], int, List[Tuple[int, int]]]:
-    """Pick an interior stair anchor and occupied cells (inside footprint)."""
-    well_w, well_d = _stair_well_size(stair_id, bays_x, bays_y)
-    # Prefer the eastmost fit along X so the well clears the west exterior skin.
+    """Place the stair well from a :class:`~pae.facade_grammar.StairPlan`."""
+    well_w, well_d = plan.well_bays
+    yaw = int(plan.yaw)
+
+    if plan.scale_class == "house":
+        # North bay with side neighbours when possible — top exits sideways.
+        if bays_x >= 3:
+            ax = min(max(1, bays_x - 2), bays_x - 1)
+        else:
+            ax = max(0, bays_x - 1)
+        ay = max(0, bays_y - 1)
+        return (ax, ay), yaw, [(ax, ay)]
+
     ax = max(0, bays_x - well_w)
-    # Tuck against the north interior; hall opens to the south.
     ay = max(0, bays_y - well_d)
     if bays_y > well_d:
         ay = bays_y - well_d
+    # Corridor straight along +X: prefer a free bay west of the bottom.
+    if plan.scale_class == "corridor" and well_w == 2 and bays_x >= 4:
+        ax = min(ax, max(1, bays_x - well_w))
     cells = [
         (ax + i, ay + j) for i in range(well_w) for j in range(well_d)
     ]
-    return (ax, ay), 0, cells
+    return (ax, ay), yaw, cells
 
 
 def stairwell_blocked_bays(
@@ -1015,6 +1020,7 @@ def _place_stair(
     level: int,
     placements: List[SolidPlacement],
     counters: Dict[str, int],
+    size_cm: Optional[Tuple[float, float, float]] = None,
 ) -> None:
     from pae.primitives.catalog import catalog_by_id
 
@@ -1022,7 +1028,7 @@ def _place_stair(
     desc = cat.get(stair_id)
     if desc is None:
         return
-    sx, sy, sz = desc.size_cm
+    sx, sy, sz = size_cm or desc.size_cm
     ox, oy = rotation_offset_cm(yaw, sx, sy, rotates_about_center=desc.rotates_about_center)
     placements.append(
         SolidPlacement(
@@ -1033,7 +1039,7 @@ def _place_stair(
             level=level,
             yaw=yaw,
             offset_cm=(ox, oy, 0.0),
-            size_cm=desc.size_cm,
+            size_cm=(sx, sy, sz),
             rotates_about_center=desc.rotates_about_center,
             tags=_INTERIOR_TAG | frozenset({"stair"}),
         )
@@ -1054,8 +1060,13 @@ def _place_stair_shaft_walls(
     stair_cells: Sequence[Tuple[int, int]],
     placements: List[SolidPlacement],
     counters: Dict[str, int],
+    open_faces: FrozenSet[str] = frozenset({"south"}),
 ) -> None:
-    """Three-sided shaft enclosure inside the shell — open on the south (hall) side."""
+    """Shaft enclosure — omit faces needed for stair approach / exit.
+
+    Default switchback keeps N/W/E and opens south to the hall. Straight runs
+    also leave the bottom and top faces open so the flight is not walled off.
+    """
     if not stair_cells:
         return
     min_x, min_y, max_x, max_y = _stair_well_bbox_cells(stair_cells)
@@ -1063,46 +1074,50 @@ def _place_stair_shaft_walls(
     well_d = (max_y - min_y + 1) * MODULE_CM
     shaft_h = STOREY_CM * _SHAFT_WALL_HEIGHT_FRAC
     tags = _INTERIOR_TAG | frozenset({"stair_shaft", "partition", "plaster"})
+    open_l = {f.lower() for f in open_faces}
 
-    placements.append(
-        SolidPlacement(
-            piece_id=_next_id(counters, f"shell_shaft_n_L{level}"),
-            asset_id=SHELL_INTERIOR_WALL_ASSET,
-            kind="wall",
-            cell=(min_x, max_y),
-            level=level,
-            yaw=0,
-            offset_cm=(0.0, MODULE_CM - WALL_T_CM, 0.0),
-            size_cm=(well_w, WALL_T_CM, shaft_h),
-            tags=tags | frozenset({"face_north"}),
+    if "north" not in open_l:
+        placements.append(
+            SolidPlacement(
+                piece_id=_next_id(counters, f"shell_shaft_n_L{level}"),
+                asset_id=SHELL_INTERIOR_WALL_ASSET,
+                kind="wall",
+                cell=(min_x, max_y),
+                level=level,
+                yaw=0,
+                offset_cm=(0.0, MODULE_CM - WALL_T_CM, 0.0),
+                size_cm=(well_w, WALL_T_CM, shaft_h),
+                tags=tags | frozenset({"face_north"}),
+            )
         )
-    )
-    placements.append(
-        SolidPlacement(
-            piece_id=_next_id(counters, f"shell_shaft_w_L{level}"),
-            asset_id=SHELL_INTERIOR_WALL_ASSET,
-            kind="wall",
-            cell=(min_x, min_y),
-            level=level,
-            yaw=0,
-            offset_cm=(0.0, 0.0, 0.0),
-            size_cm=(WALL_T_CM, well_d, shaft_h),
-            tags=tags | frozenset({"face_west"}),
+    if "west" not in open_l:
+        placements.append(
+            SolidPlacement(
+                piece_id=_next_id(counters, f"shell_shaft_w_L{level}"),
+                asset_id=SHELL_INTERIOR_WALL_ASSET,
+                kind="wall",
+                cell=(min_x, min_y),
+                level=level,
+                yaw=0,
+                offset_cm=(0.0, 0.0, 0.0),
+                size_cm=(WALL_T_CM, well_d, shaft_h),
+                tags=tags | frozenset({"face_west"}),
+            )
         )
-    )
-    placements.append(
-        SolidPlacement(
-            piece_id=_next_id(counters, f"shell_shaft_e_L{level}"),
-            asset_id=SHELL_INTERIOR_WALL_ASSET,
-            kind="wall",
-            cell=(max_x, min_y),
-            level=level,
-            yaw=0,
-            offset_cm=(MODULE_CM - WALL_T_CM, 0.0, 0.0),
-            size_cm=(WALL_T_CM, well_d, shaft_h),
-            tags=tags | frozenset({"face_east"}),
+    if "east" not in open_l:
+        placements.append(
+            SolidPlacement(
+                piece_id=_next_id(counters, f"shell_shaft_e_L{level}"),
+                asset_id=SHELL_INTERIOR_WALL_ASSET,
+                kind="wall",
+                cell=(max_x, min_y),
+                level=level,
+                yaw=0,
+                offset_cm=(MODULE_CM - WALL_T_CM, 0.0, 0.0),
+                size_cm=(WALL_T_CM, well_d, shaft_h),
+                tags=tags | frozenset({"face_east"}),
+            )
         )
-    )
 
 
 def _place_stair_shaft_rail(
@@ -1111,9 +1126,16 @@ def _place_stair_shaft_rail(
     stair_cells: Sequence[Tuple[int, int]],
     placements: List[SolidPlacement],
     counters: Dict[str, int],
+    open_faces: FrozenSet[str] = frozenset({"south"}),
 ) -> None:
-    """Low handrail on the open south hall side so the stair reads in section."""
+    """Low handrail on the open south hall side — skipped when south is the climb entry."""
     if not stair_cells:
+        return
+    # Compact straight (yaw 90) uses the south edge as the walk-on; a rail there
+    # would wall off the bottom the same way the old W/E partitions did.
+    if "south" in {f.lower() for f in open_faces} and "north" in {
+        f.lower() for f in open_faces
+    }:
         return
     min_x, min_y, max_x, _max_y = _stair_well_bbox_cells(stair_cells)
     well_w = (max_x - min_x + 1) * MODULE_CM
@@ -1403,8 +1425,13 @@ def build_shell_assembly(
     roof_blind = blind
 
     width_cm, depth_cm = _footprint_cm(bays_x, bays_y)
-    stair_id = resolve_stair_id(wealth, bays_x, bays_y, storeys=storeys)
-    anchor, stair_yaw, stair_cells = _stair_anchor_and_cells(stair_id, bays_x, bays_y)
+    stair_plan = resolve_stair_plan(wealth, bays_x, bays_y, storeys=storeys)
+    stair_id = stair_plan.asset_id
+    anchor, stair_yaw, stair_cells = _stair_anchor_and_cells(
+        stair_plan, bays_x, bays_y
+    )
+    stair_open_faces = stair_plan.open_faces
+    stair_size_cm = stair_plan.size_cm
     stair_blocked = stairwell_blocked_bays(
         stair_cells, bays_x=bays_x, bays_y=bays_y
     )
@@ -1502,12 +1529,14 @@ def build_shell_assembly(
             stair_cells=stair_cells,
             placements=placements,
             counters=counters,
+            open_faces=stair_open_faces,
         )
         _place_stair_shaft_rail(
             level=level,
             stair_cells=stair_cells,
             placements=placements,
             counters=counters,
+            open_faces=stair_open_faces,
         )
 
     for level in range(storeys - 1):
@@ -1518,6 +1547,7 @@ def build_shell_assembly(
             level=level,
             placements=placements,
             counters=counters,
+            size_cm=stair_size_cm,
         )
 
     if roof_kind == "flat":
