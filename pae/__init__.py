@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 # Plain dict at module level — NO heavy imports.
 # Blender 5.2 discovery fails silently if top-level import of pae.addon errors.
 bl_info = {
     "name": "Procedural Architecture Engine",
     "author": "PAE",
-    "version": (0, 1, 0),
+    "version": (0, 2, 0),
     "blender": (4, 0, 0),
     "location": "View3D > Sidebar > PAE",
     "description": "Deterministic procedural buildings for Blender and UE 5.8",

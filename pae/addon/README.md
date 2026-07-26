@@ -34,6 +34,7 @@ Enable **Procedural Architecture Engine** from **User Default** in
 
 | Panel | Purpose |
 |---|---|
+| **Procedural Building** | CITY&BEYOND-style sliders (seed, archetype, palette, frontage, storeys, wealth, row) → **Generate Building** |
 | **Structure** | Name, style, seed, optional foundation, roof/stair, YAML load/export, **Generate Structure**, Validate |
 | **Levels** | Level stack list (add/remove), per-level `height_units`, wall style, sketch text |
 | **Spec (Legacy)** | Classic rectangle + storeys footprint UI |

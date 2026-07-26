@@ -211,7 +211,7 @@ if HAS_BPY:
     class PAE_OT_reload_pae(bpy.types.Operator):
         bl_idname = "pae.reload_pae"
         bl_label = "Reload PAE"
-        bl_description = "Drop cached pae.* modules so code edits take effect without restart"
+        bl_description = "Reload pae modules and re-register UI so new panels/props appear"
         bl_options = {"REGISTER"}
 
         def execute(self, context):
@@ -220,7 +220,20 @@ if HAS_BPY:
                 from pae.blender_build import reload_pae
 
                 dropped = reload_pae()
-                props.last_pipeline_message = f"Reloaded {len(dropped)} pae module(s)"
+                import importlib
+
+                import pae.addon as addon_pkg
+
+                importlib.reload(addon_pkg)
+                try:
+                    addon_pkg.unregister()
+                except Exception:
+                    pass
+                addon_pkg.register()
+                props = scene_props(context)
+                props.last_pipeline_message = (
+                    f"Reloaded {len(dropped)} module(s); UI re-registered"
+                )
                 props.last_error_message = ""
                 self.report({"INFO"}, props.last_pipeline_message)
                 return {"FINISHED"}
@@ -228,10 +241,46 @@ if HAS_BPY:
                 report_operator_exception(self, props, exc)
                 return {"CANCELLED"}
 
+    class PAE_OT_copy_facade_params_json(bpy.types.Operator):
+        bl_idname = "pae.copy_facade_params_json"
+        bl_label = "Copy Parameters JSON"
+        bl_description = "Copy Procedural Building slider params to the clipboard"
+        bl_options = {"REGISTER"}
+
+        def execute(self, context):
+            props = scene_props(context)
+            try:
+                from pae.facade_grammar import FacadeParams, export_params_json
+
+                params = FacadeParams(
+                    seed=int(props.facade_seed),
+                    archetype=str(props.facade_archetype),
+                    palette_family=str(props.facade_palette_family),
+                    frontage_m=float(props.facade_frontage_m),
+                    depth_m=float(props.facade_depth_m),
+                    storeys=int(props.facade_storeys),
+                    wealth=int(props.facade_wealth),
+                    weathering=float(props.facade_weathering),
+                    lit_windows=float(props.facade_lit_windows),
+                    row_context=str(props.facade_row_context),
+                )
+                text = export_params_json(params)
+                props.facade_params_json = text
+                context.window_manager.clipboard = text
+                props.last_pipeline_message = "Copied facade params JSON"
+                self.report({"INFO"}, "Parameters JSON copied")
+                return {"FINISHED"}
+            except (RuntimeError, ValueError, AttributeError) as exc:
+                report_operator_exception(self, props, exc)
+                return {"CANCELLED"}
+
     class PAE_OT_generate_facade(bpy.types.Operator):
         bl_idname = "pae.generate_facade"
-        bl_label = "Generate Georgian Facade"
-        bl_description = "Build townhouse from Facade Grammar sliders (shared door/stair ids)"
+        bl_label = "Generate Building"
+        bl_description = (
+            "Build from Procedural Building sliders "
+            "(facade grammar + shared door/stair ids)"
+        )
         bl_options = {"REGISTER"}
 
         def execute(self, context):
@@ -244,19 +293,25 @@ if HAS_BPY:
                     clear_pae_scene,
                     instance_assembly,
                 )
-                from pae.facade_grammar import FacadeParams, build_from_params, resolve_storeys
+                from pae.facade_grammar import (
+                    FacadeParams,
+                    build_from_params,
+                    export_params_json,
+                )
 
                 params = FacadeParams(
-                    seed=int(props.seed),
+                    seed=int(props.facade_seed),
                     archetype=str(props.facade_archetype or "georgian_merchant"),
+                    palette_family=str(props.facade_palette_family or "cream_render"),
                     frontage_m=float(props.facade_frontage_m),
                     depth_m=float(props.facade_depth_m),
-                    storeys=resolve_storeys(int(props.storeys)),
+                    storeys=int(props.facade_storeys),
                     wealth=int(props.facade_wealth),
                     weathering=float(props.facade_weathering),
                     lit_windows=float(props.facade_lit_windows),
                     row_context=str(props.facade_row_context),
                 )
+                props.facade_params_json = export_params_json(params)
                 _massing, _plan, assembly, report, _out = build_from_params(
                     params, validate_assembly=False
                 )
@@ -288,9 +343,9 @@ if HAS_BPY:
                     self, props, report, prefix="Facade"
                 )
                 props.last_pipeline_message = (
-                    f"Facade grammar OK ({n} placements, PAE_GeorgianTownhouse)"
+                    f"Procedural Building OK ({n} placements)"
                     if ok
-                    else f"Facade grammar — {len(report.critical)} critical"
+                    else f"Procedural Building — {len(report.critical)} critical"
                 )
                 return {"FINISHED"} if ok else {"CANCELLED"}
             except (RuntimeError, ValueError) as exc:
@@ -307,6 +362,7 @@ if HAS_BPY:
         PAE_OT_build_school,
         PAE_OT_build_gallery,
         PAE_OT_reload_pae,
+        PAE_OT_copy_facade_params_json,
         PAE_OT_generate_facade,
     )
 else:

@@ -63,8 +63,27 @@ pieces (`door_georgian` → `wall_door_double`, etc.).
 
 ## Blender add-on
 
-View3D sidebar → **PAE** → **Facade Grammar (Georgian)**. Adjust sliders, then
-**Generate Georgian Facade** (`pae.generate_facade`).
+View3D sidebar → **PAE** → **Procedural Building** (top panel).
+
+Sliders match the CITY&BEYOND control surface:
+
+| UI | Property |
+|---|---|
+| Seed | `facade_seed` |
+| Archetype | `facade_archetype` |
+| Palette Family | `facade_palette_family` |
+| Frontage (m, 0=Auto) | `facade_frontage_m` |
+| Depth (m, 0=Auto) | `facade_depth_m` |
+| Storeys (0=Auto) | `facade_storeys` |
+| Wealth (-1=Auto) | `facade_wealth` |
+| Weathering (-1=Auto) | `facade_weathering` |
+| Lit Windows | `facade_lit_windows` |
+| Row Context | `facade_row_context` |
+| Grit District (NF) | `facade_grit_district` |
+
+Then **Generate Building** (`pae.generate_facade`) or **Copy Parameters JSON**.
+
+If the panel is missing after a code pull: **Generate → Reload PAE (pick up UI)**, or disable/enable the extension, or restart Blender (version should read **0.2.0**).
 
 ## API
 

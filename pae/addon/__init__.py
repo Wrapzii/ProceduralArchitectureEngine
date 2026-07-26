@@ -10,7 +10,7 @@ from __future__ import annotations
 bl_info = {
     "name": "Procedural Architecture Engine",
     "author": "PAE",
-    "version": (0, 1, 0),
+    "version": (0, 2, 0),
     "blender": (4, 0, 0),
     "location": "View3D > Sidebar > PAE",
     "description": "Deterministic procedural buildings for Blender and UE 5.8",
