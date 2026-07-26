@@ -546,3 +546,30 @@ def test_stairwell_bays_have_no_room_windows():
     # Wealth 4 → high stair lights allowed on blocked faces (not full sashes).
     lights = [p for p in assembly.placements if "stair_light" in p.tags]
     assert lights, "wealthy builds should get high stair lights on the shaft face"
+
+
+def test_shell_upper_floors_get_stair_void_punch_rects():
+    """Regression: shell-tagged decks must still compute walkable floor holes."""
+    from pae.blender_build import is_spanning_floor_deck, needs_stair_void_punch
+    from pae.facade_shell import is_shell_placement
+    from pae.primitives.floors import spanning_deck_hole_rects_cm
+
+    params = _demo_user_params()
+    assembly, _ = build_shell_assembly(params)
+    holes = [p for p in assembly.placements if p.asset_id == "floor_hole"]
+    assert holes
+    punched = 0
+    for deck in assembly.placements:
+        if deck.kind != "floor" or deck.level < 1:
+            continue
+        assert is_shell_placement(deck), "shell decks are facade_shell-tagged"
+        assert needs_stair_void_punch(deck), deck.piece_id
+        assert is_spanning_floor_deck(deck), deck.piece_id
+        rects = spanning_deck_hole_rects_cm(deck, holes)
+        assert rects, f"{deck.piece_id} must punch a stair void, got {rects}"
+        # Opening large enough to walk (not a hairline crack).
+        x0, y0, x1, y1 = rects[0]
+        assert (x1 - x0) >= MODULE_CM * 1.5
+        assert (y1 - y0) >= MODULE_CM * 1.5
+        punched += 1
+    assert punched == params.storeys - 1

@@ -1072,6 +1072,24 @@ def is_spanning_floor_deck(p) -> bool:
     )
 
 
+def needs_stair_void_punch(p) -> bool:
+    """True when this floor must be meshed with ``floor_hole`` voids cut out.
+
+    Shell assemblies tag spanning decks with ``facade_shell``, which used to send
+    them through the solid shell-box path and left stairs buried under a slab.
+    """
+    if is_spanning_floor_deck(p):
+        return True
+    tags = getattr(p, "tags", frozenset()) or frozenset()
+    if getattr(p, "kind", None) != "floor":
+        return False
+    if "spanning_floor" not in tags:
+        return False
+    from pae.contract import MODULE_CM
+
+    return float(p.size_cm[0]) > MODULE_CM + 0.5 and float(p.size_cm[1]) > MODULE_CM + 0.5
+
+
 def spanning_floor_hole_rects_cm(deck, hole_placements, *, peer_decks=()) -> List[Tuple[float, float, float, float]]:
     """Local hole rectangles for VOID ``floor_hole`` placements on a spanning deck.
 
@@ -1495,7 +1513,12 @@ def instance_assembly(
         dp
         for dp in assembly.placements
         if getattr(dp, "kind", None) == "floor"
-        and getattr(dp, "asset_id", None) == "floor"
+        and (
+            getattr(dp, "asset_id", None) == "floor"
+            or "spanning_floor" in (getattr(dp, "tags", frozenset()) or frozenset())
+        )
+        and float(dp.size_cm[0]) > 1.0
+        and float(dp.size_cm[1]) > 1.0
     ]
     roof_hole_placements = [
         hp
@@ -1515,7 +1538,19 @@ def instance_assembly(
             continue
         from pae.facade_shell import is_shell_placement
 
-        if is_shell_placement(p):
+        # Stair VOIDs before shell-box path — shell-tagged spanning decks must
+        # still get floor_hole punches or the well is sealed shut.
+        if needs_stair_void_punch(p):
+            peers = [
+                d
+                for d in all_floor_decks
+                if d.level == p.level and d.piece_id != p.piece_id
+            ]
+            proto = _mesh_for_spanning_floor_deck(
+                p, hole_placements, peer_decks=peers, cache=cache
+            )
+            sx = sy = sz = 1.0
+        elif is_shell_placement(p):
             if "boolean_parent" in p.tags:
                 face = next(
                     (t[5:] for t in p.tags if t.startswith("face_")), None
