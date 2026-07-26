@@ -1,8 +1,32 @@
 # Design: the tower drum as a real enclosure
 
+## Scalable shaft contract
+
+`TowerSpec.radius_bays` is the physical outer radius/half-width in module units,
+not the logical footprint-cell width. It accepts continuous values from `0.5`
+(a four-metre-diameter stair turret) through `16`. The plan keeps one attachment
+anchor cell; assembly resolves the actual centre so the scaled shell still kisses
+the host wall.
+
+`shape` selects `round` or `square`. `cap_style` selects `auto`, `flat`, `cone`,
+or `square_spire`, and `spire_height_storeys` controls cap height independently
+from the shaft storey count. Spiral tread width is clamped to the measured clear
+bore. Radius-1.25+ towers receive supported landing/room bands around the core;
+smaller shafts remain stair-only. Conical and square/pyramidal spires are roofs, not
+battlement decks, so rampart-top validation does not invent an inaccessible
+platform beneath them.
+
+`stair_spiral_quarter.size_cm.x/y` controls the authored outer radius (the mesh
+is centered), not a diameter. Every climb uses four quarters ordered from the
+tower-entry yaw. The fixed-size newel is conditional: tight stairs that meet it
+retain it; an open-well stair with a separated inner edge omits the pole.
+`floor_hole` remains in the assembly as a validated deck cutter, but builders do
+not instance its legacy frame mesh.
+
 > Detail spec for Stage E of `Docs/MASTER_PLAN.md`.
 
-**Status:** designed, not implemented. Foundations landed (`pae/drum.py`,
+**Status:** scalable shafts/interiors implemented; true curved door/window cuts
+remain open. Foundations landed (`pae/drum.py`,
 `pae/tests/unit/test_drum.py`). Implementation handed to the swarm.
 
 **Lane:** `@DRUM_ENCLOSURE`

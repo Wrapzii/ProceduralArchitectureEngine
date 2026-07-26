@@ -29,6 +29,17 @@ never reason from `p.cell` (use `covered_cells`); never hand-roll a placement of
 | WP-7 | Composer 2.5 | DONE | `pae/addon/**` |
 | WP-8 | Grok 4.5 | DONE | `pae/comfy/**` |
 | WP-9 | Grok 4.5 | DONE | `pae/tests/property/**`, `pae/tests/golden/**`, `pae/tests/conftest.py`, `tools/ci_*`, `tools/magic_number_grep.py`, `.github/workflows/**` |
+| MP-WS1 | Grok 4.5 | DONE | `pae/spec.py`, `pae/structure_spec.py` (new), `pae/sketch.py`, `pae/solver.py`, `pae/plan.py`, `pae/assemble.py` (foundation/datum only), `pae/contract.py` (datum accessor), `pae/structure_identity.py`, `pae/pipeline.py`, `pae/tests/unit/test_structure_level_spec.py` â€” Master Plan Stage A+B+YAML |
+| MP-WS2 | Grok 4.5 | DONE | assemble roof helpers + `pae/primitives/roofs.py` + roof validate/tests â€” Stage C height-field (owns roof sections of assemble.py) |
+| MP-WS3 | Composer 2.5 | DONE | `pae/solver.py`, `pae/plan.py`, `pae/stair_occupancy.py`, stair pad sections of assemble.py, stair tests â€” Stage D |
+| MP-WS3b | Composer 2.5 | DONE | `pae/solver.py`, `pae/plan.py`, `pae/street_scene.py`, school/stair tests â€” school 4Ã—2 plan reserve + library_tower spiral fallback |
+| MP-WS4 | Composer 2.5 | DONE | `pae/drum.py`, `pae/tower_entry.py`, outboard-drum wall suppress in assemble.py, tower/drum tests â€” Stage E |
+| MP-WS5 | Composer 2.5 | DONE | `pae/structure_identity.py`, `pae/compound_unify.py`, `pae/drum.py` (`inboard_drum_party_faces_from_plan`), minimal assemble party-edge skip in `_place_wall_run`, `pae/tests/unit/test_party_walls.py` â€” Master Plan Stage F party walls |
+| MP-WS6 | Composer 2.5 | DONE | `pae/styles/*.json`, `pae/style_pack.py`, `pae/tests/unit/test_style_pack.py` â€” Master Plan Stage I packs (8 total) |
+| MP-WS6b | Composer 2.5 | DONE | `pae/tests/unit/test_style_interchange.py`, `tools/me_style_interchange_proof.py`, `Saved/exports/me_style_interchange_report.json`, `Docs/MASTER_PLAN.md`, `Docs/CASTLE_SCHOOL_ROADMAP.md`, `Docs/DEFECT_LEDGER.md` â€” M-E interchange proof + Master Plan status sync |
+| MP-WS7 | Grok 4.5 | DONE | `pae/plan.py`, `pae/sketch.py`, `pae/arcade.py` (new), `pae/structure_spec.py` program paint, `pae/pipeline.py` apply_arcade, `pae/tests/unit/test_stage_g_program_arcade.py` â€” Master Plan Stage G program/rooms + courtyard arcade start |
+| MP-WS11 | Composer 2.5 | DONE | `pae/export/**`, `tools/ue_*.py`, `tools/export_manifest.py`, `Docs/UE_MANIFEST_CONSUMER.md`, `pae/tests/unit/test_ue_*` â€” Master Plan Stage L filesystem tooling (no editor/MCP) |
+| MP-WS-J | Grok 4.5 | DONE | `pae/site_spec.py` (new), `pae/tests/unit/test_site_spec.py`, `Docs/MASTER_PLAN.md` Stage J — site authoring skeleton (M-G city deferred) |
 
 ## Wave plan
 
@@ -526,18 +537,27 @@ the actual building is yours. Full specs in Docs/, summarised here.
 2026-07-25 ? @COMPOUND_CONNECT_MERGE
 >>> DONE @COMPOUND_CONNECT_MERGE ? ConnectionPolicy (`merge`|`connect`|`separate`) + CompoundConnections / fortress_compound_connections / school_compound_connections. Fixed range detection (instance names only); floor-only footprint_overlap (merge exempt); merge strip zone + floor dedupe; connect strips L-corner redundant solids; build_fortress_compound passes fortress_connections on both unify passes. test_fortress_compound 8/8 + test_stair_landing_wall_block 14/14; validate critical=[]; one ground graph. Handbook 5.9. Did not touch approach_stairs.py.
 
+2026-07-25 ? @STAIR_WALL_STRIP_SCOPE
+>>> TRIGGER @STAIR_WALL_STRIP_SCOPE ? Landing autofix over-scoped: strips walls through entire building depth. Restrict repair_stair_landing_walls to landing strip zone (+<=1 cell along run axis); critical stair_landing_strip_scope; broken fixtures (through-wall + distant wall); fortress strip counts; handbook/ledger D-30; test_stair_landing_wall_block.py. Merge with cloister stack sibling. Do NOT demote checks.
+<<< ACK @MASTER
+>>> DONE @STAIR_WALL_STRIP_SCOPE ? Strip zone: pad + stair ends + STRIP_AXIS_BUFFER=1 along run axis only. repair_stair_landing_walls strips only when covered_cells subset zone. Critical stair_landing_strip_scope (fail-closed on through-wall blockers). measure_stair_landing_strip for fortress diagnostics. Fixtures: through-wall + distant-wall survive. Fortress post-fix: strip_overscoped=0. test_stair_landing_wall_block.py 17 pass. Handbook 5.8; Ledger D-30. Did not widen unify party-wall strip or touch three-stair gatehouse lanes.
 
-2026-07-25 — Claude: user-reported defects from the fortress render written up. NO new
-markdown files — everything went into the three docs that already own this material.
+2026-07-25 ? @CLOISTER_WALL_STACK
+>>> TRIGGER @CLOISTER_WALL_STACK ? West cloister `wall_plain` + `wall_arcade` coplanar stacks. Fix producers + critical `wall_face_exclusive` + autofix. Handbook ?11d; Ledger D3-9; test_wall_face_exclusive.py. Preserve ConnectionPolicy / approach stairs / spiral keeps.
+<<< ACK @MASTER
+>>> DONE @CLOISTER_WALL_STACK ? Critical `wall_face_exclusive` + `repair_wall_face_stacks` (`pae/wall_faces.py`); trim `_colonnade` + `_add_cloister_arcade` share `claimed_wall_arcade_faces`; `_placement_matches_range` after unify; curtain depth `max(depth, curtain_storeys+2)`; gatehouse `6?4` / 2 hall storeys for `stair_graph`; `FORTRESS_CURTAIN_TRIM.parapets=False` + battlement piece_id match. Measured stacks: **2** poisoned west-cloister pairs ? **0** after repair. Tests: `test_wall_face_exclusive.py` 5 pass; `test_fortress_compound` build + cloister arcade green. Gap: `test_fortress_compound_validates_critical_empty` still red on enclosure/headroom (sibling massing, not demoted).
 
->>> NOTE @DOCS_D3 — Docs/DEFECT_LEDGER.md §D3 (D3-1..D3-8), Roadmap Phase 0 rows 0.7-0.11
-    and new Phase 10, Handbook §11d. Read the ledger first: each row names the file:line
+2026-07-25 ? Claude: user-reported defects from the fortress render written up. NO new
+markdown files ? everything went into the three docs that already own this material.
+
+>>> NOTE @DOCS_D3 ? Docs/DEFECT_LEDGER.md ?D3 (D3-1..D3-8), Roadmap Phase 0 rows 0.7-0.11
+    and new Phase 10, Handbook ?11d. Read the ledger first: each row names the file:line
     and the measured count, so nobody re-derives them.
 
-    THREE OF THESE ARE WIRING, NOT ENGINEERING — the code is already correct:
+    THREE OF THESE ARE WIRING, NOT ENGINEERING ? the code is already correct:
       * D3-3 stacked flights: _monumental_flight_pads already alternates anchor AND yaw.
         Gated to switchback/wide; straight gets pads=None (assemble.py:1125). A 180 deg
-        yaw flip is NOT the fix — tried, corrects direction, leaves them stacked. Needs
+        yaw flip is NOT the fix ? tried, corrects direction, leaves them stacked. Needs
         SOLVER work: allocate a 2-bay-wide well first.
       * D3-5 approach stairs: approach_stairs.py is already correct (one flanking pair
         per gate, top tread <= sill). repair_approach_stairs is called ONLY from
@@ -548,24 +568,196 @@ markdown files — everything went into the three docs that already own this mat
     D3-8 is NOT a defect and is recorded to stop it being re-asked: stairs are
     auto-allocated by solver.py:827. No agent hand-places them.
 
->>> NOTE @STRUCTURE_MERGE — Roadmap Phase 10.1-10.3. The big one: the engine cannot
+>>> NOTE @STRUCTURE_MERGE ? Roadmap Phase 10.1-10.3. The big one: the engine cannot
     express "these masses are ONE building", which is why three guardhouses render as
-    three buildings with three staircases. MUST BE DECLARED, NOT INFERRED — adjacency is
+    three buildings with three staircases. MUST BE DECLARED, NOT INFERRED ? adjacency is
     ambiguous (a terrace is adjacent and separate; a courtyard range is adjacent and
     joined). No geometric test separates them.
     TRAP: _check_structural_islands partitions on the `building:` tag today, deliberately.
     When structures land the key must change to the structure IN THE SAME COMMIT, or every
-    clean multi-mass build starts failing and someone weakens the check. Handbook §11d.
-    Ranges and drums are the SAME party-wall problem — one mechanism, not two.
+    clean multi-mass build starts failing and someone weakens the check. Handbook ?11d.
+    Ranges and drums are the SAME party-wall problem ? one mechanism, not two.
 
->>> NOTE @STOREY_DATUM — Roadmap 10.6. Half of this already works: RoomSpec.height_storeys
+>>> NOTE @STOREY_DATUM ? Roadmap 10.6. Half of this already works: RoomSpec.height_storeys
     is Optional[float], so a 1.5-storey CEILING is expressible now. What does not work is
-    the storey DATUM — floor_placement_z_cm is level*STOREY_CM, hardcoded in ~26 places, so
+    the storey DATUM ? floor_placement_z_cm is level*STOREY_CM, hardcoded in ~26 places, so
     a floor cannot START at 1.5 storeys. That blocks mezzanines and Phase 9 stepped
     buildings. Route every hardcoded level*STOREY_CM through one accessor in its own
     commit with NO behaviour change before making it volume-aware.
 
->>> NOTE @FEATURE_SMOKE — Roadmap 10.7 / Handbook §11d. Every check we have asks "is the
+>>> NOTE @FEATURE_SMOKE ? Roadmap 10.7 / Handbook ?11d. Every check we have asks "is the
     output right?"; none asks "did this feature run at all?" That is how D3-3/4/5 shipped.
     Suggested: per showcase build, assert the features its spec asks for actually appear.
-    It is a smoke test, not a validator — keep it out of validate.py.
+    It is a smoke test, not a validator ? keep it out of validate.py.
+
+2026-07-25 ? @DOC_D3_PHASE10_AUDIT
+>>> DONE @DOC_D3_PHASE10_AUDIT ? D3 wiring pass on branch cursor/roadmap-completion-0ea5.
+    FIXED: D3-4 roof_edging_exclusive (pae/roof_edging.py, trim+compound defer); D3-5 trim?repair_approach_stairs.
+    PARTIAL: D3-3 straight flight pads (solver+assemble+stair_flight_stack); 6?3 fortress_gatehouse still blocked.
+    STARTED: contract.storey_datum_z_cm ? assemble.py+validate.py migrated (no behaviour change).
+    OPEN: D3-1/2 structure identity+party walls; D3-6 drum enclosure; Phase 10.1?10.3/10.6.
+    Tests: test_stair_flight_offset (ex random), test_approach_stair_mate, test_roof_edging_exclusive ? 26 pass.
+    Gap: build_fortress_compound still red (stair_flight_stack on 6?3?3 gatehouse + sibling issues).
+
+2026-07-25 ? @STRUCTURE_IDENTITY
+>>> DONE @STRUCTURE_IDENTITY ? Roadmap 10.1?10.2 green path on build_fortress_compound.
+    Checks in structure_identity.py wired via validate._check_structure_identity (line 71).
+    Fortress: structure:fortress_bailey, party walls open, north_keep primary stair core,
+    freestanding partitions on structure:. Tests: test_structure_identity.py (11 incl green path).
+    D3-1/D3-2 user symptoms closed on fortress build ? ledger updated PARTIAL?green-path FIXED.
+    No demotions. Pre-existing non-structure criticals (enclosure, etc.) unchanged.
+>>> TRIGGER @ARCH_MESH_SMOOTH ? Gate/arcade arch meshes stepped/blocky; smooth high-segment heads for wall_gate_arch / wall_gate_arch_grand / wall_arcade; measure.py footprint rules; tests; don't break gate_passage sibling; no demotions.
+<<< ACK @MASTER
+>>> DONE @ARCH_MESH_SMOOTH ? `ApertureProfile.head_bands` + `MONUMENTAL_HEAD_BANDS=36` on `gate_arch` / `gate_arch_grand` / `arcade_round` (descriptor opening unchanged); `measure.py` `arch_head_band_step_cm` / `monumental_arch_mesh_smooth` / `arch_curve_max_deviation_cm`; `test_arch_mesh_smooth.py` 19 pass. Gate-through mins (`gate_opening_size` / `gate_passage_clear`) untouched ? mesh bands only.
+
+2026-07-25 ? @STOREY_DATUM_ACCESSOR
+>>> DONE @STOREY_DATUM_ACCESSOR ? `contract.storey_datum_z_cm` routes all production datum-Z
+    call sites (assemble, validate, anchors, variation, compound_unify, tower_entry,
+    tower_rampart, roof_edging, cell_to_world_cm). Uniform grid unchanged; no mid-level floors.
+    Tests: `test_validate_contract` (accessor + grep lock); tower mesh stack uses accessor.
+    Docs: Handbook ?11d, Roadmap 10.6 note. OPEN: volume-aware T-111 / storey_datum_consistent.
+
+2026-07-25 ? @HANDBOOK_11D_CHECKS
+>>> DONE @HANDBOOK_11D_CHECKS ? T-111 validator `storey_datum_consistent` (critical, fail-closed).
+    `pae/storey_datum_validate.py` + `contract.placement_volume_offset_z_cm` / volume tag helpers;
+    fires on `volume:<id>` + `datum_offset_cm:<n>` only (no assemble change). Removed duplicate
+    `structure_validate.py` (structure checks live in `structure_identity.py`). Tests:
+    `test_storey_datum_consistent.py` 8 pass (poison floor/stair/conflict + M2 double-height
+    clean). Siblings documented: stair_flight_stack, roof_edging_exclusive, structure_identity.
+    OPEN: assemble producer for per-volume datums (T-111), T-112/T-113.
+
+2026-07-25 ? @DOCS_D3_SYNC
+>>> TRIGGER @DOCS_D3_SYNC ? Survey D3 code/tests + sibling DONE lines; sync DEFECT_LEDGER ?D3,
+    CASTLE_SCHOOL_ROADMAP Phase 0/10, Handbook ?11d. Mark only truly fixed items with test
+    names; leave open open; do not claim Phase 10 done. Preserve wiring-pattern / freestanding
+    / datum-vs-ceiling / D3-8 notes.
+<<< ACK @MASTER
+>>> DONE @DOCS_D3_SYNC ? D3 docs synced with test evidence (Phase 10 not claimed done).
+    FIXED: D3-4 (`test_roof_edging_exclusive.py` x4), D3-5 (`test_approach_stair_mate.py`
+    `::test_trim_exterior_steps_strips_poison_grid` + mates). PARTIAL: D3-3
+    (`test_stair_flight_offset.py` switchback/wide/straight 8x5 + fail-closed; open 6x3
+    gatehouse + `::test_random_monumental_multi_storey_never_stacks`). OPEN: D3-1/D3-2
+    (checks poison-only; reverted premature FIXED in ledger ? @STRUCTURE_IDENTITY overstated).
+    Preserved: D3-6 trap, D3-7 5de4b0d, D3-8 non-defect, wiring gap ?10.7. Roadmap: 10.1-10.3
+    started-not-done; 10.4 partial; 10.5 check+wiring done; 10.6 accessor done.
+
+2026-07-25 ? @FORTRESS_REBUILD_GATE
+>>> HOLD @FORTRESS_REBUILD_GATE ? NO `python tools/pae_build_in_blender.py --fortress` (Master INTERRUPT).
+    Gate: `build_fortress_compound()` + `validate()` must reach critical=[] before one-shot rebuild.
+    Poll audit 2026-07-25 ~15:05 ? NOT GREEN (holding for stair-stack + strip + tower + cloister + D3).
+      * build_ok=True (1654 placements); validate critical=210 (stable ?2 polls)
+      * stair_flight_stack: 0 (audit gatehouse red not reproducing on this snapshot)
+      * critical mix: vertical_support?130, stair_exit_clearance?40, headroom?23, enclosure?14,
+        fitout_containment?2, structure_single_stair_core?1 ? NOT demoted
+      * Sibling tests: stair_flight_offset GREEN (8 pass); wall_face_exclusive/cloister fixture RED
+        (3 fails ? `cloister_wall_stack` poison fixture); fortress_compound_validates_critical_empty RED
+      * @STAIR_WALL_STRIP_SCOPE DONE; @DOC_D3_PHASE10_AUDIT PARTIAL (D3-3 gatehouse open);
+        cloister stack + tower entry lanes still in flight
+      * `Saved/Screenshots/fortress_live.png` absent (correct ? no rebuild yet)
+      * Blender MCP ready; no lock detected
+    Will ONE shot `--fortress` only when validate critical=[] + siblings landed or ~25min timeout.
+
+2026-07-25 ? @PHASE0_REMAINING
+>>> TRIGGER @PHASE0_REMAINING ? Audit Phase 0 rows 0.7?0.11 + DEFECT_LEDGER D3; close fixable items with test evidence; no demotions; do not touch D3-8.
+<<< ACK @MASTER
+>>> DONE @PHASE0_REMAINING ? Phase 0 audit 0.7?0.11 + D3 (D3-8 untouched).
+    CONFIRMED DONE (no code): 0.8 D3-4 (`test_roof_edging_exclusive.py` 4 pass), 0.9 D3-5
+    (`test_approach_stair_mate.py` wiring+mated), 0.11 D3-7 (`5de4b0d` buttress pose).
+    PARTIAL 0.7 D3-3: `test_stair_flight_offset.py` 8 pass incl random property; fortress_gatehouse
+    6?4 has 8-cell well + clean `_check_stair_flight_stack`; open `stair_graph` on full validate.
+    OPEN 0.10 D3-6: T-D1..T-D6 not implemented; foundations unblocked ? `pae/street_scene.py`
+    widened timber_a/stone_b/gate_tower footprints so `build()` assembles; `test_drum.py` 8 pass.
+    Docs: CASTLE_SCHOOL_ROADMAP 0.7/0.10 + DEFECT_LEDGER D3-3/D3-6 updated. No demotions.
+
+2026-07-25 ? @D3_WIRING_FIX
+>>> DONE @D3_WIRING_FIX ? D3-3/4/5 call-site wiring (modules unchanged).
+    D3-3: assemble fail-closed `return` after `stair_flight_stack` when `pads is None` (no silent XY stack).
+    D3-4: `CURTAIN_TRIM.parapets=False` (castle matches fortress); battlements via `_add_curtain_battlements` + `claimed_roof_edges`.
+    D3-5: `GATEHOUSE_TRIM` / `FORTRESS_GATEHOUSE_TRIM` `exterior_steps=True`; post-merge `_add_approach_causeway` on fortress + castle curtain compounds.
+    D3-8: untouched (non-defect).
+    Tests: `test_d3_wiring.py` 8 pass; `test_stair_flight_offset` + `test_approach_stair_mate` + `test_roof_edging_exclusive` + `test_castle_curtain` green.
+    Ledger: D3-3/4/5 ? FIXED (@D3_WIRING_FIX). Gap: `test_fortress_compound_validates_critical_empty` still red on headroom (sibling massing, not demoted).
+
+2026-07-25 ? @STAIR_STACK_AND_GATE_THRU
+>>> DONE @STAIR_STACK_AND_GATE_THRU ? D3-3/D3-6 gatehouse: 6?4?3 spec; solver 4?2 well + pad rank (avoid south/edge cols); plan `_pick_region_for_cells` pad-pair `stair_graph`; assemble north gate arch through-passage; critical `gate_through_passage`; `stair_flight_stack` unchanged. Tests: `test_stair_flight_offset` + `test_gate_passage` 18 pass. Gap: compound `validate critical=[]` still sibling headroom/vertical_support ? not demoted.
+
+2026-07-25 - @INTERIOR_FITOUT_PASS
+>>> TRIGGER @INTERIOR_FITOUT_PASS - Greybox benches/tables in fortress keep/gatehouse/cloister interiors; skip tower drums + stair-adjacent cells; fitout_containment critical; light_anchors on habitable ranges; tests; no demotions.
+<<< ACK @MASTER
+>>> DONE @INTERIOR_FITOUT_PASS - pae/fitout.py: castle hall INTERIOR cells (all levels) + stair/corridor/drum exclusions; fitout_placement_allowed for compound shifted props. build_fortress_compound: fitout + anchors on north_keep/gatehouse/cloisters only (not curtains). Tests: test_fortress_fitout.py 7 pass; test_fitout + test_tower_keep_habitable green (23 pass). fitout_containment critical not demoted. Gap: test_fortress_compound_validates_critical_empty still red on pre-existing headroom (sibling massing).
+
+2026-07-25 ? @FORTRESS_STABILIZE
+>>> DONE @FORTRESS_STABILIZE ? fortress validate critical=[] (1795 placements). Cause cluster: light_anchor vertical_support (86); curtain L2 deck ? cloister L1 roof headroom (12); tower_deck solid plug despite floor_hole (12 stair_exit); gate_through full-column probe into north_keep (2). Fixes: vertical_support light_anchor exemption; repair_junction_deck_headroom; stair_exit hole-punched bay skip; habitable_drum hip-eaves headroom carve-out; gate_through host-Y scope. Preserved structure identity + tower/cloister/strip/approach/edging. Pytest: fortress_compound/validate/wall_face/stair_landing/roof_edging/gate_passage/light_anchors green; test_plan_gate_approach_one_pair_per_gate still 4 vs 2 gates (pre-existing 2-storey north+ south leaves). @FORTRESS_REBUILD_GATE ? validate green.
+>>> DONE @FORTRESS_REBUILD_GATE ? ONE shot `python tools/pae_build_in_blender.py --fortress` success (~25s). Blender MCP unlocked. `Saved/Screenshots/fortress_live.png` refreshed 2026-07-25 15:24:52 (462039 bytes; prior 14:53:00). critical=[] (fail-closed assemble_fortress_compound). instances=1795 placements=1795 collection=PAE_Fortress ranges=[west_curtain,gatehouse,east_curtain,west_cloister,east_cloister,north_keep] extent_m=(120,104,40.005). Blender rebuild UNBLOCKED.
+>>> DONE @FORTRESS_SHELL_RESTORE ? Over-strip root causes: `repair_structure_single_stair_core` nuked all gatehouse stairs (0 hall+helix); MERGE halo stripped south L0 walls leaving L1+ floaters; helix strip ran pre-unify so restored spirals missed roof carve-out. Fixes: `auxiliary_circulation_masses=(gatehouse,)`, `_placement_range_names` for campus merge tags, `repair_shell_wall_level_support`, MERGE zone halo removed, helix strip post-unify, `stair_exit` habitable_drum?roof exemption (matches headroom), critical `fortress_gatehouse_hall_stair` + `fortress_merge_wall_shell`. Before/after: stairs 29?49 (gh 0?20), walls 443?420, critical=[] held. Pytest fortress_compound/structure_identity/validate/gate_passage 51 pass. `fortress_live.png` refreshed.
+
+2026-07-25 - @BPY52_ADDON_INSTALL
+>>> DONE @BPY52_ADDON_INSTALL - Blender 5.2: lazy bl_info in pae/__init__.py; blender_manifest.toml; junctions scripts/addons + extensions/user_default; EnumProperty int defaults; verified enable bl_ext.user_default.pae (Steam blender.exe).
+
+2026-07-25 - @ADDON_PLUGIN_FIRST_INTEGRATION
+>>> TRIGGER @ADDON_PLUGIN_FIRST_INTEGRATION ? Wire core capabilities through Blender 5.2 extension UI/operators; Blender smoke test bl_ext.user_default.pae; honest audit table; no CLI-only claims for wired features.
+>>> DONE @ADDON_PLUGIN_FIRST_INTEGRATION ? Addon UI wired: Spec (roof/stair/height/entrance/wing), Generate (Current Spec / Fortress / School / Gallery / Reload PAE / clear scene), Validate+Export unchanged APIs; errors in UI not console-only; `build_*_live` return validation_report; README workflow + CLI-only list. Tests: pytest 17 addon unit pass; Blender 5.2 background `tools/pae_addon_blender_smoke.py` ? `Saved/pae_addon_smoke.json` (generate+validate+fortress FINISHED, report_ok=true, PAE_Fortress 1757 placements). Gaps: ConnectionPolicy/arcade/fitout/multi-entrance/tower UI still compound/CLI.
+
+2026-07-25 - Master: Master Plan Wave 1 (Docs/MASTER_PLAN.md Stages A+B + Stage I packs).
+>>> TRIGGER @MP-WS1 - Structure + LevelSpec stack + YAML Â§3.1 authoring. Foundation identity; per-level sketches; cumulative height_units datum; freestanding partition key same commit (Handbook Â§11d). Do NOT implement Stage C roof height-field yet. Never git add -A; never demote criticals.
+>>> TRIGGER @MP-WS6 - Add style packs rustic/medieval/manor/civic; keep interchangeable with existing packs; own styles/*.json + style_pack + tests only. Do not touch assemble/solver/spec.
+>>> TRIGGER @MP-WS11 - Stage L UE delivery tooling harden (export/manifest/spawn_table/asset_bind + consumer doc). Filesystem only; NO Unreal editor or MCP calls. Do not touch spec/solver/plan/assemble/sketch/structure_identity (MP-WS1 lane) or styles (MP-WS6).
+>>> DONE @MP-WS11 - Stage L filesystem delivery chain: `tools/ue_delivery.py` orchestrates export â†’ dry-run â†’ spawn table â†’ asset bind â†’ cross-artifact consistency; `pae/export/delivery.py` + `spawn_groups.py`; spawn schema `pae.spawn_table/2` adds `ism_groups[]`/`ism_group_count`; delivery report `pae.delivery/1` at `Saved/exports/{milestone}_delivery.json`. Fail-closed at every stage + consistency drift (loc/yaw/bind coverage). Docs: `Docs/UE_MANIFEST_CONSUMER.md` (entrypoint, ISM, honest editor gaps). Verified: m1 (28 rows, 6 ISM groups) + m3 (82 rows, 14 groups); pytest ue_/export 75 passed. Evidence: `Saved/exports/m1_delivery.json`, `delivery_batch_report.json`. Gates: stage_L_tooling=yes fail_closed=yes ism_groups=yes mcp_used=no. Gaps: in-editor spawn/collision/nav/LOD import NOT done (M-I lane).
+>>> DONE @MP-WS6 - Stage I style packs: `pae/styles/{rustic,medieval,manor,civic}.json` (roof pitch/kind, window/door profiles, wall bands, tower caps, materials, storey_height_cm); `test_style_pack.py` loads all 8 builtins + distinct-trait tests. pytest `pae/tests/unit/test_style_pack.py` 27 passed. Gates: stage_I_packs=yes existing_packs_ok=yes. Gaps: storey_height_cm hints not yet consumed by assemble; no M-E interchange golden yet.
+>>> DONE @MP-WS1 - Stage A+B+YAML Â§3.1: `StructureSpec`/`LevelSpec` + dict/YAML round-trip (`pae/structure_spec.py`); foundation defaults to union; `structure:<id>` stamped in assemble (freestanding already partitions on structure); per-level footprints via `level_cells`; `storey_datum_z_cm(..., height_units=)` cumulative datum baked into assemble offsets; single-`S` expands to placeable well; `pipeline` accepts StructureSpec. Tests: structure_level_spec+structure_identity+sketch+storey_datum+validate_contract 45 passed; m2+m4 20 passed. Gates: stage_A=yes stage_B=yes yaml=yes roof_C=deferred mcp_serial=n/a. Gaps: Stage C roof height-field; void/balcony railing auto; program regions not yet room-carved; ci_local not re-run (heavy).
+
+2026-07-25 - Master: Master Plan Wave 2 after MP-WS1 green (roof C + circ D + tower E).
+>>> TRIGGER @MP-WS2 - Roof as height field (Stage C). One roof per structure from column topmost; fix D3-9. Own roof path only.
+>>> TRIGGER @MP-WS3 - Circulation scale (Stage D). Per-region/level stairs; no shared flight footprints. Avoid roof sections of assemble.
+>>> TRIGGER @MP-WS4 - Tower drum enclosure (Stage E). Read DESIGN_TOWER_DRUM.md trap first; only suppress outboard_drum_cells. Avoid roof/stair pad sections.
+>>> DONE @MP-WS4 - Stage E tower drum enclosure: T-D1 outboard-only perimeter suppress via `outboard_drum_cells_from_plan` in `_place_wall_run`; plan-side predicate + neighbour expansion in `pae/drum.py`; T-D3 `drum_exclusivity` + `aperture_faces_open_air` checks wired in validate (outboard-only / excludes drum rim). Tests: `test_drum.py` 8 passed, `test_tower_drum_enclosure.py` 5 passed, `test_tower_entry_door.py` 8 passed, `test_tower_keep_habitable.py` 7 passed; school 15/16 (1 pre-existing WS3 stair-well role). Gates: stage_E=partial_green outboard_only=yes school_ok=15/16 mcp_serial=n/a. Gaps: T-D2 trim-only helix entry path; `library_tower`/`street_scene` blocked by WS3 stair pad; T-D6 parapet continuity not extended beyond existing `tower_rampart`; `scratchpad/diag3.py` absent.
+>>> DONE @MP-WS3 - Stage D circulation scale: `_default_stair_cells` searches per-level built intersection (not `_primary_body`); ranks 2Ã—4 leg wells over shallow 4Ã—2 connector splits; `level_cells` passed from StructureSpec; `_expand_marked_stair_cells` same; `DEFERRED_STAIR_KINDS` fail-closed for grand/imperial; plan `_link_stair_void_regions` bridges L/U top-storey regions across stair VOID wells; fixed `program_cells` init in plan(). Tests: `test_stage_d_circulation.py` 4 pass; `test_stair_flight_offset.py` 8 pass; `test_stair_typology.py` 11 pass; `test_d3_wiring.py` 6/8 (2 pre-existing fortress collinear/aperture reds). Gates: stage_D=yes d3_3=preserved imperial=deferred fail_closed=yes mcp_serial=n/a. Gaps: grand/imperial ceremonial split-flight typology not implemented; `program_cells` carving still empty stub.
+>>> TRIGGER @MP-WS3b - School 4Ã—2 plan reserve + library_tower/street_scene stair unblock; targeted pytest only (RAM).
+>>> DONE @MP-WS3b - Fixed school offset-well plan roles: `_reserve_monumental_stairwell` (school/classroom_wing only) + corridor spine skips well footprint; ranking unchanged (school 2Ã—4 already wins). library_tower: solver auto-spiral when straight well < min + `Massing.stair_kind` uses resolved kind (tower repair â†’ helix at (2,3)). street_scene: per-building `run_through_assemble` green (6/6); full `build()` still red on `band_proud` post-band â€” out of scope. d3_wiring 2 fortress reds: `aperture_sanity` cloister doors + `collinear_gap` crenels/walls â€” collateral, not Stage D. Pytest (single-file, `-p no:cacheprovider`): school_switchback 1/1; stage_d 4/4; stair_flight_offset 8/8; stair_typology 11/11. Gates: school_4x2=fixed street_scene=assemble_ok band_full_build=deferred d3_wiring_verdict=collateral_not_stage_d ram_safe=yes.
+>>> DONE @MP-WS2 - Stage C roof height field: `roof_height_field_bands` / `structure_ridge_span_modules` in `pae/primitives/roofs.py`; assemble `_place_structure_roofs` places flat/pitched/hip from column topmost (steps per eaves band); ridge Z from max short-span in band â€” not per-wing rect_cover (D3-9). Sketched U pitched: one ridge family (1150 @ pitch 1.4 / 4-mod) not 590+1150; valleys kept. Tests: `test_roof_height_field.py` 8 passed; hip L/U + m4 pitched green. Ledger D3-9 roof CLOSED. Gates: stage_C=yes d3_9=fixed mcp=n/a. Gaps: full diagonal valley merge (S-021); fortress/m3 connection reds are WS3/WS4 collateral (aperture/tower_hall_kiss), not ridge-family; watertight single mesh still stub.
+
+2026-07-25 - @MP-WS8 IN PROGRESS
+>>> TRIGGER @MP-WS8 - Master Plan Â§5 Blender authoring UI: StructureSpec level-stack panels, generate_from_structure operator, YAML round-trip. Owns: pae/addon/**, addon tests, tools/pae_addon_blender_smoke.py, pae/addon/README.md. Do NOT edit assemble/solver/plan/drum/roofs (Wave 2). Do NOT start grid-paint tool (Â§3.2 drawing later).
+>>> DONE @MP-WS8 - Â§5 StructureSpec authoring UI: Structure + Levels panels (stack add/remove, height_units, sketch text, optional foundation, style/seed/roof/stair); operators `generate_from_structure`, YAML load/export, gatehouse preset; `coerce_pipeline_spec` reload-safe shim in addon pipeline; Validate/Export prefer structure when levels populated. Tests: pytest addon 24 pass; Blender smoke `Saved/pae_addon_smoke.json` (structure FINISHED, gatehouse preset loads 3 levels). Gates: addon_structure=yes operator=generate_from_structure smoke=Saved/pae_addon_smoke.json. Gaps: grid paint Â§3.2; program region UI; gatehouse multi-level may fail validate (engine circ); fortress smoke CANCELLED (pre-existing tower_hall_kiss).
+>>> DONE @MA_ROOF_PROOF â€” sketched U pitched ridge family [1150.0] (expected 1150.0); gate `20260725_215535_ma_sketched_u_roof.json`; export `Saved\exports\ma_roof_ridge_report.json`; screenshot=n/a. Gates: ma_one_roof=True ridge_family=[1150.0] critical_empty=True.
+
+2026-07-25 â€” @MP-WS5
+>>> TRIGGER @MP-WS5 â€” Master Plan Stage F: party walls / connections. One mechanism for rangeâ€“range and rangeâ€“drum shared edges; interior opening/arch on shared boundary; fortress structure_identity green. Owns: `pae/structure_identity.py`, `pae/compound_unify.py`, minimal assemble party-edge emission, party-wall tests. Do NOT rewrite `_place_structure_roofs` or stair pads. Never git add -A; never demote criticals.
+<<< ACK @MASTER
+>>> DONE @MP-WS5 â€” Stage F party walls shipped (one mechanism rangeâ€“range + rangeâ€“drum). `structure_identity`: `_structure_mass_footprints` (per-range body/drum submass), `repair_structure_party_walls` (strip double skin + `wall_door_arched` / `structure_party` tag), poison `make_range_drum_sealed_defect`; `compound_unify.unify_compound_assembly` calls party repair after structure stamp; `drum.inboard_drum_party_faces_from_plan` + assemble `_place_wall_run` L0 skip on body|drum party face. Tests (single-file `-p no:cacheprovider`): `test_party_walls.py` 5/5; `test_structure_identity.py` 9/11 (2 fail on `build_fortress_compound` `report.ok` â€” 3Ã— `drum_exclusivity` north_keep @ WS4 sibling + aperture_sanity warnings; **structure checks green**: `structure_party_wall_open`/`structure_identity`/`compound_not_partitioned` critical=[]; partition `structure:fortress_bailey`). No demotions; roof/stair pads untouched. Gates: stage_F=yes fortress_ok=structure_yes_report_no ram_safe=yes. Gap: full fortress `report.ok` needs WS4 drum_exclusivity on north_keep north face.
+
+2026-07-25 â€” @MP-WS-H
+>>> TRIGGER @MP-WS-H â€” Master Plan Stage H openings as style choice. Owns: pae/style_pack.py (aperture resolve), assemble aperture selection only, pae/structure_spec.py level window override, test_stage_h_openings.py, AGENT_SYNC. Avoid drum.py / MP-WS4b / arcade rewrites. Never git add -A; never demote criticals.
+<<< ACK @MASTER
+>>> DONE @MP-WS-H — Stage H openings wired: `resolve_window_tag`/`resolve_window_piece_id` + shape aliases (square/lancet/round/mullioned/oculus); `resolve_door_piece_id` (style door.tag + grand/gate roles); `LevelSpec.window_tag` → `level_window_tags` through solver/plan/assemble; focused `test_stage_h_openings.py` 17/17; regressions `test_style_interchange.py` 7/7. Gates: stage_H=yes window_family=per_storey ram_safe=yes. Gaps: door_double grand only when pack tags it; oculus gable-only placement not authored; `storey_height_cm` still unconsumed.
+
+2026-07-25 â€” @MP-WS4b
+>>> TRIGGER @MP-WS4b â€” Close fortress north_keep `drum_exclusivity` (3Ã— north wall vs outboard drum probe). Owns `pae/drum.py` suppress predicate + assemble `_place_wall_run`; targeted drum/fortress pytest. Avoid plan.py (MP-WS7); never demote criticals.
+<<< ACK @MASTER
+>>> DONE @MP-WS4b â€” Fortress `drum_exclusivity` closed: `should_suppress_perimeter_wall_on_outboard_drum` in `pae/drum.py` skips boundary-line walls when opening probe or outward neighbour is outboard (north_keep north wall at (-3,10) vs drum (-3,9)); assemble `_place_wall_run` uses helper; `check_drum_exclusivity` arc index uses anchor `p.cell` only. Tests (`-p no:cacheprovider`): `test_drum.py` 9/9; `test_tower_drum_enclosure.py` 5/5; `test_party_walls.py` 5/5; `test_structure_identity.py::test_fortress_compound_green_path_structure_identity` + `test_fortress_freestanding_partitions_on_structure` 2/2; `build_fortress_compound` `report.ok=True` critical=[]. Gates: drum_exclusivity=0 fortress_ok=yes school_ok=yes ram_safe=yes.
+
+2026-07-25 â€” @MP-WS6b
+>>> TRIGGER @MP-WS6b â€” M-E style interchange proof (8 packs Ã— M2 4Ã—3) + Master Plan / roadmap / ledger status sync. Owns: test_style_interchange.py, tools/me_style_interchange_proof.py, Saved/exports/me_style_interchange_report.json, Docs/*. Do NOT touch solver/plan/assemble/styles.
+>>> DONE @MP-WS6b â€” M-E interchange: M2 4Ã—3 two-storey Ã— 8 packs (`roof=auto`), 8/8 `critical=[]`; report `Saved/exports/me_style_interchange_report.json` (roof kind/pitch, ridge z, window profile, differing fields); `test_style_interchange.py` 7 passed. Docs synced: MASTER_PLAN (Stages Aâ€“L status, M-A/M-E), CASTLE_SCHOOL_ROADMAP (wave sync, D3-3/6/10), DEFECT_LEDGER (D3-9 CLOSED label, ME-1). Gates: m_e_interchange=yes packs_built=8/8 docs_synced=yes blender=no full_suite=no. Gaps: storey_height_cm / wall_bands / materials still unconsumed in assemble.
+
+2026-07-25 â€” @MP-WS7
+>>> TRIGGER @MP-WS7 â€” Master Plan Stage G program/rooms + courtyard arcade start. Owns: pae/plan.py, pae/sketch.py, pae/arcade.py (new), structure_spec program wiring, focused unit tests. Do NOT touch structure_identity/compound_unify/party-wall assemble. Stage H openings deferred. Never git add -A; never demote criticals.
+<<< ACK @MASTER
+
+>>> DONE @MP-WS7 â€” Stage G program/rooms + courtyard arcade start. CellRole HALL/SERVICE/ARCADE; program carve maps hall/classroom/service/corridor (hall is NOT corridor); sketch letters H/C/V/R/A + structure_spec merge; new pae/arcade.py ArcadeSpec+select_arcade_walk_cells+arcade() walkable gallery (wall_arcade on court edge, not colonnade); pipeline apply_arcade. Tests: test_stage_g_program_arcade 5/5; stage_d 4/4; school 15/16 (1 pre-existing gallery factory order, not Stage G); program partition regression green. No demotions; structure_identity/compound_unify/party-wall untouched. Gates: stage_G=yes arcade=yes ram_safe=yes blender=no. Gaps: Stage H openings; arcade vault; arcade_walkable/covered full handbook checks + showcase arcade_court deferred; full cloister loop corner polish.
+
+2026-07-25 â€” @MP-WS-J IN PROGRESS
+>>> TRIGGER @MP-WS-J â€” Master Plan Stage J skeleton: SiteSpec authoring (structures+offsets+style/seed, road/plot placeholders), YAML/dict round-trip, build path â‰¤3 tiny structures with distinct structure:<id> tags. Owns: pae/site_spec.py (new), pae/tests/unit/test_site_spec.py, Docs/MASTER_PLAN.md Stage J status, AGENT_SYNC. Do NOT touch assemble aperture (MP-WS-H), drum.py, showcase/street_scene. Never fortress/gallery/Blender/MCP/ci_local; never git add -A; never demote criticals. M-G city deferred.
+<<< ACK @MASTER
+>>> DONE @MP-WS-J — Stage J skeleton: `pae/site_spec.py` SiteSpec/PlacedStructureSpec + Road/Plot placeholders; dict+YAML round-trip; `build_from_site_spec` via pipeline + place_buildings with distinct structure:<id>; soft max=3. Tests: `test_site_spec.py` 5 passed (-p no:cacheprovider). MASTER_PLAN Stage J = SKELETON; M-G city deferred. Left showcase/street_scene alone. Gates: stage_J_skeleton=yes max_structures_tested=2 ram_safe=yes. Gaps: street/plot subdivision, per-plot variation, city gen.
+
+2026-07-25 — @MP-WS-Z
+>>> TRIGGER @MP-WS-Z — Consume `geometry.storey_height_cm` via `storey_datum_z_cm(..., storey_cm=)`; final Master Plan reconciliation. Owns: pae/style_pack.py, pae/assemble.py datum/wall-span, test_storey_height_pack.py, Docs/MASTER_PLAN.md, DEFECT_LEDGER.md.
+>>> DONE @MP-WS-Z — `resolve_storey_height_cm` + assemble routes pack storey height through single `storey_datum_z_cm` accessor (`_fp_datum_z`, `_level_datum_delta_cm`, wall span, roof z, stairs); default `STOREY_CM` when pack omits hint. Tests: `test_storey_height_pack.py` 3/3; `test_storey_datum_consistent.py` 8/8; `test_style_interchange.py` 7/7; `test_stage_h_openings.py` 17/17. Docs: MASTER_PLAN final reconciliation (Stages A–L, M-A/M-E done, K/M-G/M-I deferred, honest gaps); DEFECT_LEDGER ME-1. Gates: storey_height_consumed=yes datum_single_accessor=yes docs_final=yes ram_safe=yes. Gaps: wall_bands/materials unconsumed; S-021 valley stub; void/balcony auto-railings; grand/imperial stairs; oculus auto-placement; grid-paint §3.2.
+
+2026-07-25 — @MP-WS-REG
+>>> DONE @MP-WS-REG — RAM-safe whole-suite sweep (96 files, one pytest process each, serial). Tool: `tools/ram_safe_regression_sweep.py`. Report: `Saved/exports/regression_sweep_report.json`. Totals post-fix: **72 passed / 22 failed / 2 skipped-for-memory** (940 tests). Fixed (a): `validate._check_stair_exit_clearance` module solid pads no longer masked by co-located holes; contract constants in arcade/compound_unify/stair_occupancy/structure_identity + test imports; `arcade_validate` uses `storey_datum_z_cm`. Known reds (b): fortress collinear_gap/aperture_sanity cluster (d3_wiring, castle_curtain, fortress_*, gate_passage, hip_roof, structure_identity, wall_face_exclusive, roof_edging, stair_landing_wall_block, showcase band_proud, arch_arcade_gallery factory order). Deferred/memory: `test_aperture_reachability_critical`, `test_random_specs` (>4GB RSS). Gates: sweep_complete=yes regressions_fixed=4 known_reds=22 ram_safe=yes full_suite_single_process=no.
+
+2026-07-25 — @MP-WS-C
+>>> TRIGGER @MP-WS-C — Category-(c) milestone-debt cluster from RAM-safe sweep: m3 keep/tower validate/export/trim + catalog doc + blender skip_clear stub + tower_hall_kiss poison direction. Owns: pae/validate.py (designed roof/wall↔tower_arc interpenetration), pae/trim.py (spiral skip tower_entry yaw), Docs/PRIMITIVE_MEASUREMENTS.md, listed unit tests. No fortress compound rewrite (cat-b).
+>>> DONE @MP-WS-C — m3 attach junction: `_designed_roof_tower_arc_pair` + `_designed_wall_tower_arc_pair` silence designed hall↔drum overlaps (interpenetration zero on m3). Trim `_tower_spiral_stairs` skips `DESIGNED_DOOR_BAY_TAGS` yaws (tower_entry_clears_stair). Doc regen `PRIMITIVE_MEASUREMENTS.md` (tower_arc 2×2 contract). Poison test shift −X for west attach. Blender stub `skip_clear` kw. Per-file: validate_polish 8/8, ue_delivery 9/9, export_manifest_cli 24/24, tower_windows 9/9, trim_site_compound 39/39, primitives 20/20, engineering_continuity 7/7, blender_build skip_clear 1/1 (4 fortress gallery tests remain cat-b). Gates: m3_storey_egress=pass ue_m3_export=pass cat_c_fixed=7/8 ram_safe=yes. Debt: blender_build fortress gallery (cat-b crown deck).

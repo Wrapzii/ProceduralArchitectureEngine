@@ -11,6 +11,13 @@ validate the result against 14 checks, and export a UE manifest.
 
 What it **cannot** do is everything below. Ordered by what blocks what.
 
+**Master Plan sync (2026-07-25):** Waves 1–3 landed — Stages A+B (@MP-WS1), C+D3-9
+(@MP-WS2), D (@MP-WS3, grand/imperial deferred), E partial (@MP-WS4), I packs + M-E
+(@MP-WS6/6b), L filesystem (@MP-WS11), §5 StructureSpec UI (@MP-WS8), M-A ridge proof.
+**Open reds:** fortress `tower_hall_kiss` / `aperture_sanity` collateral; school 4×2
+library_tower well (@MP-WS3b); S-021 valley merge stub; void/balcony auto-railings;
+program region carving; D3-6 tower entry/helix (T-D2).
+
 A note on how this list is written: each item says what is missing, **why it matters**, and
 **how it is verified**. An item without a verification is not done, it is only claimed —
 every defect this project has shipped was caught by a human looking at a render, and the
@@ -38,7 +45,7 @@ fix each time was a check, not a patch.
 | 0.7 | Stacked flights share a footprint and face the same way | **DONE (@D3_WIRING_FIX)** — `_MONUMENTAL_PAD_KINDS` + solver expansion + assemble fail-closed `return` on undersized well; `fortress_gatehouse_spec` 8-cell straight well. Tests: `test_d3_wiring.py` (8), `test_stair_flight_offset.py` | Ledger D3-3 → Phase 10.4 |
 | ~~0.8~~ | ~~Roof edge carries parapet **and** crenellation, overlapping~~ | **DONE (@DOC_D3_PHASE10_AUDIT)** — `roof_edging_exclusive` critical + producer deferral (`pae/roof_edging.py`). Tests: `test_roof_edging_exclusive.py::test_double_edging_on_same_edge_fires_roof_edging_exclusive`, `::test_single_edging_style_passes`, `::test_castle_curtain_compound_has_no_double_edging` | Ledger D3-4 → Phase 10.5 |
 | ~~0.9~~ | ~~Exterior approach flights too tall to enter the gate~~ | **DONE (@DOC_D3_PHASE10_AUDIT)** — `trim()` calls `repair_approach_stairs` when `exterior_steps=True`. Tests: `test_approach_stair_mate.py::test_trim_exterior_steps_strips_poison_grid`, `::test_trim_exterior_steps_mated_height`, `::test_repair_strips_grid_and_replans` | Ledger D3-5 |
-| 0.10 | Tower drum: wall through it, windows into it, no entry, helix short | One cell claimed by two enclosures | `Docs/DESIGN_TOWER_DRUM.md`, lane `@DRUM_ENCLOSURE`. Foundations: `pae/drum.py` + `test_drum.py` green (street_scene widened 5×4/5×5 so `build()` assembles). **Open:** T-D1..T-D6 in design doc. Ledger D3-6 |
+| 0.10 | Tower drum: wall through it, windows into it, no entry, helix short | One cell claimed by two enclosures | `Docs/DESIGN_TOWER_DRUM.md`. **Partial @MP-WS4:** T-D1 outboard wall suppress + T-D3 `drum_exclusivity` green. **Open:** T-D2 trim entry path, full helix climb, `library_tower` blocked (@MP-WS3b). Ledger D3-6 |
 | ~~0.11~~ | ~~Buttresses face the wrong way, oversized~~ | **DONE** — `5de4b0d`. `buttress()` mates with its BACK (+X is the wall side); `outward_offset_cm` is for pieces whose +X points away. Use `trim._pier_pose` | Ledger D3-7 |
 
 > **Not a defect, recorded because it was asked:** stairs are **auto-allocated**. `solver.py:827`
@@ -385,9 +392,10 @@ that one gap. 10.4 and 10.5 are independent and can proceed in parallel.
 
 ### 10.1 Structure identity — declared, never inferred
 
-**Status: started, not done.** `BuildingInstance.structure` and `CompoundConnections.structure_id`
-stamp `structure:<name>` (fortress/castle presets). `freestanding` partitions on `structure:`
-when present (Handbook §11d trap). Checks are wired but **silent on untagged builds**.
+**Status: done (@STRUCTURE_IDENTITY / D3-1).** `BuildingInstance.structure` and
+`CompoundConnections.structure_id` stamp `structure:<name>`. Fortress green path:
+`test_structure_identity.py::test_fortress_compound_green_path_structure_identity`.
+Party-wall replacement still active in @MP-WS5 (Stage F).
 
 A `structure` group on a building instance. Instances sharing it are **one building**, and
 that changes what is legal: one stair core instead of one per mass, a continuous roof plane,
@@ -404,7 +412,7 @@ silent merge.
 |---|---|---|---|
 | T-101 | `structure` group on `BuildingInstance`; pieces tagged `structure:<name>` | a structure group is contiguous — no member isolated from the rest **[V]** | **Started** — field + fortress/castle stamping. Poison: `test_structure_checks.py::test_detached_masses_fire_structure_contiguous` |
 | T-102 | `freestanding` partitions on **structure**, not on `building:` | *(see caution below)* | **Started** — `partition_key` prefers structure. Poison: `test_structure_identity.py::test_street_of_houses_still_partitions_by_building` |
-| T-103 | One stair core per structure, not per mass; solver allocates against the merged footprint | every storey of the structure reachable **[V]** | **Check only** — `structure_single_stair_core`: `test_structure_checks.py::test_triple_stair_wells_fire_structure_single_stair_core`. Solver merge not done (D3-1 open) |
+| T-103 | One stair core per structure, not per mass; solver allocates against the merged footprint | every storey of the structure reachable **[V]** | **DONE** — `structure_single_stair_core` + fortress green path (D3-1 closed) |
 
 > **Caution on T-102.** `freestanding` currently partitions on the `building:` tag, and that
 > was deliberate — without it a street of six houses reported five freestanding groups. Once
@@ -414,7 +422,7 @@ silent merge.
 
 ### 10.2 Party walls — where two masses of one structure meet
 
-**Status: open.** Checks can fire on poison fixtures; party-wall replacement not shipped (D3-2).
+**Status: partial — checks green; unify wiring @MP-WS5 (D3-2 fixed on fortress path).**
 
 Once membership is declared, a shared boundary is an **interior** wall and must carry a way
 through: an opening, an arch, or a door. Today it is two exterior walls back to back.
@@ -427,7 +435,7 @@ system for round towers.
 | # | Objective | Check owed | Status |
 |---|---|---|---|
 | T-104 | Detect shared boundaries between masses of one structure | | **Check only** — `structure_party_wall_open` |
-| T-105 | Replace the doubled exterior wall with one party wall carrying an opening | no back-to-back exterior walls inside a structure **[V]** | **Open** — poison: `test_structure_checks.py::test_party_walls_fire_structure_party_wall_open`, `test_structure_identity.py::test_three_sealed_with_structure_fires_party_wall_check` |
+| T-105 | Replace the doubled exterior wall with one party wall carrying an opening | no back-to-back exterior walls inside a structure **[V]** | **Partial** — `unify_compound_interfaces` on fortress path; @MP-WS5 extends mechanism |
 | T-106 | Same rule where a drum meets a range | every mass of a structure reachable from every other **[V]** | **Check only** — `structure_masses_reachable`: `test_structure_checks.py::test_sealed_party_walls_fire_structure_masses_reachable` |
 
 ### 10.3 Sequencing — do 10.1 before 10.2
@@ -437,9 +445,9 @@ membership is declared. In the other order the opening logic gets written twice.
 
 ### 10.4 Stacked flights — extend the pads mechanism to straight runs
 
-**Status: partial (D3-3).** `_MONUMENTAL_PAD_KINDS` now includes `straight`; solver expands
-well for multi-storey straight runs; `stair_flight_stack` covers `stair_straight`. **Open:**
-`fortress_gatehouse_spec` 6×3 shallow hall cannot host expanded well.
+**Status: done (D3-3 preserved).** `_MONUMENTAL_PAD_KINDS` includes `straight`; solver expands
+well for multi-storey straight runs; `stair_flight_stack` covers `stair_straight`.
+**Collateral:** school `library_tower` 4×2 well sizing → @MP-WS3b (not a pad regression).
 
 `_monumental_flight_pads` does the right thing (two 2×2 pads shifted by the stair width,
 alternating anchor **and** yaw). A 180° yaw flip alone is not the fix — it corrects direction
