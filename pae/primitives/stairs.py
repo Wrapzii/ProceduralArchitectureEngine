@@ -311,7 +311,7 @@ def stair_half() -> PrimitiveDescriptor:
     return PrimitiveDescriptor(
         id="stair_half",
         kind="stair",
-        footprint_modules=(2, 2),
+        footprint_modules=(1, 1),
         height_storeys=0.5,
         size_cm=(sx, sy, sz),
         sockets=sockets,
@@ -428,7 +428,7 @@ def stair_spiral_quarter() -> PrimitiveDescriptor:
     return PrimitiveDescriptor(
         id="stair_spiral_quarter",
         kind="stair",
-        footprint_modules=(1, 1),
+        footprint_modules=(2, 2),
         height_storeys=_SPIRAL_RISE_STOREYS,
         # The mesh is a quarter of a circle with outer radius MODULE, so its
         # centred AABB is two modules wide. The previous one-module declaration
