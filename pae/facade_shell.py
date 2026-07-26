@@ -304,6 +304,53 @@ def _stair_anchor_and_cells(
     return (ax, ay), 0, cells
 
 
+def stairwell_blocked_bays(
+    stair_cells: Sequence[Tuple[int, int]],
+    *,
+    bays_x: int,
+    bays_y: int,
+) -> Dict[str, FrozenSet[int]]:
+    """Facade bay indices whose *interior* is the stair shaft.
+
+    A normal living-room sash must not land on these bays — the well occupies
+    that cell, so a full window would look into stairs / be blocked by flights.
+    """
+    blocked: Dict[str, set] = {
+        "south": set(),
+        "north": set(),
+        "east": set(),
+        "west": set(),
+    }
+    if bays_x < 1 or bays_y < 1:
+        return {k: frozenset() for k in blocked}
+    for cx, cy in stair_cells:
+        if cy <= 0:
+            blocked["south"].add(int(cx))
+        if cy >= bays_y - 1:
+            blocked["north"].add(int(cx))
+        if cx <= 0:
+            blocked["west"].add(int(cy))
+        if cx >= bays_x - 1:
+            blocked["east"].add(int(cy))
+    return {face: frozenset(bays) for face, bays in blocked.items()}
+
+
+def _door_bay_clear_of_stair(
+    preferred: int,
+    *,
+    bays_x: int,
+    stair_blocked_south: FrozenSet[int],
+) -> int:
+    """Keep the main door off stairwell bays on the south elevation."""
+    candidates = list(range(bays_x))
+    # Prefer centre-ish order starting from preferred.
+    ordered = sorted(candidates, key=lambda b: (abs(b - preferred), b))
+    for bay in ordered:
+        if bay not in stair_blocked_south:
+            return bay
+    return max(0, min(bays_x - 1, preferred))
+
+
 def _place_shell_box(
     *,
     piece_prefix: str,
@@ -356,8 +403,22 @@ def _opening_spec(
     variation: ShellVariation,
     shell_cfg: ShellStyleConfig,
     wealth: int,
+    stair_blocked: FrozenSet[int] = frozenset(),
 ) -> Optional[Tuple[str, float, float, float]]:
-    """Return (kind, width_cm, height_cm, sill_z_cm) or None if solid pier bay."""
+    """Return (kind, width_cm, height_cm, sill_z_cm) or None if solid pier bay.
+
+    Stairwell-adjacent bays never get a normal sash/door. Wealth ≥ 3 may get a
+    high small ``stair_light`` so the shaft has daylight without looking like a
+    room window into the stairs.
+    """
+    if bay in stair_blocked:
+        if wealth >= 3:
+            # High stair light — clears switchback treads / rail height.
+            w = MODULE_CM * 0.32
+            h = STOREY_CM * 0.28
+            sill = STOREY_CM * 0.58
+            return ("stair_light", w, h, sill)
+        return None
     if (face, level, bay) in variation.window_skip:
         return None
     w_frac, h_frac, sill_frac = _effective_window_fracs(shell_cfg, wealth)
@@ -365,8 +426,6 @@ def _opening_spec(
         w = MODULE_CM * _DOOR_W_FRAC
         h = STOREY_CM * _DOOR_H_FRAC
         return ("door", w, h, 0.0)
-    if face == "south" and level == 0 and bay == door_bay:
-        return None
     w = MODULE_CM * w_frac
     h = STOREY_CM * h_frac
     if (
@@ -620,6 +679,7 @@ def _place_glazed_face(
     style_overrides: dict,
     placements: List[SolidPlacement],
     counters: Dict[str, int],
+    stair_blocked: FrozenSet[int] = frozenset(),
 ) -> None:
     """One solid shell wall per face/storey; cutters punch openings in Blender."""
     run_cm, bay_count, origin = _face_run_and_origin(
@@ -697,6 +757,7 @@ def _place_glazed_face(
             variation=variation,
             shell_cfg=shell_cfg,
             wealth=wealth,
+            stair_blocked=stair_blocked,
         )
         if opening is None:
             continue
@@ -724,9 +785,12 @@ def _place_glazed_face(
             panel_size_cm=panel_size_cm,
         )
 
-        if kind == "window":
+        if kind in ("window", "stair_light"):
             frame_bar = max(8.0, min(12.0, _FRAME_BAR_CM))
             frame_depth = max(4.0, WALL_T_CM * _FRAME_T_FRAC)
+            open_tags = tags | frozenset({"window", "opening", kind})
+            if kind == "stair_light":
+                open_tags = open_tags | frozenset({"stairwell", "stair_light"})
             _place_hollow_window_frame(
                 face=face,
                 level=level,
@@ -739,7 +803,7 @@ def _place_glazed_face(
                 frame_depth=frame_depth,
                 placements=placements,
                 counters=counters,
-                tags=tags,
+                tags=open_tags,
                 panel_size_cm=panel_size_cm,
             )
             _place_window_glass(
@@ -753,10 +817,10 @@ def _place_glazed_face(
                 frame_bar=frame_bar,
                 placements=placements,
                 counters=counters,
-                tags=tags,
+                tags=open_tags,
                 panel_size_cm=panel_size_cm,
             )
-        else:
+        elif kind == "door":
             door_t = max(4.0, frame_t)
             _place_shell_box(
                 piece_prefix=f"shell_door_{face}_L{level}",
@@ -1330,6 +1394,9 @@ def build_shell_assembly(
     width_cm, depth_cm = _footprint_cm(bays_x, bays_y)
     stair_id = resolve_stair_id(wealth, bays_x, bays_y, storeys=storeys)
     anchor, stair_yaw, stair_cells = _stair_anchor_and_cells(stair_id, bays_x, bays_y)
+    stair_blocked = stairwell_blocked_bays(
+        stair_cells, bays_x=bays_x, bays_y=bays_y
+    )
     glazed = _glazed_faces(blind)
     variation = derive_shell_variation(
         params,
@@ -1340,7 +1407,11 @@ def build_shell_assembly(
         style_overrides=style_overrides,
         shell_cfg=shell_cfg,
     )
-    door_bay = variation.door_bay
+    door_bay = _door_bay_clear_of_stair(
+        variation.door_bay,
+        bays_x=bays_x,
+        stair_blocked_south=stair_blocked.get("south", frozenset()),
+    )
     roof_kind = shell_cfg.roof_kind if wealth >= 2 else "flat"
     if wealth <= 1:
         roof_kind = "flat"
@@ -1401,6 +1472,7 @@ def build_shell_assembly(
                     style_overrides=style_overrides,
                     placements=placements,
                     counters=counters,
+                    stair_blocked=stair_blocked.get(face, frozenset()),
                 )
             else:
                 _place_continuous_wall(
@@ -1679,4 +1751,5 @@ __all__ = [
     "is_shell_placement",
     "shell_cutter_hole_yz_cm",
     "shell_roof_placements",
+    "stairwell_blocked_bays",
 ]

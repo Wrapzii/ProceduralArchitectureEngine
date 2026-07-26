@@ -504,3 +504,45 @@ def test_shell_roof_aabb_within_footprint_overhang():
         assert pmin[1] >= -oh - tol, roof.piece_id
         assert pmax[0] <= width + oh + tol, roof.piece_id
         assert pmax[1] <= depth + oh + tol, roof.piece_id
+
+
+def test_stairwell_bays_have_no_room_windows():
+    """North/east bays occupied by the stair shaft must not get living-room sashes."""
+    from pae.facade_grammar import resolve_stair_id, resolve_wealth
+    from pae.facade_shell import (
+        _stair_anchor_and_cells,
+        stairwell_blocked_bays,
+    )
+
+    params = _demo_user_params()  # 22×12, 4 storeys, wealth 4, end_left
+    assembly, _ = build_shell_assembly(params)
+    spec = params_to_spec(params)
+    wealth = resolve_wealth(params.wealth)
+    stair_id = resolve_stair_id(
+        wealth, spec.footprint.bays_x, spec.footprint.bays_y, storeys=spec.storeys
+    )
+    _anchor, _yaw, cells = _stair_anchor_and_cells(
+        stair_id, spec.footprint.bays_x, spec.footprint.bays_y
+    )
+    blocked = stairwell_blocked_bays(
+        cells, bays_x=spec.footprint.bays_x, bays_y=spec.footprint.bays_y
+    )
+    assert blocked["north"], "user-demo well should touch the north wall"
+    # Room windows: cutters tagged window but NOT stair_light.
+    for p in assembly.placements:
+        if p.asset_id != "shell_opening_cutter":
+            continue
+        if "stair_light" in p.tags:
+            assert "stairwell" in p.tags or "stair_light" in p.tags
+            continue
+        if "window" not in p.tags and "door" not in p.tags:
+            continue
+        face = next(t[5:] for t in p.tags if t.startswith("face_"))
+        # Bay index is encoded in piece_id ..._B{n}
+        bay = int(p.piece_id.rsplit("_B", 1)[-1].split("_")[0])
+        assert bay not in blocked.get(face, frozenset()), (
+            f"room {p.tags} opening on stairwell bay {face} B{bay}: {p.piece_id}"
+        )
+    # Wealth 4 → high stair lights allowed on blocked faces (not full sashes).
+    lights = [p for p in assembly.placements if "stair_light" in p.tags]
+    assert lights, "wealthy builds should get high stair lights on the shaft face"
