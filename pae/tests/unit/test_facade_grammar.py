@@ -162,7 +162,7 @@ def test_build_from_params_validate_assembly_unpacks_report():
 def test_build_from_params_returns_assembly():
     params = FacadeParams(
         seed=1812,
-        frontage_m=8.0,
+        frontage_m=10.0,
         depth_m=8.0,
         storeys=2,
         wealth=2,
@@ -175,5 +175,5 @@ def test_build_from_params_returns_assembly():
     assert out_params is params
     assert assembly is not None
     assert len(assembly.placements) > 0
-    # Report may carry non-critical warnings; no critical assembly failures expected.
+    # Shell now runs stair exit-into-wall checks even when assemble validate is off.
     assert not report.critical, [f.message for f in report.critical]

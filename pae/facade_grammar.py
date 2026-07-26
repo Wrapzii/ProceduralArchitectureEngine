@@ -269,13 +269,14 @@ def _stair_plan_candidates(
         )
     )
 
-    # House / cottage: one-bay flight climbing +Y from the south hall.
+    # House / cottage: one-bay flight along +X with free bays on both ends so
+    # bottom and top land on interior floor — never climb into an exterior wall.
     plans.append(
         StairPlan(
             asset_id="stair_straight",
             well_bays=(1, 1),
-            yaw=90,
-            open_faces=frozenset({"south", "north"}),
+            yaw=0,
+            open_faces=frozenset({"south", "west", "east"}),
             scale_class="house",
         )
     )
@@ -303,11 +304,16 @@ def stair_plan_fits(plan: StairPlan, bays_x: int, bays_y: int) -> bool:
         # Flush to both gables (ww == bays_x) seals bottom and top.
         if ww >= bays_x:
             return False
+        # House 1×1 along +X needs a neighbour bay on each end (approach + exit).
+        if plan.scale_class == "house" and bays_x < 3:
+            return False
     else:
         if wd > max(1, bays_y // 2):
             return False
         if wd >= bays_y and bays_y > 1:
             # Full-depth well leaves no hall bay south of the flight.
+            return False
+        if plan.scale_class == "house" and bays_y < 3:
             return False
     if plan.asset_id == "stair_switchback" and not footprint_allows_switchback(
         bays_x, bays_y
@@ -334,12 +340,12 @@ def resolve_stair_plan(
     for plan in _stair_plan_candidates(wealth, bx, by, storeys=storeys):
         if stair_plan_fits(plan, bx, by):
             return plan
-    # Degenerate 1×1 plot — still emit a house flight.
+    # Degenerate 1×1 plot — still emit a house flight inset as best-effort.
     return StairPlan(
         asset_id="stair_straight",
         well_bays=(1, 1),
-        yaw=90,
-        open_faces=frozenset({"south", "north"}),
+        yaw=0,
+        open_faces=frozenset({"south", "west", "east"}),
         scale_class="house",
     )
 

@@ -245,32 +245,38 @@ def test_house_scale_stair_is_one_bay_and_not_sealed():
     """Small footprints fit a one-bay house stair with open approach/exit faces."""
     from pae.facade_grammar import resolve_stair_plan
     from pae.facade_shell import _stair_anchor_and_cells
+    from pae.stair_occupancy import landing_cells_for_stair
 
     params = _default_params(storeys=2, frontage_m=10.0, depth_m=8.0, wealth=2)
     plan = resolve_stair_plan(2, 3, 2, storeys=2)
     assert plan.scale_class == "house"
     assert plan.well_bays == (1, 1)
-    assert plan.yaw == 90
-    assert "south" in plan.open_faces and "north" in plan.open_faces
+    assert plan.yaw == 0
+    assert "west" in plan.open_faces and "east" in plan.open_faces
 
-    assembly, _ = build_shell_assembly(params)
+    assembly, report = build_shell_assembly(params)
+    assert report.ok, [f.message for f in report.critical]
     stairs = [p for p in assembly.placements if p.kind == "stair"]
     assert len(stairs) == 1
     stair = stairs[0]
     assert stair.size_cm[0] == MODULE_CM
     assert stair.size_cm[1] == MODULE_CM
-    assert stair.yaw == 90
-    # No partition on the climb axis (would wall off bottom/top).
+    assert stair.yaw == 0
+    # No shaft partitions on the climb axis (would wall off bottom/top).
     sealed = [
         p
         for p in assembly.placements
         if "stair_shaft" in p.tags
-        and ("face_south" in p.tags or "face_north" in p.tags)
+        and ("face_west" in p.tags or "face_east" in p.tags)
     ]
     assert not sealed, [p.piece_id for p in sealed]
     _anchor, yaw, cells = _stair_anchor_and_cells(plan, 3, 2)
-    assert yaw == 90
-    assert len(cells) == 1
+    assert yaw == 0
+    assert cells == [(1, 1)]
+    landings = landing_cells_for_stair(stair)
+    assert landings, "1×1 stairs must expose landing pads for exit checks"
+    top = next(t for t in landings if t[0] == "top")
+    assert top[1] == (2, 1), top  # exit east onto interior floor, not a wall
 
 
 def test_shell_emits_no_shaft_rails():
@@ -290,7 +296,8 @@ def test_shell_emits_no_shaft_rails():
 def test_stair_shaft_pieces_inside_footprint():
     from pae.facade_grammar import metres_to_bays
 
-    params = _default_params(storeys=3, frontage_m=12.0, depth_m=10.0)
+    # Wide switchback shell still emits interior shaft faces (not on exterior).
+    params = _default_params(storeys=4, frontage_m=22.0, depth_m=12.0, wealth=4)
     assembly, _ = build_shell_assembly(params)
     bays_x = metres_to_bays(params.frontage_m)
     bays_y = metres_to_bays(params.depth_m)
@@ -312,6 +319,16 @@ def test_stair_shaft_pieces_inside_footprint():
         assert pmin[1] >= -1.0
         assert pmax[0] <= max_x + 1.0
         assert pmax[1] <= max_y + 1.0
+
+
+def test_quick_test_shell_stair_exits_onto_floor_not_wall():
+    """House-scale shell must clear exit-into-wall / unreachable-landing checks."""
+    params = _default_params(storeys=2, frontage_m=10.0, depth_m=8.0, wealth=2)
+    assembly, report = build_shell_assembly(params)
+    assert report.ok, [f.message for f in report.critical]
+    stair = next(p for p in assembly.placements if p.kind == "stair")
+    assert stair.cell == (1, 1)
+    assert stair.yaw == 0
 
 
 def test_hollow_window_frames_and_glass():

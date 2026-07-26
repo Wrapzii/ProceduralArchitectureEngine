@@ -298,13 +298,16 @@ def _stair_anchor_and_cells(
     yaw = int(plan.yaw)
 
     if plan.scale_class == "house":
-        # North bay with side neighbours when possible — top exits sideways.
+        # North row, inset on X so bottom (−X) and top (+X) land on interior floor.
         if bays_x >= 3:
-            ax = min(max(1, bays_x - 2), bays_x - 1)
+            ax = min(max(1, bays_x - 2), bays_x - well_w)
         else:
-            ax = max(0, bays_x - 1)
-        ay = max(0, bays_y - 1)
-        return (ax, ay), yaw, [(ax, ay)]
+            ax = max(0, bays_x - well_w)
+        ay = max(0, bays_y - well_d)
+        cells = [
+            (ax + i, ay + j) for i in range(well_w) for j in range(well_d)
+        ]
+        return (ax, ay), yaw, cells
 
     ax = max(0, bays_x - well_w)
     ay = max(0, bays_y - well_d)
@@ -1575,7 +1578,17 @@ def build_shell_assembly(
         building_class=spec.building_class,
         stair_kind=stair_id.replace("stair_", ""),
     )
-    return assembly, Report.from_failures([])
+    # Existing circulation validators — shell used to skip these, so house
+    # flights could climb into exterior walls unnoticed.
+    from pae.stair_occupancy import (
+        check_stair_exit_into_wall,
+        check_stair_unreachable_landing,
+    )
+
+    failures = []
+    failures.extend(check_stair_exit_into_wall(assembly))
+    failures.extend(check_stair_unreachable_landing(assembly))
+    return assembly, Report.from_failures(failures)
 
 
 def count_exterior_shell_walls(assembly: Assembly) -> int:
