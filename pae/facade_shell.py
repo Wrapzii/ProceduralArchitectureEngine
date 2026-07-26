@@ -204,8 +204,19 @@ def _effective_window_fracs(
 
 
 def is_shell_placement(p: SolidPlacement) -> bool:
-    """True when Blender should mesh this placement as a sized shell box."""
+    """True when Blender should mesh this as a sized shell box / punched wall.
+
+    Stairs, holes, and catalog floor decks must NEVER take this path — tagging
+    them ``facade_shell`` used to produce a solid 8×8×3.5 m brown box that
+    plugged the stairwell (no treads) and sealed the punched floor opening
+    with its top face (looked like "no hole").
+    """
+    kind = getattr(p, "kind", None)
     aid = getattr(p, "asset_id", "") or ""
+    if kind in {"stair", "hole"}:
+        return False
+    if aid.startswith("stair_") or aid in {"floor_hole", "floor"}:
+        return False
     if aid.startswith("shell_"):
         return True
     return "facade_shell" in getattr(p, "tags", frozenset())

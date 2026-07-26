@@ -1538,9 +1538,11 @@ def instance_assembly(
             continue
         from pae.facade_shell import is_shell_placement
 
-        # Stair VOIDs before shell-box path — shell-tagged spanning decks must
-        # still get floor_hole punches or the well is sealed shut.
-        if needs_stair_void_punch(p):
+        # Real stair meshes + floor VOIDs before any shell-box shortcut.
+        if getattr(p, "kind", None) == "stair":
+            proto = _mesh_for_asset(p.asset_id, tuple(p.size_cm), cache=cache)
+            sx, sy, sz = placement_instance_scale_cm(p)
+        elif needs_stair_void_punch(p):
             peers = [
                 d
                 for d in all_floor_decks
@@ -1576,7 +1578,6 @@ def instance_assembly(
                 proto = notched_roof
                 sx = sy = sz = 1.0
             elif is_spanning_floor_deck(p):
-                # Full-size mesh with VOID openings already cut — uniform cm→m only.
                 peers = [
                     d
                     for d in all_floor_decks

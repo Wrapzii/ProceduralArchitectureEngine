@@ -549,7 +549,7 @@ def test_stairwell_bays_have_no_room_windows():
 
 
 def test_shell_upper_floors_get_stair_void_punch_rects():
-    """Regression: shell-tagged decks must still compute walkable floor holes."""
+    """Regression: shell decks must still compute walkable floor holes."""
     from pae.blender_build import is_spanning_floor_deck, needs_stair_void_punch
     from pae.facade_shell import is_shell_placement
     from pae.primitives.floors import spanning_deck_hole_rects_cm
@@ -562,7 +562,8 @@ def test_shell_upper_floors_get_stair_void_punch_rects():
     for deck in assembly.placements:
         if deck.kind != "floor" or deck.level < 1:
             continue
-        assert is_shell_placement(deck), "shell decks are facade_shell-tagged"
+        # Catalog ``floor`` decks are punched, not solid shell boxes.
+        assert not is_shell_placement(deck), deck.piece_id
         assert needs_stair_void_punch(deck), deck.piece_id
         assert is_spanning_floor_deck(deck), deck.piece_id
         rects = spanning_deck_hole_rects_cm(deck, holes)
@@ -573,3 +574,32 @@ def test_shell_upper_floors_get_stair_void_punch_rects():
         assert (y1 - y0) >= MODULE_CM * 1.5
         punched += 1
     assert punched == params.storeys - 1
+
+
+def test_shell_stairs_are_not_solid_aabb_boxes():
+    """Regression: stair_switchback must mesh as treads, not a brown shell box.
+
+    Tagging stairs ``facade_shell`` used to route them through ``_mesh_for_shell_*``
+    which builds an 8-corner AABB. That plug filled the punched floor hole so the
+    well looked sealed even when VOID rects were correct.
+    """
+    from pae.facade_shell import is_shell_placement
+    from pae.primitives.catalog import catalog_by_id
+    from pae.primitives.stairs import switchback_stair_verts_faces
+
+    params = _demo_user_params()
+    assembly, _ = build_shell_assembly(params)
+    stairs = [p for p in assembly.placements if p.kind == "stair"]
+    assert stairs, "user demo must emit stairs"
+    for stair in stairs:
+        assert stair.asset_id == "stair_switchback", stair.asset_id
+        assert not is_shell_placement(stair), (
+            f"{stair.piece_id} must not use the solid shell-box mesher"
+        )
+        assert "facade_shell" in stair.tags  # still tagged as shell-assembly piece
+
+    desc = catalog_by_id()["stair_switchback"]
+    verts, faces = switchback_stair_verts_faces(*desc.size_cm)
+    # Real switchback flights ≫ 8-corner box (box = 8 verts / 6 faces).
+    assert len(verts) > 100, f"expected stepped mesh, got {len(verts)} verts"
+    assert len(faces) > 50, f"expected stepped mesh, got {len(faces)} faces"
