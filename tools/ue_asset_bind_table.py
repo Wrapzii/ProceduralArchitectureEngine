@@ -36,7 +36,7 @@ from tools.ue_manifest_dry_run import (  # noqa: E402
     load_manifest,
 )
 from tools.ue_spawn_table import (  # noqa: E402
-    SPAWN_TABLE_SCHEMA,
+    SUPPORTED_SPAWN_TABLE_SCHEMAS,
     spawn_table_out_path,
 )
 
@@ -218,10 +218,11 @@ def _load_spawn_table(path: Path) -> JsonDict:
     data = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(data, dict):
         raise ValueError(f"spawn table must be a JSON object: {path}")
-    if data.get("schema") != SPAWN_TABLE_SCHEMA:
+    schema = data.get("schema")
+    if schema not in SUPPORTED_SPAWN_TABLE_SCHEMAS:
+        supported = ", ".join(sorted(SUPPORTED_SPAWN_TABLE_SCHEMAS))
         raise ValueError(
-            f"unsupported spawn table schema: {data.get('schema')!r}; "
-            f"expected {SPAWN_TABLE_SCHEMA!r}"
+            f"unsupported spawn table schema: {schema!r}; expected one of: {supported}"
         )
     return data
 

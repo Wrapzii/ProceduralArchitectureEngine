@@ -32,12 +32,15 @@ from tools.export_manifest import (  # noqa: E402
     VALID_MILESTONES,
     manifest_out_path,
 )
+from pae.export.spawn_groups import group_rows_by_asset_id  # noqa: E402
 from tools.ue_manifest_dry_run import (  # noqa: E402
     ensure_manifest_exists,
     load_manifest,
 )
 
-SPAWN_TABLE_SCHEMA = "pae.spawn_table/1"
+SPAWN_TABLE_SCHEMA = "pae.spawn_table/2"
+SPAWN_TABLE_SCHEMA_V1 = "pae.spawn_table/1"
+SUPPORTED_SPAWN_TABLE_SCHEMAS = frozenset({SPAWN_TABLE_SCHEMA, SPAWN_TABLE_SCHEMA_V1})
 
 JsonDict = Dict[str, Any]
 
@@ -110,12 +113,15 @@ def build_spawn_table(
         raise ValueError("validation.ok must be true — spawn table refused")
 
     rows = manifest_to_spawn_rows(manifest)
+    ism_groups = group_rows_by_asset_id(rows)
     return {
         "schema": SPAWN_TABLE_SCHEMA,
         "milestone": milestone,
         "source_manifest": str(source_manifest).replace("\\", "/"),
         "row_count": len(rows),
+        "ism_group_count": len(ism_groups),
         "rows": rows,
+        "ism_groups": ism_groups,
     }
 
 

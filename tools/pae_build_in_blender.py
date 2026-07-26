@@ -7,6 +7,8 @@ Usage (from any shell with RE + PAE on disk)::
     python tools/pae_build_in_blender.py --stair-proof
     python tools/pae_build_in_blender.py --openings-proof
     python tools/pae_build_in_blender.py --open-stairs
+    python tools/pae_build_in_blender.py --fortress
+    python tools/pae_build_in_blender.py --roof-proof
 
 Inside Blender MCP ``execute_blender_code`` directly (preferred for agents)::
 
@@ -34,6 +36,11 @@ Open-air stair showcase (landings only, no walls)::
 
     from pae.open_stair_showcase import build_open_stair_showcase
     build_open_stair_showcase()
+
+Fortress compound (flat-ground castle curtain + gatehouse)::
+
+    from pae.blender_build import build_fortress_live
+    build_fortress_live()
 """
 
 from __future__ import annotations
@@ -57,6 +64,8 @@ GALLERY_PNG = PAE / "Saved" / "Screenshots" / "gallery_m1_m4.png"
 STAIR_PROOF_PNG = PAE / "Saved" / "Screenshots" / "m2_stair_proof.png"
 OPENINGS_PROOF_PNG = PAE / "Saved" / "Screenshots" / "m1_openings_proof.png"
 OPEN_STAIRS_PNG = PAE / "Saved" / "Screenshots" / "open_stairs_showcase.png"
+FORTRESS_PNG = PAE / "Saved" / "Screenshots" / "fortress_live.png"
+ROOF_PROOF_PNG = PAE / "Saved" / "Screenshots" / "ma_sketched_u_roof_proof.png"
 
 
 def _gallery_code() -> str:
@@ -107,6 +116,66 @@ print("PAE_OPEN_STAIRS_BUILD", result)
 """
 
 
+def _fortress_code() -> str:
+    return rf"""
+import runpy
+ns = runpy.run_path(
+    r"{BUILD.as_posix()}",
+    run_name="pae_blender_build",
+)
+result = ns["build_fortress_live"](write_png=True)
+print("PAE_FORTRESS_BUILD", result)
+"""
+
+
+def _roof_proof_code() -> str:
+    shot = ROOF_PROOF_PNG
+    return rf"""
+import runpy
+from pathlib import Path
+ns = runpy.run_path(
+    r"{BUILD.as_posix()}",
+    run_name="pae_blender_build",
+)
+reload_pae = ns["reload_pae"]
+assemble_and_validate = ns["assemble_and_validate"]
+instance_assembly = ns["instance_assembly"]
+frame_camera_on_meshes = ns["frame_camera_on_meshes"]
+write_screenshot = ns["write_screenshot"]
+_ensure_collection = ns["_ensure_collection"]
+_clear_pae_objects = ns.get("_clear_pae_objects")
+from pae.sketch import sketch_to_spec
+SKETCHED_U = '''
+####  ####
+####  ####
+####  ####
+####  ####
+############
+############
+'''
+reload_pae()
+factory = lambda: sketch_to_spec(
+    SKETCHED_U,
+    name="sketched_u_roof",
+    storeys=1,
+    seed=5,
+    roof_kind="pitched",
+    roof_pitch=1.4,
+)
+assembly, report = assemble_and_validate("ma_u", factory)
+coll_name = "PAE_MA_RoofProof"
+if _clear_pae_objects:
+    _clear_pae_objects()
+coll = _ensure_collection(coll_name)
+instance_assembly(assembly, label="ma_u", target_coll=coll)
+frame_camera_on_meshes(collection=coll_name)
+out = Path(r"{shot.as_posix()}")
+out.parent.mkdir(parents=True, exist_ok=True)
+write_screenshot(out)
+print("PAE_ROOF_PROOF_BUILD", out, report.ok)
+"""
+
+
 def _live_code() -> str:
     return rf"""
 import runpy
@@ -140,6 +209,16 @@ def main() -> None:
         action="store_true",
         help="Build open-air stair showcase (landings only, no walls)",
     )
+    parser.add_argument(
+        "--fortress",
+        action="store_true",
+        help="Build fortress compound into PAE_Fortress (fortress_live.png)",
+    )
+    parser.add_argument(
+        "--roof-proof",
+        action="store_true",
+        help="M-A sketched U roof ridge proof (ma_sketched_u_roof_proof.png)",
+    )
     args = parser.parse_args()
 
     if not BUILD.is_file():
@@ -147,11 +226,19 @@ def main() -> None:
 
     flags = sum(
         bool(x)
-        for x in (args.stair_proof, args.openings_proof, args.gallery, args.open_stairs)
+        for x in (
+            args.stair_proof,
+            args.openings_proof,
+            args.gallery,
+            args.open_stairs,
+            args.fortress,
+            args.roof_proof,
+        )
     )
     if flags > 1:
         raise SystemExit(
-            "choose one of --gallery, --stair-proof, --openings-proof, or --open-stairs"
+            "choose one of --gallery, --stair-proof, --openings-proof, "
+            "--open-stairs, --fortress, or --roof-proof"
         )
 
     if args.stair_proof:
@@ -163,6 +250,12 @@ def main() -> None:
     elif args.open_stairs:
         code = _open_stairs_code()
         png = OPEN_STAIRS_PNG
+    elif args.fortress:
+        code = _fortress_code()
+        png = FORTRESS_PNG
+    elif args.roof_proof:
+        code = _roof_proof_code()
+        png = ROOF_PROOF_PNG
     elif args.gallery:
         code = _gallery_code()
         png = GALLERY_PNG
