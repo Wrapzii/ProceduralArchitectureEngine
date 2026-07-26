@@ -311,7 +311,7 @@ def stair_half() -> PrimitiveDescriptor:
     return PrimitiveDescriptor(
         id="stair_half",
         kind="stair",
-        footprint_modules=(1, 1),
+        footprint_modules=(2, 2),
         height_storeys=0.5,
         size_cm=(sx, sy, sz),
         sockets=sockets,
@@ -412,14 +412,14 @@ def stair_spiral_quarter() -> PrimitiveDescriptor:
     sockets = (
         SocketDesc(
             "bottom",
-            (MODULE_CM * 0.5, 0.0, 0.0),
+            (MODULE_CM, 0.0, 0.0),
             (0.0, -1.0, 0.0),
             "stair_bottom",
             tag,
         ),
         SocketDesc(
             "top",
-            (0.0, MODULE_CM * 0.5, rise),
+            (0.0, MODULE_CM, rise),
             (-1.0, 0.0, 0.0),
             "stair_top",
             tag,
@@ -430,12 +430,15 @@ def stair_spiral_quarter() -> PrimitiveDescriptor:
         kind="stair",
         footprint_modules=(1, 1),
         height_storeys=_SPIRAL_RISE_STOREYS,
-        size_cm=(MODULE_CM, MODULE_CM, rise),
+        # The mesh is a quarter of a circle with outer radius MODULE, so its
+        # centred AABB is two modules wide. The previous one-module declaration
+        # made every collision/hole/landing query half the visible Blender size.
+        size_cm=(2.0 * MODULE_CM, 2.0 * MODULE_CM, rise),
         sockets=sockets,
         tags=tag,
         origin="center",
         rotates_about_center=True,
-        aabb_min_cm=(0.0, 0.0, 0.0),
+        aabb_min_cm=(-MODULE_CM, -MODULE_CM, 0.0),
         notes="Helical wedge steps; four quarters per storey at same cell centre.",
     )
 

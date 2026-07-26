@@ -338,7 +338,7 @@ def check_tower_entry_clears_stair(assembly: "Assembly") -> List["Failure"]:
         inner_face_radius = radial_distance - radial_thickness * 0.5
         stair_outer_radius = max(
             max(float(p.size_cm[0]), float(p.size_cm[1])) for p in level_treads
-        )
+        ) * 0.5
         if stair_outer_radius + TOL_CM <= inner_face_radius:
             continue
         failures.append(

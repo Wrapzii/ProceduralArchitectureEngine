@@ -1355,9 +1355,8 @@ def _place_stairs(
         # at its outer radius — so a full-module tread runs straight THROUGH the tower
         # wall. On the fortress that was 213 of 524 interpenetration warnings, the
         # single largest cause, and it reads as the stair escaping the tower.
-        # The primitive's authored ``size_cm`` is its *outer radius*, not its
-        # diameter. Keep that radius inside the half-module plan footprint.
-        _bore = MODULE_CM * 0.5 - TOL_CM
+        _outer_radius = MODULE_CM * 0.5 - TOL_CM
+        _bore = 2.0 * _outer_radius
         for level in range(len(fp.storeys) - 1):
             grid = fp.storeys[level]
             if grid.get(*cell) != CellRole.STAIR:
@@ -1392,7 +1391,7 @@ def _place_stairs(
                 levels=(level,),
                 xy_offset=xy_offset,
                 next_piece_id=_next_piece_id,
-                stair_outer_radius_cm=_bore,
+                stair_outer_radius_cm=_outer_radius,
             )
         return
 
@@ -2364,18 +2363,16 @@ def _place_habitable_tower_spirals(
         cell = (vol.x0, vol.y0)
         xy_offset = _tower_drum_xy_offset_cm(vol, bodies)
         radius = _tower_radius_cm(vol)
-        # ``stair_spiral_quarter`` is authored with an outer radius equal to its
-        # nominal XY size (not half that size). Keep that actual radius inside
-        # the masonry inner face. This also leaves the doorway frame outside the
-        # walking band instead of slicing through it.
+        # Keep the actual tread outer radius inside the masonry inner face.
         clear_bore = max(0.0, radius - WALL_T_CM)
-        stair_span = max(
+        stair_outer_radius = max(
             WALL_T_CM,
             min(
                 MODULE_CM - 2.0 * WALL_T_CM,
                 clear_bore - TOL_CM,
             ),
         )
+        stair_span = 2.0 * stair_outer_radius
         body = _tower_attached_body(vol, bodies)
         landing_yaw = _tower_attach_skip_yaw(vol, bodies)
         spiral_yaws = _spiral_yaws_from_landing(landing_yaw)
@@ -2417,7 +2414,7 @@ def _place_habitable_tower_spirals(
                 levels=(level,),
                 xy_offset=xy_offset,
                 next_piece_id=_next_piece_id,
-                stair_outer_radius_cm=stair_span,
+                stair_outer_radius_cm=stair_outer_radius,
             )
 
 
@@ -2687,7 +2684,7 @@ def _place_tower_entry_landings(
             float(door.size_cm[1]) if yaw in (0, 180) else float(door.size_cm[0])
         )
         inner_face = distance - radial_thickness * 0.5
-        stair_outer = max(float(stair.size_cm[0]), float(stair.size_cm[1]))
+        stair_outer = max(float(stair.size_cm[0]), float(stair.size_cm[1])) * 0.5
         near = max(0.0, stair_outer - overlap_cm)
         far = inner_face + overlap_cm
         depth = max(overlap_cm * 2.0, far - near)

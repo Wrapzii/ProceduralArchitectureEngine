@@ -167,7 +167,7 @@ def check_spiral_newel_exists(assembly: Assembly) -> List[Failure]:
     for p in assembly.placements:
         if p.asset_id != SPIRAL_QUARTER_ASSET:
             continue
-        outer_radius = max(float(p.size_cm[0]), float(p.size_cm[1]))
+        outer_radius = max(float(p.size_cm[0]), float(p.size_cm[1])) * 0.5
         if spiral_inner_radius_cm(outer_radius) <= newel_radius + TOL_CM:
             required.setdefault(p.cell, set()).add(p.level)
     failures: List[Failure] = []
