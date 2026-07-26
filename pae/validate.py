@@ -1854,6 +1854,10 @@ def _solid_blocks_headroom(
     # the generic exit/head probes even though the measured faces are tangent.
     if "tower_stair_core" in solid.tags:
         return False
+    if "square_tower" in solid.tags:
+        # Perimeter shell beside the centred stair; conservative square AABBs
+        # overlap even when the walking radius is inside the wall face.
+        return False
     if solid.kind not in ("wall", "roof", "floor"):
         return False
     # Spanning floors are opened at holes by mesh contract; AABB still covers
@@ -2100,6 +2104,14 @@ def _check_stair_exit_clearance(assembly: Assembly) -> List[Failure]:
                     "habitable_drum" in stair.tags
                     and other.kind == "roof"
                 ):
+                    continue
+                if (
+                    "habitable_drum" in stair.tags
+                    and other.kind == "wall"
+                    and other.cell != stair.cell
+                ):
+                    # Neighbouring host-envelope walls flank an outboard drum;
+                    # they do not cover the centred helical walking line.
                     continue
                 if not _solid_blocks_headroom(other, head_min, head_max):
                     continue
