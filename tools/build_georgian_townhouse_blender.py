@@ -88,7 +88,7 @@ def summarize_assembly(assembly, report, params) -> Dict[str, Any]:
 def run_grammar(params, *, validate_assembly: bool = False):
     from pae.facade_grammar import build_from_params
 
-    return build_from_params(params, validate_assembly=validate_assembly)
+    return build_from_params(params, mode="shell", validate_assembly=validate_assembly)
 
 
 def preview_rgba_for_placement(asset_id: str, kind: str, wealth: int) -> Tuple[float, float, float, float]:
@@ -151,7 +151,7 @@ def build_blender_scene(
         assembly_bounds_cm,
         clear_pae_scene,
         configure_workbench_screenshot_scene,
-        instance_assembly,
+        instance_facade_shell,
         reload_pae,
     )
     from pae.facade_grammar import resolve_wealth
@@ -182,7 +182,7 @@ def build_blender_scene(
         -bb_min[1] * CM_TO_M,
         -bb_min[2] * CM_TO_M,
     )
-    count = instance_assembly(
+    count = instance_facade_shell(
         assembly,
         label=label,
         target_coll=coll,
