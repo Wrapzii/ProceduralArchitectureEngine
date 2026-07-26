@@ -18,9 +18,17 @@ count, `report.ok`, and shared door/stair ids.
 ## Blender build
 
 ```powershell
+# Default 10×8 m plot — use storeys 2 / wealth 2 (switchback stairs need more bays)
 blender --background --python tools/build_georgian_townhouse_blender.py -- ^
-  --seed 1812 --frontage-m 10 --depth-m 8 --storeys 4 --wealth 3 ^
+  --seed 1812 --frontage-m 10 --depth-m 8 --storeys 2 --wealth 2 ^
   --row-context end_left --out Saved/georgian_townhouse/townhouse.blend --export-json
+```
+
+4-storey / high-wealth (needs ~16×12 m for switchback stairs):
+
+```powershell
+blender --background --python tools/build_georgian_townhouse_blender.py -- ^
+  --frontage-m 16 --depth-m 12 --storeys 4 --wealth 4 --export-json
 ```
 
 On macOS/Linux replace `^` with `\` and adjust the repo path.
